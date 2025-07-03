@@ -1,0 +1,14 @@
+Checks: >
+  clang-analyzer-*,
+  cppcoreguidelines-*,
+  modernize-*,
+  performance-*,
+  readability-*, -readability-identifier-length, -readability-braces-around-statements,
+  misc-*,
+  bugprone-*,
+  cert-*,
+  clang-diagnostic-*,
+
+WarningsAsErrors: ''
+HeaderFilterRegex: '.*'  # check all headers
+FormatStyle:     file   # use .clang-format if present
