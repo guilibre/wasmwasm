@@ -7,6 +7,7 @@
 #include "wasm.h"
 
 #include <cstdint>
+#include <sstream>
 #include <vector>
 
 namespace tokenizer {
@@ -30,8 +31,7 @@ auto test(const std::string &src) -> int {
     wasm.updateFunctionsMap();
 
     ModuleWriter writer({});
-    writer.setBinary(true);
-    writer.write(wasm, "output.wasm");
+    writer.writeBinary(wasm, "/tmp/output.wasm");
 
     return 0;
 }

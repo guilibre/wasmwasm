@@ -76,13 +76,13 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Emscripten")
         $<$<CONFIG:Release>:-O2 -DNDEBUG>
     )
     target_link_options(${PROJECT_NAME} PRIVATE
-        -sSTANDALONE_WASM=0
-        -sMODULARIZE=1
-        -sEXPORT_ES6=1
         -sENVIRONMENT=web
-        -sEXIT_RUNTIME=1
+        -sNO_EXIT_RUNTIME=1
+        -sEXPORT_ES6=1
         -sEXPORTED_FUNCTIONS=["_main"]
-        -sEXPORTED_RUNTIME_METHODS=[]
+        -sEXPORTED_RUNTIME_METHODS=["callMain","FS","FS_readFile"]
+        -sFORCE_FILESYSTEM
+        -sINVOKE_RUN=0
     )
     set_property(TARGET ${PROJECT_NAME} PROPERTY INTERPROCEDURAL_OPTIMIZATION $<$<CONFIG:Release>:ON>)
 endif()
