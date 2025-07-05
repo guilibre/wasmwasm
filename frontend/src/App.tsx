@@ -7,25 +7,46 @@ export default function App() {
   useEffect(() => {
     if (didRun.current) return;
 
-    Module({
-      print: () => {},
-    }).then((main_module) => {
-      try {
-        const result = main_module.callMain(["teste"]);
-        if (result !== 0) throw new Error("main returned " + result.toString());
+    try {
+      Module({}).then((main_module) => {
+        try {
+          const result = main_module._main();
+          if (result !== 0) throw new Error("main returned " + result);
+        } catch (err) {
+          console.error("error on compilation:", err);
+          return;
+        }
 
-        const buffer = main_module.FS_readFile("/tmp/output.wasm", {
-          enconding: "binary",
-        });
+        let buffer: Uint8Array;
+        try {
+          buffer = main_module.FS_readFile("/tmp/output.wasm", {
+            enconding: "binary",
+          });
+        } catch (err) {
+          console.error("error reading file:", err);
+          return;
+        }
 
-        WebAssembly.instantiate(buffer).then(({ instance, module }) => {
-          console.log(instance.exports.main?.());
-          console.log(module);
-        });
-      } catch (err) {
-        console.error("error on compilation:", err);
-      }
-    });
+        try {
+          WebAssembly.instantiate(buffer, { Math: { sin: Math.sin } }).then(
+            ({ instance, module }) => {
+              try {
+                console.log(instance.exports.main?.(1));
+                console.log(module);
+              } catch (err) {
+                console.error("error executing main:", err);
+                return;
+              }
+            }
+          );
+        } catch (err) {
+          console.error("error instantiating:", err);
+          return;
+        }
+      });
+    } catch (err) {
+      console.error("general error:", err);
+    }
 
     didRun.current = true;
   }, []);

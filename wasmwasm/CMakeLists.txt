@@ -80,7 +80,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Emscripten")
         -sNO_EXIT_RUNTIME=1
         -sEXPORT_ES6=1
         -sEXPORTED_FUNCTIONS=["_main"]
-        -sEXPORTED_RUNTIME_METHODS=["callMain","FS","FS_readFile"]
+        -sEXPORTED_RUNTIME_METHODS=["FS","FS_readFile"]
         -sFORCE_FILESYSTEM
         -sINVOKE_RUN=0
     )

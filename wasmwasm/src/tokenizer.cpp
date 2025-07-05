@@ -1,38 +1,49 @@
 #include "tokenizer.hpp"
 
-#include "literal.h"
-#include "wasm-builder.h"
-#include "wasm-io.h"
-#include "wasm-type.h"
-#include "wasm.h"
-
-#include <cstdint>
-#include <sstream>
-#include <vector>
+#include "binaryen-c.h"
+#include <array>
+#include <cstddef>
+#include <fstream>
+#include <iostream>
 
 namespace tokenizer {
 
 using namespace wasm;
 
-auto test(const std::string &src) -> int {
-    std::cout << src << '\n';
-    Module wasm;
-    Builder builder(wasm);
+auto test() -> int {
+    auto *module = BinaryenModuleCreate();
 
-    Name funcName = "main";
-    auto type = HeapType{Signature{Type::none, Type::i32}};
-    auto *body = builder.makeConst(Literal(int32_t(1)));
+    const BinaryenType paramTypes = {BinaryenTypeFloat32()};
+    const auto resultType = BinaryenTypeFloat32();
 
-    auto func = Builder::makeFunction(funcName, type, {}, body);
-    auto exp = Builder::makeExport(funcName, funcName, ExternalKind::Function);
+    BinaryenAddFunctionImport(module, "Math_sin", "Math", "sin", paramTypes,
+                              resultType);
 
-    wasm.addFunction(func.release());
-    wasm.addExport(exp.release());
-    wasm.updateFunctionsMap();
+    auto *t = BinaryenLocalGet(module, 0, BinaryenTypeFloat32());
+    auto *call_sin = BinaryenCall(module, "Math_sin", &t, 1, resultType);
 
-    ModuleWriter writer({});
-    writer.writeBinary(wasm, "/tmp/output.wasm");
+    BinaryenAddFunction(module, "main", paramTypes, resultType, nullptr, 0,
+                        call_sin);
 
+    BinaryenAddFunctionExport(module, "main", "main");
+
+    BinaryenModuleValidate(module);
+    // BinaryenModulePrint(module);
+
+    std::array<char, 1024> code{};
+    size_t len = BinaryenModuleWrite(module, code.data(), 1024);
+    std::cout << "---------------------------------------------\n";
+    std::cout.write(code.data(), len);
+    std::cout << "---------------------------------------------\n";
+    std::ofstream out("/tmp/output.wasm", std::ios::binary);
+    if (!out) {
+        std::cerr << "failed to open file for writing.\n";
+        return 1;
+    }
+    out.write(code.data(), len);
+    out.close();
+
+    BinaryenModuleDispose(module);
     return 0;
 }
 

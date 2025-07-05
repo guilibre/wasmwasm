@@ -1,6 +1,6 @@
 declare module "./wasmwasm.js" {
   interface EmscriptenModule {
-    callMain: (args: any[]) => number;
+    _main: () => number;
     FS_readFile: (path: string, opts = {}) => Uint8Array;
   }
 
