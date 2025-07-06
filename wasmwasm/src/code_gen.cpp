@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <exception>
 #include <fstream>
 #include <iostream>
@@ -16,11 +17,20 @@ using namespace wasm;
 
 namespace {
 
-auto do_thing(Module *module, BinaryenIndex out,
-              std::map<BinaryenIndex, BinaryenType> variables,
-              BinaryenIndex offset) -> BinaryenExpressionRef {
-    return BinaryenLocalSet(module, out,
-                            BinaryenConst(module, BinaryenLiteralFloat32(0.0)));
+auto do_thing(Module *module,
+              const std::map<BinaryenIndex, BinaryenType> &variables,
+              BinaryenIndex offset, BinaryenIndex freq)
+    -> BinaryenExpressionRef {
+    auto *sine_argument = BinaryenBinary(
+        module, BinaryenMulFloat32(),
+        BinaryenGlobalGet(module, "time", BinaryenTypeFloat32()),
+        BinaryenBinary(
+            module, BinaryenMulFloat32(),
+            BinaryenLocalGet(module, freq, BinaryenTypeFloat32()),
+            BinaryenConst(module, BinaryenLiteralFloat32(6.28318530718F))));
+
+    return BinaryenCall(module, "Math_sin", &sine_argument, 1,
+                        BinaryenTypeFloat32());
 }
 
 template <typename Map> auto map_keys(const Map &m) {
@@ -39,29 +49,36 @@ template <typename Map> auto map_values(const Map &m) {
     return out;
 }
 
-auto create_main_function(wasm::Module *module) -> void {
+auto create_main_function(wasm::Module *module, float sample_freq) -> void {
     BinaryenAddMemoryImport(module, "memory", "env", "memory", 0);
+    BinaryenAddFunctionImport(module, "Math_sin", "Math", "sin",
+                              BinaryenTypeFloat32(), BinaryenTypeFloat32());
+    BinaryenAddGlobal(module, "time", BinaryenTypeFloat32(), true,
+                      BinaryenConst(module, BinaryenLiteralFloat32(0.0)));
 
-    std::array<BinaryenType, 3> parameters{};
+    std::array<BinaryenType, 4> parameters{};
+    std::map<BinaryenIndex, BinaryenType> variables;
 
     parameters[0] = BinaryenTypeInt32();
-    auto *base_ptr = BinaryenLocalGet(module, 0, parameters[0]);
+    BinaryenIndex base_ptr = 0;
     parameters[1] = BinaryenTypeInt32();
-    auto *rows = BinaryenLocalGet(module, 1, parameters[1]);
+    BinaryenIndex rows = 1;
     parameters[2] = BinaryenTypeInt32();
-    auto *cols = BinaryenLocalGet(module, 2, parameters[2]);
+    BinaryenIndex cols = 2;
+    parameters[3] = BinaryenTypeFloat32();
+    BinaryenIndex freq = 3;
 
-    std::map<BinaryenIndex, BinaryenType> local_variables;
-    BinaryenIndex local_i = local_variables.size() + parameters.size();
-    local_variables.emplace(local_i, BinaryenTypeInt32());
-    BinaryenIndex local_j = local_variables.size() + parameters.size();
-    local_variables.emplace(local_j, BinaryenTypeInt32());
+    BinaryenIndex local_i = variables.size() + parameters.size();
+    variables.emplace(local_i, BinaryenTypeInt32());
+    BinaryenIndex local_j = variables.size() + parameters.size();
+    variables.emplace(local_j, BinaryenTypeInt32());
 
     auto *init_i = BinaryenLocalSet(
         module, local_i, BinaryenConst(module, BinaryenLiteralInt32(0)));
-    auto *cond_i = BinaryenBinary(
-        module, BinaryenLtUInt32(),
-        BinaryenLocalGet(module, local_i, BinaryenTypeInt32()), rows);
+    auto *cond_i =
+        BinaryenBinary(module, BinaryenLtUInt32(),
+                       BinaryenLocalGet(module, local_i, BinaryenTypeInt32()),
+                       BinaryenLocalGet(module, cols, BinaryenTypeInt32()));
     auto *i_inc = BinaryenLocalSet(
         module, local_i,
         BinaryenBinary(module, BinaryenAddInt32(),
@@ -70,24 +87,22 @@ auto create_main_function(wasm::Module *module) -> void {
 
     auto *init_j = BinaryenLocalSet(
         module, local_j, BinaryenConst(module, BinaryenLiteralInt32(0)));
-    auto *cond_j = BinaryenBinary(
-        module, BinaryenLtUInt32(),
-        BinaryenLocalGet(module, local_j, BinaryenTypeInt32()), cols);
+    auto *cond_j =
+        BinaryenBinary(module, BinaryenLtUInt32(),
+                       BinaryenLocalGet(module, local_j, BinaryenTypeInt32()),
+                       BinaryenLocalGet(module, rows, BinaryenTypeInt32()));
     auto *j_inc = BinaryenLocalSet(
         module, local_j,
         BinaryenBinary(module, BinaryenAddInt32(),
                        BinaryenLocalGet(module, local_j, BinaryenTypeInt32()),
                        BinaryenConst(module, BinaryenLiteralInt32(1))));
 
-    BinaryenIndex out = local_variables.size() + parameters.size();
-    local_variables.emplace(out, BinaryenTypeFloat32());
-
     auto *index_expr = BinaryenBinary(
         module, BinaryenAddInt32(),
-        BinaryenLocalGet(module, local_j, BinaryenTypeInt32()),
+        BinaryenLocalGet(module, local_i, BinaryenTypeInt32()),
         BinaryenBinary(module, BinaryenMulInt32(),
-                       BinaryenLocalGet(module, local_i, BinaryenTypeInt32()),
-                       BinaryenLocalGet(module, 2, BinaryenTypeInt32())));
+                       BinaryenLocalGet(module, local_j, BinaryenTypeInt32()),
+                       BinaryenLocalGet(module, cols, BinaryenTypeInt32())));
     auto *address = BinaryenBinary(
         module, BinaryenAddInt32(),
         BinaryenLocalGet(module, 0, BinaryenTypeInt32()),
@@ -96,40 +111,43 @@ auto create_main_function(wasm::Module *module) -> void {
                        index_expr));
     auto *assign_out =
         BinaryenStore(module, 4, 0, 4, address,
-                      BinaryenLocalGet(module, out, BinaryenTypeFloat32()),
+                      do_thing(module, variables, parameters.size(), freq),
                       BinaryenTypeFloat32(), "memory");
 
     auto *inner_block = BinaryenBlock(
         module, "inner_block",
-        std::array<BinaryenExpressionRef, 4>(
-            {do_thing(module, out, local_variables, parameters.size()),
-             assign_out, j_inc,
-             BinaryenBreak(module, "inner_loop", cond_j, nullptr)})
+        std::array<BinaryenExpressionRef, 3>(
+            {assign_out, i_inc,
+             BinaryenBreak(module, "inner_loop", cond_i, nullptr)})
             .data(),
-        4, BinaryenTypeNone());
+        3, BinaryenTypeNone());
     auto *inner_loop = BinaryenLoop(module, "inner_loop", inner_block);
+
+    auto *pass_time = BinaryenGlobalSet(
+        module, "time",
+        BinaryenBinary(
+            module, BinaryenAddFloat32(),
+            BinaryenGlobalGet(module, "time", BinaryenTypeFloat32()),
+            BinaryenConst(module, BinaryenLiteralFloat32(sample_freq))));
 
     auto *outer_block = BinaryenBlock(
         module, "outer_block",
-        std::array<BinaryenExpressionRef, 4>(
-            {init_j, inner_loop, i_inc,
-             BinaryenBreak(module, "outer_loop", cond_i, nullptr)})
+        std::array<BinaryenExpressionRef, 5>(
+            {init_i, inner_loop, pass_time, j_inc,
+             BinaryenBreak(module, "outer_loop", cond_j, nullptr)})
             .data(),
-        4, BinaryenTypeNone());
+        5, BinaryenTypeNone());
     auto *outer_loop = BinaryenLoop(module, "outer_loop", outer_block);
 
-    BinaryenExpressionRef body =
-        BinaryenBlock(module, "body",
-                      std::array<BinaryenExpressionRef, 2>(
-                          {init_i, BinaryenBlock(module, "loop", &outer_loop, 1,
-                                                 BinaryenTypeNone())})
-                          .data(),
-                      2, BinaryenTypeNone());
+    BinaryenExpressionRef body = BinaryenBlock(
+        module, "body",
+        std::array<BinaryenExpressionRef, 2>({init_j, outer_loop}).data(), 2,
+        BinaryenTypeNone());
 
     BinaryenAddFunction(module, "main",
-                        BinaryenTypeCreate(parameters.data(), 3),
-                        BinaryenTypeNone(), map_values(local_variables).data(),
-                        local_variables.size(), body);
+                        BinaryenTypeCreate(parameters.data(), 4),
+                        BinaryenTypeNone(), map_values(variables).data(),
+                        variables.size(), body);
     BinaryenAddFunctionExport(module, "main", "main");
 }
 
@@ -154,10 +172,10 @@ auto write_module_to_file(wasm::Module *module) -> int {
 
 namespace code_gen {
 
-auto test() -> int {
+auto test(float sample_freq) -> int {
     auto *module = BinaryenModuleCreate();
     try {
-        create_main_function(module);
+        create_main_function(module, sample_freq);
 
         if (!BinaryenModuleValidate(module)) {
             BinaryenModulePrint(module);

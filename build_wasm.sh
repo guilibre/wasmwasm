@@ -25,7 +25,6 @@ cmake --build build_wasm -- -j2
 
 # Go to frontend and copy files
 cd ../frontend
-mkdir -p public
 cp ../wasmwasm/build_wasm/wasmwasm.wasm src/
 cp ../wasmwasm/build_wasm/wasmwasm.js src/
 

@@ -79,7 +79,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Emscripten")
         -sENVIRONMENT=web
         -sNO_EXIT_RUNTIME=1
         -sEXPORT_ES6=1
-        -sEXPORTED_FUNCTIONS=["_free","_main","_malloc"]
+        -sEXPORTED_FUNCTIONS=["_free","_run_compiler","_malloc"]
         -sEXPORTED_RUNTIME_METHODS=["FS_readFile","FS","HEAPF32"]
         -sFORCE_FILESYSTEM
         -sINVOKE_RUN=0
