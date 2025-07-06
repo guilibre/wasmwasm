@@ -28,17 +28,21 @@ export default function App() {
         }
 
         try {
-          WebAssembly.instantiate(buffer, { Math: { sin: Math.sin } }).then(
-            ({ instance, module }) => {
-              try {
-                console.log(instance.exports.main?.(1));
-                console.log(module);
-              } catch (err) {
-                console.error("error executing main:", err);
-                return;
-              }
+          const memory = new WebAssembly.Memory({ initial: 16, maximum: 32 });
+
+          WebAssembly.instantiate(buffer, {
+            Math: { sin: Math.sin },
+            env: { memory: memory },
+          }).then(({ instance }) => {
+            try {
+              const heapF32 = new Float32Array(memory.buffer);
+              instance.exports.main(0, 2, 8);
+              console.log(heapF32.slice(0, 16));
+            } catch (err) {
+              console.error("error executing main:", err);
+              return;
             }
-          );
+          });
         } catch (err) {
           console.error("error instantiating:", err);
           return;
