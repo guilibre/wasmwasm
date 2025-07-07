@@ -16,7 +16,7 @@ option(BUILD_TESTS "Build GTest-based tests" OFF)
 option(BUILD_LLVM_DWARF "Enable full DWARF support" ON)
 FetchContent_MakeAvailable(binaryen)
 
-add_compile_options(
+set( COMPILE_OPTIONS
     -Wall
     -Wextra
     -Wpedantic
@@ -70,10 +70,12 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Emscripten")
     target_compile_options(${PROJECT_NAME}_lib PRIVATE
         $<$<CONFIG:Debug>:-O0 -g -gsource-map>
         $<$<CONFIG:Release>:-O2 -DNDEBUG>
+        ${COMPILE_OPTIONS}
     )
     target_compile_options(${PROJECT_NAME} PRIVATE
         $<$<CONFIG:Debug>:-O0 -g -gsource-map>
         $<$<CONFIG:Release>:-O2 -DNDEBUG>
+        ${COMPILE_OPTIONS}
     )
     target_link_options(${PROJECT_NAME} PRIVATE
         -sENVIRONMENT=web

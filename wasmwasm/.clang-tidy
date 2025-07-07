@@ -1,11 +1,11 @@
 Checks: >
   clang-analyzer-*,
-  cppcoreguidelines-*,
+  cppcoreguidelines-*, -cppcoreguidelines-avoid-magic-numbers, -cppcoreguidelines-narrowing-conversions, -cppcoreguidelines-owning-memory, -cppcoreguidelines-no-malloc,
   modernize-*,
   performance-*,
-  readability-*, -readability-identifier-length, -readability-braces-around-statements,
-  misc-*,
-  bugprone-*,
+  readability-*, -readability-identifier-length, -readability-braces-around-statements, -readability-magic-numbers,
+  misc-*, -misc-unused-parameters, -misc-non-private-member-variables-in-classes, -misc-no-recursion,
+  bugprone-*, -bugprone-narrowing-conversions,
   cert-*,
   clang-diagnostic-*,
 

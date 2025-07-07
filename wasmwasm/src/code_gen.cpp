@@ -17,10 +17,9 @@ using namespace wasm;
 
 namespace {
 
-auto do_thing(Module *module,
-              const std::map<BinaryenIndex, BinaryenType> &variables,
-              BinaryenIndex offset, BinaryenIndex freq)
-    -> BinaryenExpressionRef {
+auto do_thing(Module *module, BinaryenIndex /*offset*/,
+              const std::map<BinaryenIndex, BinaryenType> & /*variables*/,
+              BinaryenIndex freq) -> BinaryenExpressionRef {
     auto *sine_argument = BinaryenBinary(
         module, BinaryenMulFloat32(),
         BinaryenGlobalGet(module, "time", BinaryenTypeFloat32()),
@@ -60,7 +59,6 @@ auto create_main_function(wasm::Module *module, float sample_freq) -> void {
     std::map<BinaryenIndex, BinaryenType> variables;
 
     parameters[0] = BinaryenTypeInt32();
-    BinaryenIndex base_ptr = 0;
     parameters[1] = BinaryenTypeInt32();
     BinaryenIndex rows = 1;
     parameters[2] = BinaryenTypeInt32();
@@ -68,9 +66,11 @@ auto create_main_function(wasm::Module *module, float sample_freq) -> void {
     parameters[3] = BinaryenTypeFloat32();
     BinaryenIndex freq = 3;
 
-    BinaryenIndex local_i = variables.size() + parameters.size();
+    BinaryenIndex local_i =
+        static_cast<unsigned int>(variables.size() + parameters.size());
     variables.emplace(local_i, BinaryenTypeInt32());
-    BinaryenIndex local_j = variables.size() + parameters.size();
+    BinaryenIndex local_j =
+        static_cast<unsigned int>(variables.size() + parameters.size());
     variables.emplace(local_j, BinaryenTypeInt32());
 
     auto *init_i = BinaryenLocalSet(
@@ -111,7 +111,7 @@ auto create_main_function(wasm::Module *module, float sample_freq) -> void {
                        index_expr));
     auto *assign_out =
         BinaryenStore(module, 4, 0, 4, address,
-                      do_thing(module, variables, parameters.size(), freq),
+                      do_thing(module, parameters.size(), variables, freq),
                       BinaryenTypeFloat32(), "memory");
 
     auto *inner_block = BinaryenBlock(
@@ -147,7 +147,7 @@ auto create_main_function(wasm::Module *module, float sample_freq) -> void {
     BinaryenAddFunction(module, "main",
                         BinaryenTypeCreate(parameters.data(), 4),
                         BinaryenTypeNone(), map_values(variables).data(),
-                        variables.size(), body);
+                        static_cast<unsigned int>(variables.size()), body);
     BinaryenAddFunctionExport(module, "main", "main");
 }
 
@@ -160,7 +160,8 @@ auto write_module_to_file(wasm::Module *module) -> int {
 
     {
         auto buffer = BinaryenModuleAllocateAndWrite(module, nullptr);
-        out.write(static_cast<const char *>(buffer.binary), buffer.binaryBytes);
+        out.write(static_cast<const char *>(buffer.binary),
+                  static_cast<long>(buffer.binaryBytes));
         free(buffer.binary);
     }
 

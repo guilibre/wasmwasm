@@ -1,0 +1,152 @@
+#include "tokenizer.hpp"
+
+#include <cctype>
+#include <optional>
+#include <unordered_map>
+
+namespace {
+
+auto make_keyword_map()
+    -> const std::unordered_map<std::string_view, TokenKind> & {
+    static const std::unordered_map<std::string_view, TokenKind> map = {
+        {"if", TokenKind::If},
+        {"then", TokenKind::Then},
+        {"else", TokenKind::Else},
+    };
+    return map;
+}
+
+auto lookup_keyword(std::string_view word) -> std::optional<TokenKind> {
+    const auto &map = make_keyword_map();
+    if (auto it = map.find(word); it != map.end()) return it->second;
+    return std::nullopt;
+}
+
+} // namespace
+
+Tokenizer::Tokenizer(std::string_view src) : source(src) {}
+
+[[nodiscard]] auto Tokenizer::is_done() const -> bool {
+    return current >= source.size();
+}
+
+auto Tokenizer::advance() -> char {
+    if (is_done()) return '\0';
+    char c = source[current++];
+    column++;
+    return c;
+}
+
+auto Tokenizer::peek_char() const -> char {
+    return is_done() ? '\0' : source[current];
+}
+
+auto Tokenizer::peek_next() const -> char {
+    return current + 1 >= source.size() ? '\0' : source[current + 1];
+}
+
+auto Tokenizer::match(char expected) -> bool {
+    if (is_done() || source[current] != expected) return false;
+    current++;
+    column++;
+    return true;
+}
+
+void Tokenizer::skip_whitespace() {
+    while (!is_done()) {
+        char c = peek_char();
+        switch (c) {
+        case ' ':
+        case '\r':
+        case '\t':
+            advance();
+            break;
+        case '\n':
+            advance();
+            line++;
+            column = 1;
+            break;
+        case '/':
+            if (peek_next() == '/')
+                while (!is_done() && peek_char() != '\n')
+                    advance();
+            else
+                return;
+
+            break;
+        default:
+            return;
+        }
+    }
+}
+
+auto Tokenizer::make_token(TokenKind kind) -> Token {
+    return Token{.kind = kind,
+                 .lexeme = source.substr(start, current - start),
+                 .line = line,
+                 .column = column - (current - start)};
+}
+
+auto Tokenizer::error_token(const std::string &msg) -> Token {
+    return Token{.kind = TokenKind::Invalid,
+                 .lexeme = msg,
+                 .line = line,
+                 .column = column};
+}
+
+auto Tokenizer::scan_identifier() -> Token {
+    while ((std::isalnum(peek_char()) != 0) || peek_char() == '_')
+        advance();
+    std::string_view text = source.substr(start, current - start);
+    if (auto kw = lookup_keyword(text)) {
+        return make_token(*kw);
+    }
+    return make_token(TokenKind::Identifier);
+}
+
+auto Tokenizer::scan_number() -> Token {
+    while (std::isdigit(peek_char()) != 0)
+        advance();
+    return make_token(TokenKind::Number);
+}
+
+auto Tokenizer::peek() const -> Token {
+    auto copy = *this;
+    return copy.next();
+}
+
+auto Tokenizer::next() -> Token {
+    skip_whitespace();
+    start = current;
+
+    if (is_done()) return make_token(TokenKind::Eof);
+
+    char c = advance();
+
+    if ((std::isalpha(c) != 0) || c == '_') return scan_identifier();
+    if (std::isdigit(c) != 0) return scan_number();
+
+    switch (c) {
+    case '+':
+        return make_token(TokenKind::Plus);
+    case '*':
+        return make_token(TokenKind::Star);
+    case '/':
+        return make_token(TokenKind::Slash);
+    case '(':
+        return make_token(TokenKind::LParen);
+    case ')':
+        return make_token(TokenKind::RParen);
+    case '-':
+        if (match('>')) return make_token(TokenKind::Arrow);
+        return make_token(TokenKind::Minus);
+    case '=':
+        if (match('=')) return make_token(TokenKind::EqEq);
+        return make_token(TokenKind::Eq);
+    case '!':
+        if (match('=')) return make_token(TokenKind::BangEq);
+        return make_token(TokenKind::Bang);
+    default:
+        return error_token("unexpected character");
+    }
+}
