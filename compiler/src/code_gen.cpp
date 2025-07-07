@@ -66,10 +66,10 @@ auto create_main_function(wasm::Module *module, float sample_freq) -> void {
     parameters[3] = BinaryenTypeFloat32();
     BinaryenIndex freq = 3;
 
-    BinaryenIndex local_i =
+    auto local_i =
         static_cast<unsigned int>(variables.size() + parameters.size());
     variables.emplace(local_i, BinaryenTypeInt32());
-    BinaryenIndex local_j =
+    auto local_j =
         static_cast<unsigned int>(variables.size() + parameters.size());
     variables.emplace(local_j, BinaryenTypeInt32());
 

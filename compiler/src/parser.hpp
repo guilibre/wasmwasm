@@ -16,7 +16,7 @@ class Parser {
     [[nodiscard]] auto match(TokenKind kind) const -> bool;
 
     auto parse_assignment() -> ExprPtr;
-    auto parse_additive() -> ExprPtr;
-    auto parse_term() -> ExprPtr;
+    auto parse_infix_expr(Precedence prec) -> ExprPtr;
+    auto parse_application() -> ExprPtr;
     auto parse_factor() -> ExprPtr;
 };

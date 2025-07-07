@@ -102,19 +102,16 @@ auto Tokenizer::next() -> Token {
     if (std::isdigit(c) != 0) return scan_number();
 
     switch (c) {
+    case '-':
+        if (match('>')) return make_token(TokenKind::Arrow);
     case '+':
-        return make_token(TokenKind::Plus);
     case '*':
-        return make_token(TokenKind::Star);
     case '/':
-        return make_token(TokenKind::Slash);
+        return make_token(TokenKind::Operator);
     case '(':
         return make_token(TokenKind::LParen);
     case ')':
         return make_token(TokenKind::RParen);
-    case '-':
-        if (match('>')) return make_token(TokenKind::Arrow);
-        return make_token(TokenKind::Minus);
     default:
         return error_token("unexpected character");
     }

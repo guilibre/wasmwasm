@@ -13,7 +13,7 @@ FetchContent_Declare(
     GIT_TAG main
 )
 option(BUILD_TESTS "Build GTest-based tests" OFF)
-option(BUILD_LLVM_DWARF "Enable full DWARF support" ON)
+option(BUILD_LLVM_DWARF "Enable full DWARF support" OFF)
 FetchContent_MakeAvailable(binaryen)
 
 set( COMPILE_OPTIONS
@@ -38,15 +38,14 @@ include_directories(includes)
 
 file(GLOB_RECURSE SRC_FILES ${PROJECT_SOURCE_DIR}/src/*.cpp)
 
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
 add_library(${PROJECT_NAME}_lib STATIC ${SRC_FILES})
 target_link_libraries(${PROJECT_NAME}_lib binaryen)
 target_include_directories(${PROJECT_NAME}_lib PRIVATE
     ${binaryen_SOURCE_DIR}/src
     ./include
-)
-set_target_properties(${PROJECT_NAME}_lib PROPERTIES
-    CMAKE_CXX_STANDARD 23
-    CMAKE_CXX_STANDARD_REQUIRED ON
 )
 set_property(TARGET ${PROJECT_NAME}_lib PROPERTY INTERPROCEDURAL_OPTIMIZATION $<$<CONFIG:Release>:ON>)
 target_compile_options(${PROJECT_NAME}_lib PRIVATE
@@ -57,10 +56,6 @@ target_compile_options(${PROJECT_NAME}_lib PRIVATE
 add_executable(${PROJECT_NAME} app/main.cpp)
 target_link_libraries(${PROJECT_NAME} PRIVATE ${PROJECT_NAME}_lib)
 target_include_directories(${PROJECT_NAME} PRIVATE src)
-set_target_properties(${PROJECT_NAME} PROPERTIES
-    CMAKE_CXX_STANDARD 23
-    CMAKE_CXX_STANDARD_REQUIRED ON
-)
 target_compile_options(${PROJECT_NAME} PRIVATE
     $<$<CONFIG:Debug>:-O0 -g>
     $<$<CONFIG:Release>:-O2 -DNDEBUG>

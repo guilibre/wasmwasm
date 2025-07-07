@@ -1,10 +1,11 @@
 #include "code_gen.hpp"
-
 #include "parser.hpp"
 #include "tokenizer.hpp"
+#include "types/type.hpp"
+#include "types/type_inference.hpp"
 
-#include <exception>
 #include <iostream>
+#include <unordered_map>
 #include <variant>
 
 extern "C" auto run_compiler(float sample_freq) -> int {
@@ -13,52 +14,56 @@ extern "C" auto run_compiler(float sample_freq) -> int {
 
 namespace {
 
-template <class T> struct always_false : std::false_type {};
-
-void print_expr(const Expr *expr, int indent = 0) {
-    std::string pad(indent, ' ');
+void print_type(const TypePtr &type) {
     std::visit(
-        [&](auto &&node) -> void {
+        [&](const auto &node) {
             using T = std::decay_t<decltype(node)>;
-            if constexpr (std::is_same_v<T, typename Expr::Binary>) {
-                std::cout << pad << "Binary(" << node.op.lexeme << ")\n";
-                print_expr(node.left.get(), indent + 2);
-                print_expr(node.right.get(), indent + 2);
-            } else if constexpr (std::is_same_v<T, typename Expr::Literal>) {
-                std::cout << pad << "Literal(" << node.value.lexeme << ")\n";
-            } else if constexpr (std::is_same_v<T, typename Expr::Variable>) {
-                std::cout << pad << "Variable(" << node.name.lexeme << ")\n";
-            } else if constexpr (std::is_same_v<T, typename Expr::If>) {
-                std::cout << pad << "If\n";
-                print_expr(node.condition.get(), indent + 2);
-                print_expr(node.then_branch.get(), indent + 2);
-                print_expr(node.else_branch.get(), indent + 2);
-            } else if constexpr (std::is_same_v<T, typename Expr::Assignment>) {
-                std::cout << pad << "Assignment to " << node.name.lexeme
-                          << "\n";
-                print_expr(node.value.get(), indent + 2);
-            } else {
-                static_assert(always_false<T>::value,
-                              "Non-exhaustive visitor!");
+            if constexpr (std::is_same_v<T, TypeVar>) {
+                std::cout << "t" << node.id;
+            } else if constexpr (std::is_same_v<T, TypeBase>) {
+                switch (node.kind) {
+                case BaseTypeKind::Int:
+                    std::cout << "Int";
+                    break;
+                case BaseTypeKind::Float:
+                    std::cout << "Float";
+                    break;
+                case BaseTypeKind::Bool:
+                    std::cout << "Bool";
+                    break;
+                }
+            } else if constexpr (std::is_same_v<T, TypeFun>) {
+                std::cout << "(";
+                print_type(node.param);
+                std::cout << " -> ";
+                print_type(node.result);
+                std::cout << ")";
             }
         },
-        *(expr->node));
+        type->node);
 }
 
 } // namespace
 
-auto main(int /*argc*/, char ** /*argv*/) -> int {
-    const auto *source = "sin(2 * PI * TIME * freq) -> OUT";
-
-    Tokenizer tokenizer(source);
-    Parser parser(tokenizer);
+auto main() -> int {
+    std::string src = "2 * 3 -> x\nx -> OUT";
 
     try {
-        auto ast = parser.parse_expr();
-        print_expr(ast.get());
-    } catch (const std::exception &ex) {
-        std::cerr << "Parse error: " << ex.what() << '\n';
-        return 1;
+        Tokenizer tokenizer(src);
+        Parser parser(tokenizer);
+        auto expr = parser.parse_expr();
+
+        std::unordered_map<std::string_view, TypePtr> env;
+        Substitution subst;
+
+        TypePtr inferred_type = infer_expr(expr, env, subst);
+
+        std::cout << "Inferred type: ";
+        print_type(inferred_type);
+        std::cout << "\n";
+
+    } catch (const std::exception &e) {
+        std::cerr << "Type inference error: " << e.what() << "\n";
     }
 
     return 0;
