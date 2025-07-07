@@ -14,14 +14,7 @@ enum class TokenKind : uint8_t {
     Slash,
     LParen,
     RParen,
-    If,
-    Then,
-    Else,
     Arrow,
-    Eq,
-    EqEq,
-    Bang,
-    BangEq,
     Eof,
     Invalid
 };

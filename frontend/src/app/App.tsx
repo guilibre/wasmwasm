@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
-import workletUrl from "./audio/processor.worklet.ts?url";
-import WasmWasm from "./audio/compiler";
+import workletUrl from "../audio/processor.worklet.ts?url";
+import WasmWasm from "../audio/compiler";
 
 export default function App() {
   const didRun = useRef(false);

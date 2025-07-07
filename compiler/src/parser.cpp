@@ -5,10 +5,10 @@
 
 #include <stdexcept>
 
-Parser::Parser(Tokenizer &tokenizer)
-    : tokenizer(tokenizer), current(tokenizer.next()) {}
+Parser::Parser(Tokenizer tokenizer)
+    : tokenizer(tokenizer), current(this->tokenizer.next()) {}
 
-auto Parser::parse_expr() -> ExprPtr { return parse_if(); }
+auto Parser::parse_expr() -> ExprPtr { return parse_assignment(); }
 
 void Parser::advance() { current = tokenizer.next(); }
 
@@ -16,46 +16,17 @@ auto Parser::match(TokenKind kind) const -> bool {
     return current.kind == kind;
 }
 
-auto Parser::parse_if() -> ExprPtr {
-    if (match(TokenKind::If)) {
-        advance();
-        auto cond = parse_expr();
-        if (!match(TokenKind::Then))
-            throw std::runtime_error("Expected 'then'");
-        advance();
-        auto then_expr = parse_expr();
-        if (!match(TokenKind::Else))
-            throw std::runtime_error("Expected 'else'");
-        advance();
-        auto else_expr = parse_expr();
-        return Expr::make<Expr::If>(std::move(cond), std::move(then_expr),
-                                    std::move(else_expr));
-    }
-    return parse_assignment();
-}
-
 auto Parser::parse_assignment() -> ExprPtr {
-    auto expr = parse_equality();
+    auto expr = parse_additive();
     if (match(TokenKind::Arrow)) {
         advance();
-        if (current.kind != TokenKind::Identifier)
+        if (!match(TokenKind::Identifier))
             throw std::runtime_error("Expected identifier after '->'");
         auto name = current;
         advance();
         return Expr::make<Expr::Assignment>(std::move(expr), name);
     }
-    return expr;
-}
-
-auto Parser::parse_equality() -> ExprPtr {
-    auto expr = parse_additive();
-    while (match(TokenKind::EqEq) || match(TokenKind::BangEq)) {
-        Token op = current;
-        advance();
-        auto right = parse_additive();
-        expr = Expr::make<Expr::Binary>(op, std::move(expr), std::move(right));
-    }
-    return expr;
+    throw std::runtime_error("Expected an assignment");
 }
 
 auto Parser::parse_additive() -> ExprPtr {
@@ -81,16 +52,17 @@ auto Parser::parse_term() -> ExprPtr {
 }
 
 auto Parser::parse_factor() -> ExprPtr {
+    auto tok = current;
     if (match(TokenKind::Number)) {
-        Token tok = current;
         advance();
         return Expr::make<Expr::Literal>(tok);
     }
+
     if (match(TokenKind::Identifier)) {
-        Token tok = current;
         advance();
         return Expr::make<Expr::Variable>(tok);
     }
+
     if (match(TokenKind::LParen)) {
         advance();
         auto expr = parse_expr();

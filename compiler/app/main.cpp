@@ -48,7 +48,7 @@ void print_expr(const Expr *expr, int indent = 0) {
 } // namespace
 
 auto main(int /*argc*/, char ** /*argv*/) -> int {
-    const auto *source = "if x == 1 then 42 else x -> z";
+    const auto *source = "sin(2 * PI * TIME * freq) -> OUT";
 
     Tokenizer tokenizer(source);
     Parser parser(tokenizer);

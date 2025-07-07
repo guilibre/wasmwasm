@@ -1,28 +1,6 @@
 #include "tokenizer.hpp"
 
 #include <cctype>
-#include <optional>
-#include <unordered_map>
-
-namespace {
-
-auto make_keyword_map()
-    -> const std::unordered_map<std::string_view, TokenKind> & {
-    static const std::unordered_map<std::string_view, TokenKind> map = {
-        {"if", TokenKind::If},
-        {"then", TokenKind::Then},
-        {"else", TokenKind::Else},
-    };
-    return map;
-}
-
-auto lookup_keyword(std::string_view word) -> std::optional<TokenKind> {
-    const auto &map = make_keyword_map();
-    if (auto it = map.find(word); it != map.end()) return it->second;
-    return std::nullopt;
-}
-
-} // namespace
 
 Tokenizer::Tokenizer(std::string_view src) : source(src) {}
 
@@ -98,9 +76,6 @@ auto Tokenizer::scan_identifier() -> Token {
     while ((std::isalnum(peek_char()) != 0) || peek_char() == '_')
         advance();
     std::string_view text = source.substr(start, current - start);
-    if (auto kw = lookup_keyword(text)) {
-        return make_token(*kw);
-    }
     return make_token(TokenKind::Identifier);
 }
 
@@ -140,12 +115,6 @@ auto Tokenizer::next() -> Token {
     case '-':
         if (match('>')) return make_token(TokenKind::Arrow);
         return make_token(TokenKind::Minus);
-    case '=':
-        if (match('=')) return make_token(TokenKind::EqEq);
-        return make_token(TokenKind::Eq);
-    case '!':
-        if (match('=')) return make_token(TokenKind::BangEq);
-        return make_token(TokenKind::Bang);
     default:
         return error_token("unexpected character");
     }

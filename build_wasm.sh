@@ -15,17 +15,17 @@ BUILD_TYPE="$1"
 echo "Building wasmwasm with build type: $BUILD_TYPE"
 
 # Enter wasmwasm directory
-cd wasmwasm
+cd compiler
 
 # Configure with emcmake
 emcmake cmake -S . -B build_wasm -DCMAKE_BUILD_TYPE="$BUILD_TYPE"
 
 # Build with 2 threads
-cmake --build build_wasm -- -j2
+cmake --build build_wasm
 
 # Go to frontend and copy files
 cd ../frontend
-cp ../wasmwasm/build_wasm/wasmwasm.wasm src/
-cp ../wasmwasm/build_wasm/wasmwasm.js src/
+cp ../compiler/build_wasm/wasmwasm.wasm src/
+cp ../compiler/build_wasm/wasmwasm.js src/
 
 echo "Build complete and files copied."
