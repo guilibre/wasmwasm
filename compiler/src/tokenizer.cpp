@@ -82,6 +82,11 @@ auto Tokenizer::scan_identifier() -> Token {
 auto Tokenizer::scan_number() -> Token {
     while (std::isdigit(peek_char()) != 0)
         advance();
+    if (peek_char() == '.' && std::isdigit(peek_next()) != 0) {
+        advance();
+        while (std::isdigit(peek_char()) != 0)
+            advance();
+    }
     return make_token(TokenKind::Number);
 }
 
@@ -102,12 +107,15 @@ auto Tokenizer::next() -> Token {
     if (std::isdigit(c) != 0) return scan_number();
 
     switch (c) {
+    case '+':
+        return make_token(TokenKind::Plus);
     case '-':
         if (match('>')) return make_token(TokenKind::Arrow);
-    case '+':
+        return make_token(TokenKind::Minus);
     case '*':
+        return make_token(TokenKind::Star);
     case '/':
-        return make_token(TokenKind::Operator);
+        return make_token(TokenKind::Slash);
     case '(':
         return make_token(TokenKind::LParen);
     case ')':

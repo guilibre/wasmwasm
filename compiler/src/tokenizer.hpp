@@ -8,7 +8,10 @@
 enum class TokenKind : uint8_t {
     Identifier,
     Number,
-    Operator,
+    Plus,
+    Minus,
+    Star,
+    Slash,
     LParen,
     RParen,
     Arrow,

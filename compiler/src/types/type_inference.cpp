@@ -105,22 +105,22 @@ auto infer_expr(const ExprPtr &expr,
         [&](const auto &node) -> TypePtr {
             using T = std::decay_t<decltype(node)>;
 
-            if constexpr (std::is_same_v<T, Literal>)
+            if constexpr (std::is_same_v<T, Expr::Literal>)
                 return Type::make<TypeBase>(BaseTypeKind::Float);
-            if constexpr (std::is_same_v<T, Variable>) {
+            if constexpr (std::is_same_v<T, Expr::Variable>) {
                 auto it = env.find(node.name.lexeme);
                 if (it == env.end())
                     throw std::runtime_error("Unbound variable: " +
                                              std::string(node.name.lexeme));
                 return apply_subst(subst, it->second);
             }
-            if constexpr (std::is_same_v<T, Assignment>) {
+            if constexpr (std::is_same_v<T, Expr::Assignment>) {
                 auto rhs_type = infer_expr(node.value, env, subst);
                 env[node.name.lexeme] = rhs_type;
                 return rhs_type;
             }
 
-            if constexpr (std::is_same_v<T, Call>) {
+            if constexpr (std::is_same_v<T, Expr::Call>) {
                 auto fn_type = infer_expr(node.callee, env, subst);
                 auto arg_type = infer_expr(node.argument, env, subst);
                 auto result_type = gen.fresh_type_var();
@@ -129,11 +129,10 @@ auto infer_expr(const ExprPtr &expr,
                 return result_type;
             }
 
-            if constexpr (std::is_same_v<T, Binary>) {
+            if constexpr (std::is_same_v<T, Expr::Binary>) {
                 auto left_type = infer_expr(node.lhs, env, subst);
                 auto right_type = infer_expr(node.rhs, env, subst);
 
-                // For now, assume binary ops require Float
                 unify(left_type, Type::make<TypeBase>(BaseTypeKind::Float),
                       subst);
                 unify(right_type, Type::make<TypeBase>(BaseTypeKind::Float),

@@ -10,38 +10,39 @@ struct Expr;
 
 using ExprPtr = std::unique_ptr<Expr>;
 
-struct Literal {
-    Token value;
-};
-
-struct Assignment {
-    ExprPtr value;
-    Token name;
-};
-
-struct Variable {
-    Token name;
-};
-
-struct Call {
-    ExprPtr callee;
-    ExprPtr argument;
-};
-
-struct Binary {
-    Token op;
-    ExprPtr lhs;
-    ExprPtr rhs;
-};
-
-using ExprNode = std::variant<Literal, Assignment, Variable, Call, Binary>;
-
 struct Expr {
+    struct Literal {
+        Token value;
+    };
+
+    struct Assignment {
+        ExprPtr value;
+        Token name;
+    };
+
+    struct Variable {
+        Token name;
+    };
+
+    struct Call {
+        ExprPtr callee;
+        ExprPtr argument;
+    };
+
+    struct Binary {
+        Token op;
+        ExprPtr lhs;
+        ExprPtr rhs;
+    };
+
+    using ExprNode = std::variant<Literal, Assignment, Variable, Call, Binary>;
+
     ExprNode node;
 
     template <typename T, typename... Args>
     static auto make(Args &&...args) -> std::unique_ptr<Expr> {
-        return std::make_unique<Expr>(ExprNode{T{std::forward<Args>(args)...}});
+        ExprNode node = T{std::forward<Args>(args)...};
+        return std::make_unique<Expr>(Expr{std::move(node)});
     }
 };
 

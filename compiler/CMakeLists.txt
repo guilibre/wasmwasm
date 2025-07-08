@@ -2,18 +2,19 @@ cmake_minimum_required(VERSION 3.14)
 project(wasmwasm)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
-
-include(FetchContent)
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 set(BUILD_STATIC_LIB ON)
 
+include(FetchContent)
+set(BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(INSTALL_LIBS OFF CACHE BOOL "" FORCE)
 FetchContent_Declare(
     binaryen
     GIT_REPOSITORY https://github.com/WebAssembly/binaryen.git
-    GIT_TAG main
+    GIT_TAG version_123
 )
-option(BUILD_TESTS "Build GTest-based tests" OFF)
-option(BUILD_LLVM_DWARF "Enable full DWARF support" OFF)
 FetchContent_MakeAvailable(binaryen)
 
 set( COMPILE_OPTIONS
@@ -38,9 +39,6 @@ include_directories(includes)
 
 file(GLOB_RECURSE SRC_FILES ${PROJECT_SOURCE_DIR}/src/*.cpp)
 
-set(CMAKE_CXX_STANDARD 20)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
-
 add_library(${PROJECT_NAME}_lib STATIC ${SRC_FILES})
 target_link_libraries(${PROJECT_NAME}_lib binaryen)
 target_include_directories(${PROJECT_NAME}_lib PRIVATE
@@ -62,24 +60,29 @@ target_compile_options(${PROJECT_NAME} PRIVATE
 )
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Emscripten")
+    target_include_directories(${PROJECT_NAME}_lib PRIVATE
+        /home/gui/src/emsdk/upstream/emscripten/cache/sysroot/include/
+    )
     target_compile_options(${PROJECT_NAME}_lib PRIVATE
-        $<$<CONFIG:Debug>:-O0 -g -gsource-map>
+        $<$<CONFIG:Debug>:-O0 -g4 -gsource-map>
         $<$<CONFIG:Release>:-O2 -DNDEBUG>
         ${COMPILE_OPTIONS}
     )
     target_compile_options(${PROJECT_NAME} PRIVATE
-        $<$<CONFIG:Debug>:-O0 -g -gsource-map>
+        $<$<CONFIG:Debug>:-O0 -g4 -gsource-map>
         $<$<CONFIG:Release>:-O2 -DNDEBUG>
         ${COMPILE_OPTIONS}
     )
     target_link_options(${PROJECT_NAME} PRIVATE
         -sENVIRONMENT=web
-        -sNO_EXIT_RUNTIME=1
         -sEXPORT_ES6=1
         -sEXPORTED_FUNCTIONS=["_free","_run_compiler","_malloc"]
-        -sEXPORTED_RUNTIME_METHODS=["FS_readFile","FS","HEAPF32"]
+        -sEXPORTED_RUNTIME_METHODS=["FS_readFile","FS","HEAPF32","HEAPU8","lengthBytesUTF8","stringToUTF8"]
         -sFORCE_FILESYSTEM
         -sINVOKE_RUN=0
+        -sNO_DISABLE_EXCEPTION_CATCHING
+        -sNO_EXIT_RUNTIME=1
+        -sWASM=1
     )
     set_property(TARGET ${PROJECT_NAME} PROPERTY INTERPROCEDURAL_OPTIMIZATION $<$<CONFIG:Release>:ON>)
 endif()

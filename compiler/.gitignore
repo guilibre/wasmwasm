@@ -21,5 +21,4 @@
 *.slo
 *.smod
 *.so
-build
-build_wasm
+build*

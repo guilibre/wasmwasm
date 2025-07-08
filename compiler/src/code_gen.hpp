@@ -1,7 +1,9 @@
 #pragma once
 
+#include "ast.hpp"
+
 namespace code_gen {
 
-auto test(float sample_freq) -> int;
+auto insert_expr(float sample_freq, const ExprPtr &expr) -> int;
 
 } // namespace code_gen
