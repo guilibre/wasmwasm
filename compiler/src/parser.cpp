@@ -3,9 +3,6 @@
 #include "ast.hpp"
 #include "tokenizer.hpp"
 
-#include <cstdint>
-#include <stdexcept>
-#include <string>
 #include <unordered_map>
 #include <vector>
 
@@ -32,8 +29,8 @@ auto Parser::match(TokenKind kind) const -> bool {
     return current.kind == kind;
 }
 
-auto Parser::parse_assignments() -> std::vector<ExprPtr> {
-    std::vector<ExprPtr> assignments;
+auto Parser::parse_assignments() -> std::vector<ParseResult> {
+    std::vector<ParseResult> assignments;
     auto assignment = parse_assignment();
     while (assignment) {
         assignments.push_back(std::move(assignment));
@@ -50,24 +47,24 @@ auto Parser::parse_assignments() -> std::vector<ExprPtr> {
     return assignments;
 }
 
-auto Parser::parse_assignment() -> ExprPtr {
+auto Parser::parse_assignment() -> ParseResult {
     auto expr = parse_infix_expr(Precedence::Lowest);
-    if (!expr) return nullptr;
+    if (!expr) return std::unexpected(expr.error());
 
     if (match(TokenKind::Arrow)) {
         advance();
         if (!match(TokenKind::Identifier))
-            throw std::runtime_error("Expected identifier after '->'");
+            return std::unexpected("Expected identifier after '->'");
         auto name = current;
         advance();
-        return Expr::make<Expr::Assignment>(std::move(expr), name);
+        return Expr::make<Expr::Assignment>(std::move(*expr), name);
     }
     return expr;
 }
 
-auto Parser::parse_infix_expr(Precedence prec) -> ExprPtr {
+auto Parser::parse_infix_expr(Precedence prec) -> ParseResult {
     auto left = parse_application();
-    if (!left) return nullptr;
+    if (!left) return std::unexpected(left.error());
 
     while (true) {
         if (current.kind != TokenKind::Plus &&
@@ -82,46 +79,47 @@ auto Parser::parse_infix_expr(Precedence prec) -> ExprPtr {
 
         if (op_prec < prec) break;
 
-        advance(); // consume operator
+        advance();
+
         auto right = parse_infix_expr(
             static_cast<Precedence>(static_cast<uint8_t>(op_prec) + 1));
-        left = Expr::make<Expr::Binary>(op, std::move(left), std::move(right));
+        if (!right) return std::unexpected(right.error());
+
+        left =
+            Expr::make<Expr::Binary>(op, std::move(*left), std::move(*right));
     }
     return left;
 }
 
-auto Parser::parse_application() -> ExprPtr {
+auto Parser::parse_application() -> ParseResult {
     auto expr = parse_factor();
-    if (!expr) return nullptr;
+    if (!expr) return std::unexpected("Unexpected token");
 
     while (true) {
         auto arg = parse_factor();
         if (!arg) break;
-        expr = Expr::make<Expr::Call>(std::move(expr), std::move(arg));
+        expr = Expr::make<Expr::Call>(std::move(*expr), std::move(*arg));
     }
-
     return expr;
 }
 
-auto Parser::parse_factor() -> ExprPtr {
+auto Parser::parse_factor() -> ParseResult {
     auto tok = current;
     if (match(TokenKind::Number)) {
         advance();
         return Expr::make<Expr::Literal>(tok);
     }
-
     if (match(TokenKind::Identifier)) {
         advance();
         return Expr::make<Expr::Variable>(tok);
     }
-
     if (match(TokenKind::LParen)) {
         advance();
         auto expr = parse_assignment();
-        if (!match(TokenKind::RParen)) throw std::runtime_error("Expected ')'");
+        if (!expr) return std::unexpected(expr.error());
+        if (!match(TokenKind::RParen)) return std::unexpected("Expected ')'");
         advance();
         return expr;
     }
-
-    return nullptr;
+    return std::unexpected("Unexpected token");
 }

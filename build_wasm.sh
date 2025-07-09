@@ -23,8 +23,9 @@ emcmake cmake -S . -B build_wasm -DCMAKE_BUILD_TYPE="$BUILD_TYPE"
 # Build with 2 threads
 cmake --build build_wasm
 
-# Go to frontend and copy files
-cd ../frontend
+# Go to website and copy files
+cd ../website
+cp ../compiler/build_wasm/functions.wasm public/
 cp ../compiler/build_wasm/wasmwasm.wasm src/
 cp ../compiler/build_wasm/wasmwasm.js src/
 

@@ -3,12 +3,15 @@
 #include "ast.hpp"
 #include "tokenizer.hpp"
 
+#include <expected>
 #include <vector>
+
+using ParseResult = std::expected<ExprPtr, std::string>;
 
 class Parser {
   public:
     explicit Parser(Tokenizer tokenizer);
-    auto parse_assignments() -> std::vector<ExprPtr>;
+    auto parse_assignments() -> std::vector<ParseResult>;
 
   private:
     Tokenizer tokenizer;
@@ -17,8 +20,8 @@ class Parser {
     void advance();
     [[nodiscard]] auto match(TokenKind kind) const -> bool;
 
-    auto parse_assignment() -> ExprPtr;
-    auto parse_infix_expr(Precedence prec) -> ExprPtr;
-    auto parse_application() -> ExprPtr;
-    auto parse_factor() -> ExprPtr;
+    auto parse_assignment() -> ParseResult;
+    auto parse_infix_expr(Precedence prec) -> ParseResult;
+    auto parse_application() -> ParseResult;
+    auto parse_factor() -> ParseResult;
 };

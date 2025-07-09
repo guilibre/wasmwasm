@@ -1,6 +1,6 @@
 export default class WasmProcessor extends AudioWorkletProcessor {
-  private main: CallableFunction | undefined;
-  private heap: Float32Array<ArrayBuffer> | undefined;
+  private main: CallableFunction = () => {};
+  private heap: Float32Array<ArrayBuffer> = new Float32Array();
 
   public constructor() {
     super();
@@ -11,7 +11,6 @@ export default class WasmProcessor extends AudioWorkletProcessor {
       this.heap = new Float32Array(memory.buffer);
 
       const { instance } = await WebAssembly.instantiate(event.data.buffer, {
-        Math: { sin: Math.sin },
         env: { memory: memory },
       });
       this.main = instance.exports.main as CallableFunction;
@@ -22,18 +21,12 @@ export default class WasmProcessor extends AudioWorkletProcessor {
     _inputs: Float32Array[][],
     outputs: Float32Array[][]
   ): boolean {
-    if (!this.main || !this.heap) return true;
-
-    const output = outputs[0];
-    const width = output.length;
-    const height = output[0].length;
+    const width = outputs[0].length;
+    const height = outputs[0][0].length;
     this.main(0, height, width, 440);
-    const buffer = this.heap.slice(0, width * height);
-    for (let j = 0; j < height; ++j) {
-      for (let i = 0; i < width; ++i) {
-        output[i][j] = 0.1 * buffer[i + width * j];
-      }
-    }
+    for (let i = 0; i < width; ++i)
+      outputs[0][i].set(this.heap.subarray(i * height, (i + 1) * height));
+
     return true;
   }
 }

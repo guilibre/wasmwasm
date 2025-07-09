@@ -41,8 +41,7 @@ struct Expr {
 
     template <typename T, typename... Args>
     static auto make(Args &&...args) -> std::unique_ptr<Expr> {
-        ExprNode node = T{std::forward<Args>(args)...};
-        return std::make_unique<Expr>(Expr{std::move(node)});
+        return std::make_unique<Expr>(Expr{T{std::forward<Args>(args)...}});
     }
 };
 
