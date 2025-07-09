@@ -64,12 +64,12 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Emscripten")
         /home/gui/src/emsdk/upstream/emscripten/cache/sysroot/include/
     )
     target_compile_options(${PROJECT_NAME}_lib PRIVATE
-        $<$<CONFIG:Debug>:-O0 -g4 -gsource-map>
+        $<$<CONFIG:Debug>:-O0 -gsource-map>
         $<$<CONFIG:Release>:-O2 -DNDEBUG>
         ${COMPILE_OPTIONS}
     )
     target_compile_options(${PROJECT_NAME} PRIVATE
-        $<$<CONFIG:Debug>:-O0 -g4 -gsource-map>
+        $<$<CONFIG:Debug>:-O0 -gsource-map>
         $<$<CONFIG:Release>:-O2 -DNDEBUG>
         ${COMPILE_OPTIONS}
     )

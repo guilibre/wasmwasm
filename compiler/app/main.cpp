@@ -8,8 +8,8 @@
 extern "C" auto run_compiler(float sample_freq, const char *src) -> int {
     Tokenizer tokenizer(src);
     Parser parser(tokenizer);
-    auto expr = parser.parse_expr();
-    return code_gen::insert_expr(sample_freq, expr);
+    auto expressions = parser.parse_assignments();
+    return code_gen::insert_expr(sample_freq, expressions);
 }
 
 auto main(int argc, char **argv) -> int {

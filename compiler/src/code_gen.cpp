@@ -1,8 +1,9 @@
 #include "code_gen.hpp"
 
 #include "ast.hpp"
-#include "binaryen-c.h"
 #include "tokenizer.hpp"
+
+#include "binaryen-c.h"
 #include "wasm.h"
 
 #include <algorithm>
@@ -10,6 +11,8 @@
 #include <exception>
 #include <fstream>
 #include <iostream>
+#include <iterator>
+#include <numbers>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -31,6 +34,8 @@ auto generate_output(
     Module *module, BinaryenIndex offset,
     std::unordered_map<std::string_view, std::pair<BinaryenIndex, BinaryenType>>
         &variables,
+    std::unordered_map<std::string_view, Expression *> &globals,
+    std::unordered_map<std::string_view, Expression *> &constants,
     const ExprPtr &expr) -> BinaryenExpressionRef {
     auto visitor = overloaded{
         [&](const Expr::Literal &lit) -> BinaryenExpressionRef {
@@ -38,16 +43,24 @@ auto generate_output(
             return BinaryenConst(module, BinaryenLiteralFloat32(value));
         },
         [&](const Expr::Variable &var) -> BinaryenExpressionRef {
-            auto it = variables.find(var.name.lexeme);
-            if (it == variables.end())
+            auto it = globals.find(var.name.lexeme);
+            if (it != globals.end()) return it->second;
+
+            auto it2 = constants.find(var.name.lexeme);
+            if (it2 != constants.end()) return it2->second;
+
+            auto it3 = variables.find(var.name.lexeme);
+            if (it3 == variables.end())
                 throw std::runtime_error("Unknown variable: " +
                                          std::string(var.name.lexeme));
-            return BinaryenLocalGet(module, it->second.first,
-                                    it->second.second);
+            return BinaryenLocalGet(module, it3->second.first,
+                                    it3->second.second);
         },
         [&](const Expr::Binary &bin) -> BinaryenExpressionRef {
-            auto *left = generate_output(module, offset, variables, bin.lhs);
-            auto *right = generate_output(module, offset, variables, bin.rhs);
+            auto *left = generate_output(module, offset, variables, globals,
+                                         constants, bin.lhs);
+            auto *right = generate_output(module, offset, variables, globals,
+                                          constants, bin.rhs);
 
             switch (bin.op.kind) {
             case TokenKind::Plus:
@@ -67,7 +80,8 @@ auto generate_output(
             }
         },
         [&](const Expr::Assignment &asg) -> BinaryenExpressionRef {
-            auto *value = generate_output(module, offset, variables, asg.value);
+            auto *value = generate_output(module, offset, variables, globals,
+                                          constants, asg.value);
 
             auto it = variables.find(asg.name.lexeme);
             if (it == variables.end()) {
@@ -79,8 +93,20 @@ auto generate_output(
             return BinaryenLocalSet(module, it->second.first, value);
         },
         [&](const Expr::Call &call) -> BinaryenExpressionRef {
-            throw std::runtime_error(
-                "Function application not implemented in codegen");
+            const auto *callee =
+                std::get_if<Expr::Variable>(&call.callee->node);
+            if (!callee) {
+                throw std::runtime_error("Only named function calls supported");
+            }
+            auto name = callee->name.lexeme;
+            if (!call.argument)
+                throw std::runtime_error("Function call missing argument");
+            auto *arg_expr = generate_output(module, offset, variables, globals,
+                                             constants, call.argument);
+            if (name == "sin")
+                return BinaryenCall(module, "sin", &arg_expr, 1,
+                                    BinaryenTypeFloat32());
+            throw std::runtime_error("Unknown function: " + std::string(name));
         }};
 
     return std::visit(visitor, expr->node);
@@ -93,22 +119,20 @@ auto get_types(
         std::pair<std::string_view, std::pair<BinaryenIndex, BinaryenType>>>
         sorted_variables(variables.begin(), variables.end());
 
-    std::sort(sorted_variables.begin(), sorted_variables.end(),
-              [](const auto &a, const auto &b) {
-                  return a.second.first < b.second.first;
-              });
+    std::ranges::sort(sorted_variables, [](const auto &a, const auto &b) {
+        return a.second.first < b.second.first;
+    });
 
     std::vector<BinaryenType> var_types;
     var_types.reserve(sorted_variables.size());
-    std::transform(sorted_variables.begin(), sorted_variables.end(),
-                   std::back_inserter(var_types),
-                   [](const auto &p) { return p.second.second; });
+    std::ranges::transform(sorted_variables, std::back_inserter(var_types),
+                           [](const auto &p) { return p.second.second; });
 
     return var_types;
 }
 
 auto create_main_function(wasm::Module *module, float sample_freq,
-                          const ExprPtr &expr) -> void {
+                          const std::vector<ExprPtr> &exprs) -> void {
     BinaryenAddMemoryImport(module, "memory", "env", "memory", 0);
     BinaryenAddFunctionImport(module, "sin", "Math", "sin",
                               BinaryenTypeFloat32(), BinaryenTypeFloat32());
@@ -116,15 +140,22 @@ auto create_main_function(wasm::Module *module, float sample_freq,
     auto *const_0_int = BinaryenConst(module, BinaryenLiteralInt32(0));
     auto *const_1_int = BinaryenConst(module, BinaryenLiteralInt32(1));
 
-    auto time_type = BinaryenTypeFloat32();
-    BinaryenAddGlobal(module, "TIME", time_type, true,
-                      BinaryenConst(module, BinaryenLiteralFloat32(0.0)));
-    auto *get_time = BinaryenGlobalGet(module, "TIME", time_type);
-
     std::unordered_map<std::string_view, std::pair<BinaryenIndex, BinaryenType>>
         parameters;
     std::unordered_map<std::string_view, std::pair<BinaryenIndex, BinaryenType>>
         variables;
+    std::unordered_map<std::string_view, Expression *> globals;
+    std::unordered_map<std::string_view, Expression *> constants;
+
+    auto time_type = BinaryenTypeFloat32();
+    BinaryenAddGlobal(module, "TIME", time_type, true,
+                      BinaryenConst(module, BinaryenLiteralFloat32(0.0)));
+    globals.emplace("TIME", BinaryenGlobalGet(module, "TIME", time_type));
+    auto *get_time = BinaryenGlobalGet(module, "TIME", time_type);
+
+    constants.emplace(
+        "PI", BinaryenConst(module,
+                            BinaryenLiteralFloat32(std::numbers::pi_v<float>)));
 
     parameters.emplace("BASE_PTR",
                        std::make_pair(parameters.size(), BinaryenTypeInt32()));
@@ -181,8 +212,16 @@ auto create_main_function(wasm::Module *module, float sample_freq,
                        BinaryenConst(module, BinaryenLiteralInt32(4)),
                        index_expr));
 
+    std::vector<Expression *> binaryen_exprs;
+    binaryen_exprs.reserve(exprs.size());
+    std::ranges::transform(
+        exprs, std::back_inserter(binaryen_exprs), [&](const auto &expr) {
+            return generate_output(module, parameters.size(), variables,
+                                   globals, constants, expr);
+        });
     auto *generate_out =
-        generate_output(module, parameters.size(), variables, expr);
+        BinaryenBlock(module, "output_block", binaryen_exprs.data(),
+                      binaryen_exprs.size(), BinaryenTypeNone());
 
     auto it = variables.find("OUT");
     if (it == variables.end()) throw std::runtime_error("no OUT");
@@ -252,10 +291,10 @@ auto write_module_to_file(wasm::Module *module) -> int {
 
 namespace code_gen {
 
-auto insert_expr(float sample_freq, const ExprPtr &expr) -> int {
+auto insert_expr(float sample_freq, const std::vector<ExprPtr> &exprs) -> int {
     auto *module = BinaryenModuleCreate();
     try {
-        create_main_function(module, sample_freq, expr);
+        create_main_function(module, sample_freq, exprs);
 
         if (!BinaryenModuleValidate(module))
             throw std::runtime_error("error validating module\n");

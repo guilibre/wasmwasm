@@ -3,8 +3,11 @@
 #include "ast.hpp"
 #include "tokenizer.hpp"
 
+#include <cstdint>
 #include <stdexcept>
+#include <string>
 #include <unordered_map>
+#include <vector>
 
 namespace {
 
@@ -29,10 +32,28 @@ auto Parser::match(TokenKind kind) const -> bool {
     return current.kind == kind;
 }
 
-auto Parser::parse_expr() -> ExprPtr { return parse_assignment(); }
+auto Parser::parse_assignments() -> std::vector<ExprPtr> {
+    std::vector<ExprPtr> assignments;
+    auto assignment = parse_assignment();
+    while (assignment) {
+        assignments.push_back(std::move(assignment));
+        assignment = parse_assignment();
+    }
+    if (!match(TokenKind::Eof))
+        throw std::runtime_error(
+            "Unexpected token: " +
+            std::to_string(static_cast<uint8_t>(current.kind)) + " | (" +
+            std::to_string(current.line) + "," +
+            std::to_string(current.column) + ")");
+
+    advance();
+    return assignments;
+}
 
 auto Parser::parse_assignment() -> ExprPtr {
     auto expr = parse_infix_expr(Precedence::Lowest);
+    if (!expr) return nullptr;
+
     if (match(TokenKind::Arrow)) {
         advance();
         if (!match(TokenKind::Identifier))
@@ -46,6 +67,7 @@ auto Parser::parse_assignment() -> ExprPtr {
 
 auto Parser::parse_infix_expr(Precedence prec) -> ExprPtr {
     auto left = parse_application();
+    if (!left) return nullptr;
 
     while (true) {
         if (current.kind != TokenKind::Plus &&
@@ -54,7 +76,7 @@ auto Parser::parse_infix_expr(Precedence prec) -> ExprPtr {
             break;
 
         Token op = current;
-        Precedence op_prec = precedences().find(op.kind) != precedences().end()
+        Precedence op_prec = precedences().contains(op.kind)
                                  ? precedences().at(op.kind)
                                  : Precedence::Lowest;
 
@@ -70,7 +92,7 @@ auto Parser::parse_infix_expr(Precedence prec) -> ExprPtr {
 
 auto Parser::parse_application() -> ExprPtr {
     auto expr = parse_factor();
-    if (!expr) throw std::runtime_error("Unexpected token");
+    if (!expr) return nullptr;
 
     while (true) {
         auto arg = parse_factor();
@@ -95,10 +117,11 @@ auto Parser::parse_factor() -> ExprPtr {
 
     if (match(TokenKind::LParen)) {
         advance();
-        auto expr = parse_expr();
+        auto expr = parse_assignment();
         if (!match(TokenKind::RParen)) throw std::runtime_error("Expected ')'");
         advance();
         return expr;
     }
+
     return nullptr;
 }

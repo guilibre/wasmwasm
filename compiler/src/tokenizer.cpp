@@ -50,7 +50,6 @@ void Tokenizer::skip_whitespace() {
                     advance();
             else
                 return;
-
             break;
         default:
             return;
@@ -75,7 +74,6 @@ auto Tokenizer::error_token(const std::string &msg) -> Token {
 auto Tokenizer::scan_identifier() -> Token {
     while ((std::isalnum(peek_char()) != 0) || peek_char() == '_')
         advance();
-    std::string_view text = source.substr(start, current - start);
     return make_token(TokenKind::Identifier);
 }
 

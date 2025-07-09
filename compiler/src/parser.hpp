@@ -3,10 +3,12 @@
 #include "ast.hpp"
 #include "tokenizer.hpp"
 
+#include <vector>
+
 class Parser {
   public:
     explicit Parser(Tokenizer tokenizer);
-    auto parse_expr() -> ExprPtr;
+    auto parse_assignments() -> std::vector<ExprPtr>;
 
   private:
     Tokenizer tokenizer;

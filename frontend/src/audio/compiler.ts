@@ -1,13 +1,17 @@
 import Module from "../wasmwasm";
 
 export default class WasmWasm {
-  private constructor() {}
+  private constructor() { }
+
+  static is_playing: boolean = false;
 
   static async init(sample_freq: number): Promise<Uint8Array<ArrayBufferLike>> {
+    if (this.is_playing) throw Error("Already playing");
+
     const emscripten_module = await Module({});
 
     try {
-      const str = "0.1 + 0.05 -> OUT";
+      const str = "440 + 220 * sin (2 * PI * TIME * 10) -> freq sin (2 * PI * TIME * freq) -> OUT";
       const ptr = emscripten_module._malloc(str.length + 1);
       emscripten_module.HEAPU8.set(new TextEncoder().encode(str), ptr);
       emscripten_module.HEAPU8[ptr + str.length] = 0;
@@ -28,6 +32,8 @@ export default class WasmWasm {
       console.error("error reading file.");
       throw err;
     }
+
+    this.is_playing = true;
 
     return buffer;
   }
