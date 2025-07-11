@@ -25,8 +25,9 @@ cmake --build build_wasm
 
 # Go to website and copy files
 cd ../website
-cp ../compiler/build_wasm/functions.wasm public/
-cp ../compiler/build_wasm/wasmwasm.wasm src/
-cp ../compiler/build_wasm/wasmwasm.js src/
+mkdir -p public
+cp ../compiler/build_wasm/math.wasm public/
+cp ../compiler/build_wasm/wasmwasm.wasm src/wasmwasm
+cp ../compiler/build_wasm/wasmwasm.js src/wasmwasm
 
 echo "Build complete and files copied."

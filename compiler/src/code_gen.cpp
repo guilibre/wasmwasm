@@ -132,25 +132,25 @@ auto get_types(
 
 auto create_main_function(BinaryenModuleRef module, float sample_freq,
                           const std::vector<ExprPtr> &exprs,
-                          BinaryenModuleRef functions_module) -> void {
+                          BinaryenModuleRef math_module) -> void {
     BinaryenAddMemoryImport(module, "memory", "env", "memory", 0);
 
-    while (!functions_module->globals.empty()) {
-        auto gl = std::move(functions_module->globals.back());
-        functions_module->globals.pop_back();
+    while (!math_module->globals.empty()) {
+        auto gl = std::move(math_module->globals.back());
+        math_module->globals.pop_back();
         module->addGlobal(std::move(gl));
     }
 
-    while (!functions_module->memories.empty()) {
-        auto mem = std::move(functions_module->memories.back());
-        functions_module->memories.pop_back();
+    while (!math_module->memories.empty()) {
+        auto mem = std::move(math_module->memories.back());
+        math_module->memories.pop_back();
         module->addMemory(std::move(mem));
     }
 
-    while (!functions_module->functions.empty()) {
-        auto fn = std::move(functions_module->functions.back());
-        functions_module->functions.pop_back();
-        for (const auto &ex : functions_module->exports) {
+    while (!math_module->functions.empty()) {
+        auto fn = std::move(math_module->functions.back());
+        math_module->functions.pop_back();
+        for (const auto &ex : math_module->exports) {
             if (ex->getInternalName()->str == fn->name.str) {
                 fn->setExplicitName(ex->name);
                 break;
@@ -357,10 +357,10 @@ auto write_module_to_file(BinaryenModuleRef module) -> int {
 namespace code_gen {
 
 auto insert_expr(float sample_freq, const std::vector<ExprPtr> &exprs,
-                 BinaryenModuleRef functions_module) -> int {
+                 BinaryenModuleRef math_module) -> int {
     auto *module = BinaryenModuleCreate();
 
-    create_main_function(module, sample_freq, exprs, functions_module);
+    create_main_function(module, sample_freq, exprs, math_module);
     module->features = BinaryenFeatureAll();
 
     if (!BinaryenModuleValidate(module))

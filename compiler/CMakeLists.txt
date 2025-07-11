@@ -92,12 +92,12 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Emscripten")
         -g1 -O2
     )
 
-    add_executable(functions functions/sin.cpp)
-    target_compile_options(functions PRIVATE
+    add_executable(math math/sin.cpp)
+    target_compile_options(math PRIVATE
         -O2 -ffast-math -msimd128 -g1
         ${COMPILE_OPTIONS}
     )
-    target_link_options(functions PRIVATE
+    target_link_options(math PRIVATE
         -sEXPORTED_FUNCTIONS=["_wasmwasm_sin"]
         -sWASM=1
         -O2 -ffast-math -msimd128 -g1

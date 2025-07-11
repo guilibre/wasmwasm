@@ -9,6 +9,6 @@
 namespace code_gen {
 
 auto insert_expr(float sample_freq, const std::vector<ExprPtr> &exprs,
-                 BinaryenModuleRef functions_module) -> int;
+                 BinaryenModuleRef math_module) -> int;
 
 } // namespace code_gen

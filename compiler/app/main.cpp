@@ -15,9 +15,8 @@
 #include <string_view>
 #include <vector>
 
-extern "C" auto run_compiler(float sample_freq, const char *src,
-                             char *functions_bin, size_t functions_bin_size)
-    -> int {
+extern "C" auto run_compiler(float sample_freq, const char *src, char *math_bin,
+                             size_t math_bin_size) -> int {
     Tokenizer tokenizer(src);
     Parser parser(tokenizer);
     auto expression_results = parser.parse_assignments();
@@ -31,23 +30,23 @@ extern "C" auto run_compiler(float sample_freq, const char *src,
                                return std::move(*result);
                            });
 
-    auto *functions_module = BinaryenModuleReadWithFeatures(
-        functions_bin, functions_bin_size, BinaryenFeatureAll());
+    BinaryenModuleRef math_module = BinaryenModuleReadWithFeatures(
+        math_bin, math_bin_size, BinaryenFeatureAll());
 
-    BinaryenModuleOptimize(functions_module);
+    BinaryenModuleOptimize(math_module);
 
-    if (!BinaryenModuleValidate(functions_module)) {
-        std::cerr << "Error loading functions\n";
+    if (!BinaryenModuleValidate(math_module)) {
+        std::cerr << "Error loading math\n";
         return 1;
     }
 
-    return code_gen::insert_expr(sample_freq, expressions, functions_module);
+    return code_gen::insert_expr(sample_freq, expressions, math_module);
 }
 
 // for tests only
 auto main(int argc, char **argv) -> int {
     if (argc != 3) {
-        std::cout << "Use: wasmwasm <source_path> <functions_binary_path>\n";
+        std::cout << "Use: wasmwasm <source_path> <math_binary_path>\n";
         return 0;
     }
 
@@ -58,19 +57,18 @@ auto main(int argc, char **argv) -> int {
         return 1;
     }
 
-    std::string functions_path(argv[2]); // NOLINT
-    std::ifstream functions_file(functions_path,
-                                 std::ios::binary | std::ios::ate);
-    if (!functions_file.is_open()) {
-        std::cerr << "Failed to open file: " << functions_path << '\n';
+    std::string math_path(argv[2]); // NOLINT
+    std::ifstream math_file(math_path, std::ios::binary | std::ios::ate);
+    if (!math_file.is_open()) {
+        std::cerr << "Failed to open file: " << math_path << '\n';
         return 1;
     }
 
-    std::streamsize size = functions_file.tellg();
-    functions_file.seekg(0, std::ios::beg);
+    std::streamsize size = math_file.tellg();
+    math_file.seekg(0, std::ios::beg);
 
-    std::vector<char> functions_buffer(size);
-    if (!functions_file.read(functions_buffer.data(), size)) {
+    std::vector<char> math_buffer(size);
+    if (!math_file.read(math_buffer.data(), size)) {
         std::cerr << "Failed to read file.\n";
         return 1;
     }
@@ -79,5 +77,5 @@ auto main(int argc, char **argv) -> int {
     src_buffer << src_file.rdbuf();
 
     return run_compiler(1.0F / 44100.0F, src_buffer.str().c_str(),
-                        functions_buffer.data(), functions_buffer.size());
+                        math_buffer.data(), math_buffer.size());
 }

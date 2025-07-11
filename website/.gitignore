@@ -23,5 +23,5 @@ dist-ssr
 *.sln
 *.sw?
 
-src/wasmwasm.js
-src/wasmwasm.wasm
+**/wasmwasm.js
+**/*.wasm

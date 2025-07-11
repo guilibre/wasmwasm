@@ -1,4 +1,4 @@
-import Module from "../wasmwasm";
+import Module from "../wasmwasm/wasmwasm";
 
 export default class WasmWasm {
   private constructor() { }
@@ -13,7 +13,7 @@ export default class WasmWasm {
       const src_ptr = emscripten_module._malloc(src.length + 1);
       emscripten_module.HEAPU8.set(new TextEncoder().encode(src), src_ptr);
       emscripten_module.HEAPU8[src_ptr + src.length] = 0;
-      const fn_response = await fetch("/functions.wasm");
+      const fn_response = await fetch("/math.wasm");
       const fn_buffer = await fn_response.bytes();
       const fn_ptr = emscripten_module._malloc(fn_buffer.length);
       emscripten_module.HEAPU8.set(fn_buffer, fn_ptr);
