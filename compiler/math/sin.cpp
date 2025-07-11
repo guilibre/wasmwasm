@@ -1,3 +1,3 @@
 #include <cmath>
 
-extern "C" auto wasmwasm_sin(float x) -> float { return sinf(x); }
+extern "C" auto wasmwasm_sin(double x) -> double { return sin(x); }

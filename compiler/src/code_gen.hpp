@@ -8,7 +8,7 @@
 
 namespace code_gen {
 
-auto insert_expr(float sample_freq, const std::vector<ExprPtr> &exprs,
+auto insert_expr(double sample_freq, const std::vector<ExprPtr> &exprs,
                  BinaryenModuleRef math_module) -> int;
 
 } // namespace code_gen

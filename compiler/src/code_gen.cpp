@@ -33,17 +33,25 @@ auto generate_output(
         &variables,
     std::unordered_map<std::string, BinaryenType> &globals,
     std::unordered_map<std::string, BinaryenLiteral> &constants,
-    const ExprPtr &expr) -> BinaryenExpressionRef {
+    const ExprPtr &expr, double sample_freq) -> BinaryenExpressionRef {
     auto visitor = overloaded{
         [&](const Expr::Literal &lit) -> BinaryenExpressionRef {
-            float value = std::stof(std::string(lit.value.lexeme));
-            return BinaryenConst(module, BinaryenLiteralFloat32(value));
+            double value = std::stof(std::string(lit.value.lexeme));
+            return BinaryenConst(module, BinaryenLiteralFloat64(value));
         },
         [&](const Expr::Variable &var) -> BinaryenExpressionRef {
             auto it = globals.find(std::string(var.name.lexeme));
-            if (it != globals.end())
+            if (it != globals.end()) {
+                if (var.name.lexeme == "TIME")
+                    return BinaryenBinary(
+                        module, BinaryenMulFloat64(),
+                        BinaryenGlobalGet(module, "TIME",
+                                          BinaryenTypeFloat64()),
+                        BinaryenConst(module,
+                                      BinaryenLiteralFloat64(sample_freq)));
                 return BinaryenGlobalGet(
                     module, std::string(var.name.lexeme).c_str(), it->second);
+            }
 
             auto it2 = constants.find(std::string(var.name.lexeme));
             if (it2 != constants.end())
@@ -58,22 +66,22 @@ auto generate_output(
         },
         [&](const Expr::Binary &bin) -> BinaryenExpressionRef {
             auto *left = generate_output(module, offset, variables, globals,
-                                         constants, bin.lhs);
+                                         constants, bin.lhs, sample_freq);
             auto *right = generate_output(module, offset, variables, globals,
-                                          constants, bin.rhs);
+                                          constants, bin.rhs, sample_freq);
 
             switch (bin.op.kind) {
             case TokenKind::Plus:
-                return BinaryenBinary(module, BinaryenAddFloat32(), left,
+                return BinaryenBinary(module, BinaryenAddFloat64(), left,
                                       right);
             case TokenKind::Minus:
-                return BinaryenBinary(module, BinaryenSubFloat32(), left,
+                return BinaryenBinary(module, BinaryenSubFloat64(), left,
                                       right);
             case TokenKind::Star:
-                return BinaryenBinary(module, BinaryenMulFloat32(), left,
+                return BinaryenBinary(module, BinaryenMulFloat64(), left,
                                       right);
             case TokenKind::Slash:
-                return BinaryenBinary(module, BinaryenDivFloat32(), left,
+                return BinaryenBinary(module, BinaryenDivFloat64(), left,
                                       right);
             default:
                 throw std::runtime_error("unsupported binary operator");
@@ -81,13 +89,13 @@ auto generate_output(
         },
         [&](const Expr::Assignment &asg) -> BinaryenExpressionRef {
             auto *value = generate_output(module, offset, variables, globals,
-                                          constants, asg.value);
+                                          constants, asg.value, sample_freq);
 
             auto it = variables.find(std::string(asg.name.lexeme));
             if (it == variables.end()) {
                 auto idx = variables.size() + offset;
                 variables.emplace(asg.name.lexeme,
-                                  std::make_pair(idx, BinaryenTypeFloat32()));
+                                  std::make_pair(idx, BinaryenTypeFloat64()));
                 return BinaryenLocalSet(module, idx, value);
             }
             return BinaryenLocalSet(module, it->second.first, value);
@@ -101,11 +109,12 @@ auto generate_output(
             auto name = callee->name.lexeme;
             if (!call.argument)
                 throw std::runtime_error("Function call missing argument");
-            auto *arg_expr = generate_output(module, offset, variables, globals,
-                                             constants, call.argument);
+            auto *arg_expr =
+                generate_output(module, offset, variables, globals, constants,
+                                call.argument, sample_freq);
             if (name == "sin")
                 return BinaryenCall(module, "wasmwasm_sin", &arg_expr, 1,
-                                    BinaryenTypeFloat32());
+                                    BinaryenTypeFloat64());
             throw std::runtime_error("Unknown function: " + std::string(name));
         }};
 
@@ -130,7 +139,7 @@ auto get_types(
     return var_types;
 }
 
-auto create_main_function(BinaryenModuleRef module, float sample_freq,
+auto create_main_function(BinaryenModuleRef module, double sample_freq,
                           const std::vector<ExprPtr> &exprs,
                           BinaryenModuleRef math_module) -> void {
     BinaryenAddMemoryImport(module, "memory", "env", "memory", 0);
@@ -173,15 +182,15 @@ auto create_main_function(BinaryenModuleRef module, float sample_freq,
     std::unordered_map<std::string, BinaryenType> globals;
     std::unordered_map<std::string, BinaryenLiteral> constants;
 
-    auto time_type = BinaryenTypeFloat32();
+    auto time_type = BinaryenTypeFloat64();
     BinaryenAddGlobal(module, "TIME", time_type, true,
-                      BinaryenConst(module, BinaryenLiteralFloat32(10.0)));
+                      BinaryenConst(module, BinaryenLiteralFloat64(0.0)));
     globals.emplace("TIME", time_type);
     auto time_get = [&]() {
         return BinaryenGlobalGet(module, "TIME", time_type);
     };
 
-    constants.emplace("PI", BinaryenLiteralFloat32(std::numbers::pi_v<float>));
+    constants.emplace("PI", BinaryenLiteralFloat64(std::numbers::pi_v<double>));
 
     parameters.emplace("BASE_PTR",
                        std::make_pair(parameters.size(), BinaryenTypeInt32()));
@@ -268,7 +277,7 @@ auto create_main_function(BinaryenModuleRef module, float sample_freq,
     std::ranges::transform(
         exprs, std::back_inserter(binaryen_exprs), [&](const auto &expr) {
             return generate_output(module, parameters.size(), variables,
-                                   globals, constants, expr);
+                                   globals, constants, expr, sample_freq);
         });
     auto generate_out = [&]() {
         return BinaryenBlock(module, "output_block", binaryen_exprs.data(),
@@ -285,8 +294,10 @@ auto create_main_function(BinaryenModuleRef module, float sample_freq,
     };
 
     auto assign_out = [&]() {
-        return BinaryenStore(module, 4, 0, 4, address(), get_out(),
-                             BinaryenTypeFloat32(), "memory");
+        return BinaryenStore(
+            module, 4, 0, 4, address(),
+            BinaryenUnary(module, BinaryenDemoteFloat64(), get_out()),
+            BinaryenTypeFloat32(), "memory");
     };
 
     std::vector<BinaryenExpressionRef> inner_block_children = {
@@ -303,9 +314,8 @@ auto create_main_function(BinaryenModuleRef module, float sample_freq,
     auto pass_time = [&]() {
         return BinaryenGlobalSet(
             module, "TIME",
-            BinaryenBinary(
-                module, BinaryenAddFloat32(), time_get(),
-                BinaryenConst(module, BinaryenLiteralFloat32(sample_freq))));
+            BinaryenBinary(module, BinaryenAddFloat64(), time_get(),
+                           BinaryenConst(module, BinaryenLiteralFloat64(1.0))));
     };
 
     std::vector<BinaryenExpressionRef> outer_block_children = {
@@ -356,7 +366,7 @@ auto write_module_to_file(BinaryenModuleRef module) -> int {
 
 namespace code_gen {
 
-auto insert_expr(float sample_freq, const std::vector<ExprPtr> &exprs,
+auto insert_expr(double sample_freq, const std::vector<ExprPtr> &exprs,
                  BinaryenModuleRef math_module) -> int {
     auto *module = BinaryenModuleCreate();
 
@@ -367,6 +377,8 @@ auto insert_expr(float sample_freq, const std::vector<ExprPtr> &exprs,
         throw std::runtime_error("error validating module\n");
 
     BinaryenModuleOptimize(module);
+    if (!BinaryenModuleValidate(module))
+        throw std::runtime_error("error validating optimized module\n");
     if (write_module_to_file(module) != 0)
         throw std::runtime_error("error writing module\n");
 
