@@ -15,6 +15,28 @@
 #include <string_view>
 #include <vector>
 
+namespace {
+
+auto write_module_to_file(BinaryenModuleRef module) -> int {
+    std::ofstream out("/tmp/output.wasm", std::ios::binary);
+    if (!out) {
+        std::cerr << "failed to open file for writing.\n";
+        return 1;
+    }
+
+    {
+        auto buffer = BinaryenModuleAllocateAndWrite(module, nullptr);
+        out.write(static_cast<const char *>(buffer.binary),
+                  static_cast<long>(buffer.binaryBytes));
+        free(buffer.binary);
+    }
+
+    out.close();
+    return 0;
+}
+
+} // namespace
+
 extern "C" auto run_compiler(float sample_freq, const char *src, char *math_bin,
                              size_t math_bin_size) -> int {
     Tokenizer tokenizer(src);
@@ -33,14 +55,21 @@ extern "C" auto run_compiler(float sample_freq, const char *src, char *math_bin,
     BinaryenModuleRef math_module = BinaryenModuleReadWithFeatures(
         math_bin, math_bin_size, BinaryenFeatureAll());
 
-    BinaryenModuleOptimize(math_module);
-
     if (!BinaryenModuleValidate(math_module)) {
         std::cerr << "Error loading math\n";
         return 1;
     }
 
-    return code_gen::insert_expr(sample_freq, expressions, math_module);
+    BinaryenModuleRef module =
+        code_gen::insert_expr(sample_freq, expressions, math_module);
+
+    BinaryenModuleOptimize(module);
+    if (!BinaryenModuleValidate(module)) {
+        std::cerr << "invalid module";
+        return 1;
+    }
+
+    return write_module_to_file(module);
 }
 
 // for tests only
