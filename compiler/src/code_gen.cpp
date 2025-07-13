@@ -1,5 +1,4 @@
 #include "code_gen.hpp"
-
 #include "ast.hpp"
 #include "tokenizer.hpp"
 
@@ -7,8 +6,10 @@
 #include "wasm.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <iterator>
+#include <memory>
 #include <numbers>
 #include <stdexcept>
 #include <string>
@@ -24,50 +25,75 @@ template <class... Ts> struct overloaded : Ts... {
 };
 template <class... Ts> overloaded(Ts...) -> overloaded<Ts...>;
 
-auto generate_output(
-    BinaryenModuleRef module, BinaryenIndex offset,
-    std::unordered_map<std::string, std::pair<BinaryenIndex, BinaryenType>>
-        &variables,
-    std::unordered_map<std::string, BinaryenType> &globals,
-    std::unordered_map<std::string, BinaryenLiteral> &constants,
-    const ExprPtr &expr, double sample_freq) -> BinaryenExpressionRef {
+auto get_types(const std::unordered_map<
+               std::string, std::pair<BinaryenIndex, BinaryenType>> &variables)
+    -> std::vector<BinaryenType> {
+    std::vector<std::pair<std::string, std::pair<BinaryenIndex, BinaryenType>>>
+        sorted_variables(variables.begin(), variables.end());
 
+    std::ranges::sort(sorted_variables, [](const auto &a, const auto &b) {
+        return a.second.first < b.second.first;
+    });
+
+    std::vector<BinaryenType> var_types;
+    var_types.reserve(sorted_variables.size());
+    std::ranges::transform(sorted_variables, std::back_inserter(var_types),
+                           [](const auto &p) { return p.second.second; });
+
+    return var_types;
+}
+
+} // namespace
+
+CodeGen::CodeGen(BinaryenModuleRef math_module, double sample_freq)
+    : module(BinaryenModuleCreate()), math_module(math_module),
+      sample_freq(sample_freq) {
+    if (module == nullptr)
+        throw std::runtime_error("Failed to create Binaryen module");
+}
+
+CodeGen::~CodeGen() {
+    if (module != nullptr) BinaryenModuleDispose(module);
+}
+
+auto CodeGen::create(const ExprPtr &expr) -> BinaryenExpressionRef {
     auto get_literal = [&](const Expr::Literal &lit) {
-        return BinaryenConst(module, BinaryenLiteralFloat64(std::stod(
-                                         std::string(lit.value.lexeme))));
+        try {
+            double value = std::stod(std::string(lit.value.lexeme));
+            return BinaryenConst(module, BinaryenLiteralFloat64(value));
+        } catch (const std::exception &e) {
+            throw std::runtime_error("Invalid literal value: " +
+                                     std::string(lit.value.lexeme));
+        }
     };
 
     auto get_variable =
         [&](const Expr::Variable &var) -> BinaryenExpressionRef {
-        std::string name = std::string(var.name.lexeme);
+        const std::string name = std::string(var.name.lexeme);
 
         if (auto it = globals.find(name); it != globals.end()) {
-            if (name == "TIME") {
+            if (name == "TIME")
                 return BinaryenBinary(
                     module, BinaryenMulFloat64(),
                     BinaryenGlobalGet(module, "TIME", BinaryenTypeFloat64()),
                     BinaryenConst(module, BinaryenLiteralFloat64(sample_freq)));
-            }
+
             return BinaryenGlobalGet(module, name.c_str(), it->second);
         }
 
-        if (auto it = constants.find(name); it != constants.end()) {
+        if (auto it = constants.find(name); it != constants.end())
             return BinaryenConst(module, it->second);
-        }
 
-        if (auto it = variables.find(name); it != variables.end()) {
+        if (auto it = variables.find(name); it != variables.end())
             return BinaryenLocalGet(module, it->second.first,
                                     it->second.second);
-        }
 
         throw std::runtime_error("Unknown variable: " + name);
     };
 
     auto get_binary = [&](const Expr::Binary &bin) -> BinaryenExpressionRef {
-        auto *lhs = generate_output(module, offset, variables, globals,
-                                    constants, bin.lhs, sample_freq);
-        auto *rhs = generate_output(module, offset, variables, globals,
-                                    constants, bin.rhs, sample_freq);
+        auto *lhs = create(bin.lhs);
+        auto *rhs = create(bin.rhs);
 
         switch (bin.op.kind) {
         case TokenKind::Plus:
@@ -85,13 +111,12 @@ auto generate_output(
 
     auto get_assignment =
         [&](const Expr::Assignment &asg) -> BinaryenExpressionRef {
-        auto *val = generate_output(module, offset, variables, globals,
-                                    constants, asg.value, sample_freq);
-        std::string name = std::string(asg.name.lexeme);
+        auto *val = create(asg.value);
+        const std::string name = std::string(asg.name.lexeme);
 
         auto it = variables.find(name);
         if (it == variables.end()) {
-            BinaryenIndex index = offset + variables.size();
+            BinaryenIndex index = parameters.size() + variables.size();
             variables.emplace(name,
                               std::make_pair(index, BinaryenTypeFloat64()));
             return BinaryenLocalSet(module, index, val);
@@ -100,21 +125,76 @@ auto generate_output(
     };
 
     auto get_call = [&](const Expr::Call &call) -> BinaryenExpressionRef {
-        const auto *callee = std::get_if<Expr::Variable>(&call.callee->node);
-        if (!callee)
-            throw std::runtime_error("Only named function calls supported");
-        if (!call.argument)
-            throw std::runtime_error("Function call missing argument");
+        if (const auto *callee_var =
+                std::get_if<Expr::Variable>(&call.callee->node)) {
+            const std::string name = std::string(callee_var->name.lexeme);
 
-        std::string name = std::string(callee->name.lexeme);
-        auto *arg = generate_output(module, offset, variables, globals,
-                                    constants, call.argument, sample_freq);
+            if (name == "sin") {
+                BinaryenExpressionRef arg = create(call.argument);
+                return BinaryenCall(module, "wasmwasm_sin", &arg, 1,
+                                    BinaryenTypeFloat64());
+            }
 
-        if (name == "sin") {
-            return BinaryenCall(module, "wasmwasm_sin", &arg, 1,
-                                BinaryenTypeFloat64());
+            if (function_indices.contains(name)) {
+                BinaryenExpressionRef arg = create(call.argument);
+                return BinaryenCall(module, name.c_str(), &arg, 1,
+                                    BinaryenTypeFloat64());
+            }
+
+            throw std::runtime_error("Unknown function: " + name);
         }
-        throw std::runtime_error("Unknown function: " + name);
+
+        BinaryenExpressionRef func_idx = create(call.callee);
+        std::array<BinaryenExpressionRef, 1> args = {create(call.argument)};
+        return BinaryenCallIndirect(
+            module, "func_table", func_idx, args.data(), 1,
+            BinaryenTypeCreate(
+                std::array<BinaryenType, 1>{BinaryenTypeFloat64()}.data(), 1),
+            BinaryenTypeFloat64());
+    };
+
+    auto get_block = [&](const Expr::Block &block) -> BinaryenExpressionRef {
+        std::vector<BinaryenExpressionRef> children;
+        children.reserve(block.size());
+        for (const auto &expr : block)
+            children.emplace_back(create(expr));
+
+        return BinaryenBlock(module, nullptr, children.data(), children.size(),
+                             BinaryenTypeNone());
+    };
+
+    auto get_lambda = [&](const Expr::Lambda &lambda) -> BinaryenExpressionRef {
+        auto free_vars = collect_free_vars(lambda.body, {});
+        for (const auto &v : free_vars)
+            if (!std::ranges::any_of(lambda.parameters, [&](const auto &param) {
+                    return param.name.lexeme == v;
+                }))
+                throw std::runtime_error("Lambda captures variable: " + v);
+
+        const std::string name =
+            "lambda$" + std::to_string(lambda_functions.size());
+
+        auto old_variables = std::exchange(variables, {});
+        for (size_t i = 0; i < lambda.parameters.size(); ++i)
+            variables[lambda.parameters[i].name.lexeme] = {
+                i, BinaryenTypeFloat64()};
+
+        BinaryenExpressionRef body = create(lambda.body);
+
+        BinaryenFunctionRef func =
+            BinaryenAddFunction(module, name.c_str(),
+                                BinaryenTypeCreate(get_types(variables).data(),
+                                                   lambda.parameters.size()),
+                                BinaryenTypeFloat64(), nullptr, 0, body);
+
+        variables = std::move(old_variables);
+
+        function_table.push_back(name);
+        lambda_functions.emplace_back(name, func);
+        function_indices[name] = function_table.size() - 1;
+
+        return BinaryenConst(module,
+                             BinaryenLiteralInt32(function_indices[name]));
     };
 
     auto visitor = overloaded{
@@ -122,32 +202,69 @@ auto generate_output(
         [&](const Expr::Variable &var) { return get_variable(var); },
         [&](const Expr::Binary &bin) { return get_binary(bin); },
         [&](const Expr::Assignment &asg) { return get_assignment(asg); },
-        [&](const Expr::Call &call) { return get_call(call); }};
+        [&](const Expr::Call &call) { return get_call(call); },
+        [&](const Expr::Block &block) { return get_block(block); },
+        [&](const Expr::Lambda &lambda) { return get_lambda(lambda); }};
 
     return std::visit(visitor, expr->node);
 }
 
-auto get_types(
-    std::unordered_map<std::string, std::pair<BinaryenIndex, BinaryenType>>
-        &variables) -> std::vector<BinaryenType> {
-    std::vector<std::pair<std::string, std::pair<BinaryenIndex, BinaryenType>>>
-        sorted_variables(variables.begin(), variables.end());
+auto CodeGen::collect_free_vars(const ExprPtr &expr,
+                                const std::unordered_set<std::string> &bound)
+    -> std::unordered_set<std::string> {
+    using Set = std::unordered_set<std::string>;
 
-    std::ranges::sort(sorted_variables, [](const auto &a, const auto &b) {
-        return a.second.first < b.second.first;
-    });
+    struct Visitor {
+        Set bound;
+        Set result;
 
-    std::vector<BinaryenType> var_types;
-    var_types.reserve(sorted_variables.size());
-    std::ranges::transform(sorted_variables, std::back_inserter(var_types),
-                           [](const auto &p) { return p.second.second; });
+        void visit(const ExprPtr &e) { // NOLINT
+            std::visit([&](const auto &node) { visit_node(node); }, e->node);
+        }
 
-    return var_types;
+        void visit_node(const Expr::Literal & /*unused*/) {}
+
+        void visit_node(const Expr::Variable &v) {
+            std::string name = std::string(v.name.lexeme);
+            if (!bound.contains(name)) result.insert(name);
+        }
+
+        void visit_node(const Expr::Binary &b) {
+            visit(b.lhs);
+            visit(b.rhs);
+        }
+
+        void visit_node(const Expr::Assignment &a) { visit(a.value); }
+
+        void visit_node(const Expr::Call &c) {
+            visit(c.callee);
+            if (c.argument) visit(c.argument);
+        }
+
+        void visit_node(const Expr::Block &b) {
+            for (const auto &e : b)
+                visit(e);
+        }
+
+        void visit_node(const Expr::Lambda &l) {
+            Set inner_bound = bound;
+            for (const auto &param : l.parameters)
+                inner_bound.insert(std::string(param.name.lexeme));
+
+            auto inner_free = collect_free_vars(l.body, inner_bound);
+            result.insert(inner_free.begin(), inner_free.end());
+        }
+    };
+
+    Visitor v{.bound = bound};
+    v.visit(expr);
+    return v.result;
 }
 
-auto create_main_function(BinaryenModuleRef module, double sample_freq,
-                          const std::vector<ExprPtr> &exprs,
-                          BinaryenModuleRef math_module) -> void {
+auto CodeGen::create_main_module(const std::vector<ExprPtr> &exprs)
+    -> BinaryenModuleRef {
+    if (module == nullptr) throw std::runtime_error("Module not initialized");
+
     BinaryenAddMemoryImport(module, "memory", "env", "memory", 0);
 
     auto move_module_items = [&](auto &from, auto add_fn) {
@@ -179,13 +296,6 @@ auto create_main_function(BinaryenModuleRef module, double sample_freq,
         return BinaryenConst(module, BinaryenLiteralFloat64(val));
     };
 
-    std::unordered_map<std::string, std::pair<BinaryenIndex, BinaryenType>>
-        parameters;
-    std::unordered_map<std::string, std::pair<BinaryenIndex, BinaryenType>>
-        variables;
-    std::unordered_map<std::string, BinaryenType> globals;
-    std::unordered_map<std::string, BinaryenLiteral> constants;
-
     auto time_type = BinaryenTypeFloat64();
     BinaryenAddGlobal(module, "TIME", time_type, true, make_const_f64(0.0));
     globals.emplace("TIME", time_type);
@@ -195,7 +305,7 @@ auto create_main_function(BinaryenModuleRef module, double sample_freq,
 
     constants.emplace("PI", BinaryenLiteralFloat64(std::numbers::pi_v<double>));
 
-    auto add_param = [&](std::string name, BinaryenType type) {
+    auto add_param = [&](const std::string &name, BinaryenType type) {
         parameters.emplace(name, std::make_pair(parameters.size(), type));
     };
     add_param("BASE_PTR", BinaryenTypeInt32());
@@ -207,7 +317,7 @@ auto create_main_function(BinaryenModuleRef module, double sample_freq,
         return BinaryenLocalGet(module, idx, type);
     };
 
-    auto add_var = [&](std::string name, BinaryenType type) {
+    auto add_var = [&](const std::string &name, BinaryenType type) {
         variables.emplace(
             name, std::make_pair(variables.size() + parameters.size(), type));
     };
@@ -226,7 +336,6 @@ auto create_main_function(BinaryenModuleRef module, double sample_freq,
     auto *sample_cond =
         BinaryenBinary(module, BinaryenLtUInt32(), get_var("SAMPLE"),
                        get_param("NUM_SAMPLES"));
-
     auto *channel_cond =
         BinaryenBinary(module, BinaryenLtUInt32(), get_var("CHANNEL"),
                        get_param("NUM_CHANNELS"));
@@ -243,17 +352,16 @@ auto create_main_function(BinaryenModuleRef module, double sample_freq,
 
     std::vector<BinaryenExpressionRef> binaryen_exprs;
     binaryen_exprs.reserve(exprs.size());
-    std::ranges::transform(
-        exprs, std::back_inserter(binaryen_exprs), [&](const auto &expr) {
-            return generate_output(module, parameters.size(), variables,
-                                   globals, constants, expr, sample_freq);
-        });
+    for (const auto &expr : exprs)
+        binaryen_exprs.emplace_back(create(expr));
 
     auto *output_block =
         BinaryenBlock(module, "output_block", binaryen_exprs.data(),
                       binaryen_exprs.size(), BinaryenTypeNone());
 
-    if (!variables.contains("OUT")) throw std::runtime_error("no OUT");
+    if (!variables.contains("OUT"))
+        throw std::runtime_error("Output variable OUT not defined");
+
     auto [idx, type] = variables.at("OUT");
     auto *get_out = BinaryenLocalGet(module, idx, type);
 
@@ -301,20 +409,11 @@ auto create_main_function(BinaryenModuleRef module, double sample_freq,
         BinaryenTypeNone(), get_types(variables).data(), variables.size(),
         body);
     BinaryenAddFunctionExport(module, "main", "main");
-}
 
-} // namespace
+    if (!function_table.empty())
+        BinaryenAddTable(module, "func_table", 0, function_table.size(),
+                         BinaryenTypeFuncref());
 
-namespace code_gen {
-
-auto insert_expr(double sample_freq, const std::vector<ExprPtr> &exprs,
-                 BinaryenModuleRef math_module) -> BinaryenModuleRef {
-    auto *module = BinaryenModuleCreate();
-
-    create_main_function(module, sample_freq, exprs, math_module);
     module->features = BinaryenFeatureAll();
-
     return module;
 }
-
-} // namespace code_gen

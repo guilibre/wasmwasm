@@ -59,7 +59,7 @@ void Tokenizer::skip_whitespace() {
 
 auto Tokenizer::make_token(TokenKind kind) -> Token {
     return Token{.kind = kind,
-                 .lexeme = source.substr(start, current - start),
+                 .lexeme = std::string(source.substr(start, current - start)),
                  .line = line,
                  .column = column - (current - start)};
 }
@@ -118,6 +118,12 @@ auto Tokenizer::next() -> Token {
         return make_token(TokenKind::LParen);
     case ')':
         return make_token(TokenKind::RParen);
+    case '{':
+        return make_token(TokenKind::LBra);
+    case '}':
+        return make_token(TokenKind::RBra);
+    case '.':
+        return make_token(TokenKind::Period);
     default:
         return error_token("unexpected character");
     }

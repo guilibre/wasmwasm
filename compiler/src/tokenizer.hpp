@@ -6,22 +6,25 @@
 #include <string_view>
 
 enum class TokenKind : uint8_t {
-    Identifier,
-    Number,
-    Plus,
-    Minus,
-    Star,
-    Slash,
-    LParen,
-    RParen,
-    Arrow,
-    Eof,
-    Invalid
+    Identifier = 0,
+    Number = 1,
+    Plus = 2,
+    Minus = 3,
+    Star = 4,
+    Slash = 5,
+    LParen = 6,
+    RParen = 7,
+    Arrow = 8,
+    LBra = 9,
+    RBra = 10,
+    Period = 11,
+    Eof = 12,
+    Invalid = 13
 };
 
 struct Token {
     TokenKind kind;
-    std::string_view lexeme;
+    std::string lexeme;
     size_t line;
     size_t column;
 };

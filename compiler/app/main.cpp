@@ -5,14 +5,12 @@
 
 #include "src/binaryen-c.h"
 
-#include <algorithm>
 #include <fstream>
 #include <ios>
 #include <iostream>
-#include <iterator>
 #include <sstream>
-#include <stdexcept>
 #include <string_view>
+#include <variant>
 #include <vector>
 
 namespace {
@@ -41,16 +39,12 @@ extern "C" auto run_compiler(float sample_freq, const char *src, char *math_bin,
                              size_t math_bin_size) -> int {
     Tokenizer tokenizer(src);
     Parser parser(tokenizer);
-    auto expression_results = parser.parse_assignments();
-    std::vector<ExprPtr> expressions;
-    expressions.reserve(expression_results.size());
-    std::ranges::transform(expression_results, std::back_inserter(expressions),
-                           [](auto &result) -> ExprPtr {
-                               if (!result)
-                                   throw std::runtime_error(
-                                       "Invalid expression");
-                               return std::move(*result);
-                           });
+    auto result = parser.parse();
+    if (!result) {
+        std::cerr << "Parser error: " + result.error();
+        return 1;
+    }
+    auto *exprs = std::get_if<Expr::Block>(&result.value()->node);
 
     BinaryenModuleRef math_module = BinaryenModuleReadWithFeatures(
         math_bin, math_bin_size, BinaryenFeatureAll());
@@ -60,8 +54,9 @@ extern "C" auto run_compiler(float sample_freq, const char *src, char *math_bin,
         return 1;
     }
 
-    BinaryenModuleRef module =
-        code_gen::insert_expr(sample_freq, expressions, math_module);
+    CodeGen code_gen(math_module, sample_freq);
+
+    BinaryenModuleRef module = code_gen.create_main_module(*exprs);
 
     BinaryenModuleOptimize(module);
     if (!BinaryenModuleValidate(module)) {

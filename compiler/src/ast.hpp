@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <memory>
 #include <variant>
+#include <vector>
 
 struct Expr;
 
@@ -35,7 +36,15 @@ struct Expr {
         ExprPtr rhs;
     };
 
-    using ExprNode = std::variant<Literal, Assignment, Variable, Call, Binary>;
+    using Block = std::vector<ExprPtr>;
+
+    struct Lambda {
+        std::vector<Variable> parameters;
+        ExprPtr body;
+    };
+
+    using ExprNode = std::variant<Literal, Assignment, Variable, Call, Binary,
+                                  Block, Lambda>;
 
     ExprNode node;
 

@@ -3,7 +3,9 @@
 #include "ast.hpp"
 #include "tokenizer.hpp"
 
+#include <expected>
 #include <unordered_map>
+#include <variant>
 #include <vector>
 
 namespace {
@@ -29,22 +31,32 @@ auto Parser::match(TokenKind kind) const -> bool {
     return current.kind == kind;
 }
 
-auto Parser::parse_assignments() -> std::vector<ParseResult> {
-    std::vector<ParseResult> assignments;
-    auto assignment = parse_assignment();
-    while (assignment) {
-        assignments.push_back(std::move(assignment));
-        assignment = parse_assignment();
+auto Parser::parse() -> ParseResult {
+    std::vector<ExprPtr> blocks;
+    ParseResult block;
+    while ((block = parse_block())) {
+        if (block) blocks.emplace_back(std::move(*block));
     }
+
     if (!match(TokenKind::Eof))
-        throw std::runtime_error(
+        return std::unexpected(
             "Unexpected token: " +
             std::to_string(static_cast<uint8_t>(current.kind)) + " | (" +
             std::to_string(current.line) + "," +
             std::to_string(current.column) + ")");
 
-    advance();
-    return assignments;
+    return Expr::make<Expr::Block>(std::move(blocks));
+}
+
+auto Parser::parse_block() -> ParseResult {
+    std::vector<ExprPtr> expressions;
+    ParseResult expression;
+    while ((expression = parse_assignment()))
+        expressions.emplace_back(std::move(*expression));
+
+    if (expressions.size() == 0) return std::unexpected("Expected a block");
+
+    return Expr::make<Expr::Block>(std::move(expressions));
 }
 
 auto Parser::parse_assignment() -> ParseResult {
@@ -121,5 +133,29 @@ auto Parser::parse_factor() -> ParseResult {
         advance();
         return expr;
     }
+    if (match(TokenKind::LBra)) {
+        advance();
+        auto expr = parse_lambda();
+        if (!expr) return std::unexpected(expr.error());
+        return expr;
+    }
     return std::unexpected("Unexpected token");
+}
+
+auto Parser::parse_lambda() -> ParseResult {
+    std::vector<Expr::Variable> parameters;
+    ParseResult maybe_parameter;
+    while ((maybe_parameter = parse_factor())) {
+        auto *parameter =
+            std::get_if<Expr::Variable>(&maybe_parameter.value()->node);
+        if (parameter == nullptr)
+            return std::unexpected("Expected a variable name");
+        parameters.emplace_back(*parameter);
+    }
+    if (!match(TokenKind::Period)) return std::unexpected("Expected '.'");
+    advance();
+    auto block = parse_block();
+    if (!match(TokenKind::RBra)) return std::unexpected("Expected '}'");
+    advance();
+    return Expr::make<Expr::Lambda>(std::move(parameters), std::move(*block));
 }
