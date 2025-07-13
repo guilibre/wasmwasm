@@ -27,6 +27,13 @@ export default class WasmProcessor extends AudioWorkletProcessor {
     for (let i = 0; i < width; ++i)
       outputs[0][i].set(this.heap.subarray(i * height, (i + 1) * height));
 
+    if (this.port && currentFrame % 128 === 0) {
+      this.port.postMessage({
+        type: "signal",
+        data: Array.from(outputs[0][0].slice(0, 128)), // small chunk for display
+      });
+    }
+
     return true;
   }
 }
