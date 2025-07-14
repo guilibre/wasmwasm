@@ -1,10 +1,11 @@
 #include "parser.hpp"
 
-#include "ast.hpp"
+#include "../ast/ast.hpp"
 #include "tokenizer.hpp"
 
 #include <expected>
 #include <unordered_map>
+#include <unordered_set>
 #include <variant>
 #include <vector>
 
@@ -39,11 +40,9 @@ auto Parser::parse() -> ParseResult {
     }
 
     if (!match(TokenKind::Eof))
-        return std::unexpected(
-            "Unexpected token: " +
-            std::to_string(static_cast<uint8_t>(current.kind)) + " | (" +
-            std::to_string(current.line) + "," +
-            std::to_string(current.column) + ")");
+        return std::unexpected("Unexpected token: " + current.to_string() +
+                               " | (" + std::to_string(current.line) + "," +
+                               std::to_string(current.column) + ")");
 
     return Expr::make<Expr::Block>(std::move(blocks));
 }
@@ -78,16 +77,18 @@ auto Parser::parse_infix_expr(Precedence prec) -> ParseResult {
     auto left = parse_application();
     if (!left) return std::unexpected(left.error());
 
-    while (true) {
-        if (current.kind != TokenKind::Plus &&
-            current.kind != TokenKind::Minus &&
-            current.kind != TokenKind::Star && current.kind != TokenKind::Slash)
-            break;
+    auto is_infix_op = [](TokenKind kind) {
+        static const std::unordered_set<TokenKind> ops{
+            TokenKind::Plus, TokenKind::Minus, TokenKind::Star,
+            TokenKind::Slash};
+        return ops.contains(kind);
+    };
 
+    const auto &precs = precedences();
+    while (is_infix_op(current.kind)) {
         Token op = current;
-        Precedence op_prec = precedences().contains(op.kind)
-                                 ? precedences().at(op.kind)
-                                 : Precedence::Lowest;
+        Precedence op_prec =
+            precs.contains(op.kind) ? precs.at(op.kind) : Precedence::Lowest;
 
         if (op_prec < prec) break;
 
@@ -105,7 +106,10 @@ auto Parser::parse_infix_expr(Precedence prec) -> ParseResult {
 
 auto Parser::parse_application() -> ParseResult {
     auto expr = parse_factor();
-    if (!expr) return std::unexpected("Unexpected token");
+    if (!expr)
+        return std::unexpected("Unexpected token: " + current.to_string() +
+                               " | (" + std::to_string(current.line) + "," +
+                               std::to_string(current.column) + ")");
 
     while (true) {
         auto arg = parse_factor();
@@ -139,7 +143,9 @@ auto Parser::parse_factor() -> ParseResult {
         if (!expr) return std::unexpected(expr.error());
         return expr;
     }
-    return std::unexpected("Unexpected token");
+    return std::unexpected("Unexpected token: " + current.to_string() + " | (" +
+                           std::to_string(current.line) + "," +
+                           std::to_string(current.column) + ")");
 }
 
 auto Parser::parse_lambda() -> ParseResult {

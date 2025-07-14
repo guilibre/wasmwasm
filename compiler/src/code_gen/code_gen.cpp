@@ -1,6 +1,7 @@
 #include "code_gen.hpp"
-#include "ast.hpp"
-#include "tokenizer.hpp"
+
+#include "../ast/ast.hpp"
+#include "../parser/tokenizer.hpp"
 
 #include "binaryen-c.h"
 #include "wasm.h"
@@ -158,9 +159,12 @@ auto CodeGen::create(const ExprPtr &expr) -> BinaryenExpressionRef {
         children.reserve(block.size());
         for (const auto &expr : block)
             children.emplace_back(create(expr));
+        auto type = std::holds_alternative<Expr::Assignment>(block.back()->node)
+                        ? BinaryenTypeNone()
+                        : BinaryenTypeFloat64();
 
         return BinaryenBlock(module, nullptr, children.data(), children.size(),
-                             BinaryenTypeNone());
+                             type);
     };
 
     auto get_lambda = [&](const Expr::Lambda &lambda) -> BinaryenExpressionRef {

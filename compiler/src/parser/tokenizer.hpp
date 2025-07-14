@@ -27,6 +27,7 @@ struct Token {
     std::string lexeme;
     size_t line;
     size_t column;
+    [[nodiscard]] auto to_string() const -> std::string;
 };
 
 class Tokenizer {

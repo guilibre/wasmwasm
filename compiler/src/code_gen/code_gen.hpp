@@ -1,6 +1,6 @@
 #pragma once
 
-#include "ast.hpp"
+#include "../ast/ast.hpp"
 
 #include "binaryen-c.h"
 
@@ -33,7 +33,7 @@ class CodeGen {
     CodeGen(CodeGen &&) = delete;
     auto operator=(const CodeGen &) -> CodeGen & = default;
     auto operator=(CodeGen &&) -> CodeGen & = delete;
-    CodeGen(BinaryenModuleRef math_module, double sample_freq);
+    explicit CodeGen(BinaryenModuleRef math_module, double sample_freq);
     ~CodeGen();
 
     auto create_main_module(const std::vector<ExprPtr> &exprs)

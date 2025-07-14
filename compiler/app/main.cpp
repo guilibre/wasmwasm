@@ -1,7 +1,7 @@
-#include "ast.hpp"
-#include "code_gen.hpp"
-#include "parser.hpp"
-#include "tokenizer.hpp"
+#include "ast/ast.hpp"
+#include "code_gen/code_gen.hpp"
+#include "parser/parser.hpp"
+#include "parser/tokenizer.hpp"
 
 #include "src/binaryen-c.h"
 
@@ -39,12 +39,21 @@ extern "C" auto run_compiler(float sample_freq, const char *src, char *math_bin,
                              size_t math_bin_size) -> int {
     Tokenizer tokenizer(src);
     Parser parser(tokenizer);
-    auto result = parser.parse();
-    if (!result) {
-        std::cerr << "Parser error: " + result.error();
+    auto parse_result = parser.parse();
+    if (!parse_result) {
+        std::cerr << "Parser error: " + parse_result.error();
         return 1;
     }
-    auto *exprs = std::get_if<Expr::Block>(&result.value()->node);
+
+    ASTPrinter printer;
+    std::cout << printer.print(**parse_result);
+
+    LambdaInliner lambda_inliner;
+    parse_result = lambda_inliner.visit(std::move(*parse_result));
+
+    std::cout << printer.print(**parse_result);
+
+    auto *exprs = std::get_if<Expr::Block>(&parse_result.value()->node);
 
     BinaryenModuleRef math_module = BinaryenModuleReadWithFeatures(
         math_bin, math_bin_size, BinaryenFeatureAll());

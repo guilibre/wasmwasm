@@ -1,6 +1,54 @@
 #include "tokenizer.hpp"
 
 #include <cctype>
+#include <string>
+
+auto Token::to_string() const -> std::string {
+    std::string kind_string;
+    switch (kind) {
+    case TokenKind::Arrow:
+        kind_string = "->";
+        break;
+    case TokenKind::Plus:
+        kind_string = "+";
+        break;
+    case TokenKind::Minus:
+        kind_string = "-";
+        break;
+    case TokenKind::Star:
+        kind_string = "*";
+        break;
+    case TokenKind::Slash:
+        kind_string = "/";
+        break;
+    case TokenKind::LParen:
+        kind_string = "(";
+        break;
+    case TokenKind::RParen:
+        kind_string = ")";
+        break;
+    case TokenKind::LBra:
+        kind_string = "{";
+        break;
+    case TokenKind::RBra:
+        kind_string = "}";
+        break;
+    case TokenKind::Period:
+        kind_string = ".";
+        break;
+    case TokenKind::Eof:
+        kind_string = "eof";
+        break;
+    case TokenKind::Invalid:
+        kind_string = "unknown";
+        break;
+    default:
+        kind_string = lexeme;
+        break;
+    }
+    return kind_string + "|(" + std::to_string(line) + "," +
+           std::to_string(column) + ")";
+}
 
 Tokenizer::Tokenizer(std::string_view src) : source(src) {}
 
