@@ -1,198 +1,77 @@
 #include "ast.hpp"
 
-#include <memory>
-#include <ranges>
+#include <sstream>
 #include <string>
-#include <unordered_map>
-#include <utility>
 #include <variant>
 
-SubstitutionVisitor::SubstitutionVisitor(
-    std::unordered_map<std::string, ExprPtr> replacements)
-    : replacements(std::move(replacements)) {}
-
-auto SubstitutionVisitor::visit(ExprPtr expr) -> ExprPtr {
-    return std::visit(*this, expr->node);
+auto ASTPrinter::print(const ExprPtr &expr, size_t indent) // NOLINT
+    -> std::string {
+    return std::visit([&](auto &node) { return dispatch(expr, node, indent); },
+                      expr->node);
 }
 
-auto SubstitutionVisitor::operator()(Expr::Assignment &assign) -> ExprPtr {
-    return Expr::make<Expr::Assignment>(visit(std::move(assign.value)),
-                                        std::move(assign.name));
+auto ASTPrinter::operator()(ExprPtr expr) -> std::string { return print(expr); }
+
+auto ASTPrinter::dispatch(const ExprPtr &expr, Expr::Assignment &asg,
+                          size_t indent) -> std::string {
+    std::ostringstream out;
+    out << indent_str(indent) << "Assignment(" << asg.name.lexeme << ")\n";
+    out << print(asg.value, indent + 2);
+    return attach_type(out.str(), expr, indent);
 }
 
-auto SubstitutionVisitor::operator()(Expr::Binary &bin) -> ExprPtr {
-    return Expr::make<Expr::Binary>(bin.op, visit(std::move(bin.lhs)),
-                                    visit(std::move(bin.rhs)));
+auto ASTPrinter::dispatch(const ExprPtr &expr, Expr::Binary &bin, size_t indent)
+    -> std::string {
+    std::ostringstream out;
+    out << indent_str(indent) << "Binary(" << tokenkind_to_string(bin.op.kind)
+        << ")\n";
+    out << print(bin.lhs, indent + 2);
+    out << print(bin.rhs, indent + 2);
+    return attach_type(out.str(), expr, indent);
 }
 
-auto SubstitutionVisitor::operator()(Expr::Block &block) -> ExprPtr {
-    std::vector<ExprPtr> result;
-    result.reserve(block.size());
-    for (auto &expr : block)
-        result.emplace_back(visit(std::move(expr)));
-
-    return Expr::make<Expr::Block>(std::move(result));
-}
-
-auto SubstitutionVisitor::operator()(Expr::Call &call) -> ExprPtr {
-    return Expr::make<Expr::Call>(visit(std::move(call.callee)),
-                                  visit(std::move(call.argument)));
-}
-
-auto SubstitutionVisitor::operator()(Expr::Lambda &lambda) -> ExprPtr {
-    return Expr::make<Expr::Lambda>(std::move(lambda.parameters),
-                                    visit(std::move(lambda.body)));
-}
-
-auto SubstitutionVisitor::operator()(Expr::Literal &lit) -> ExprPtr {
-    return Expr::make<Expr::Literal>(std::move(lit));
-}
-
-auto SubstitutionVisitor::operator()(Expr::Variable &var) -> ExprPtr {
-    if (replacements.contains(var.name.lexeme)) {
-        return std::move(replacements.at(var.name.lexeme));
+auto ASTPrinter::dispatch(const ExprPtr &expr, Expr::Block &block,
+                          size_t indent) -> std::string {
+    std::ostringstream out;
+    out << indent_str(indent) << "Block\n";
+    for (auto &e : block.expressions) {
+        out << print(e, indent + 2);
     }
-    return Expr::make<Expr::Variable>(var);
+    return attach_type(out.str(), expr, indent);
 }
 
-void LambdaInliner::collect_arguments(ExprPtr expr,
-                                      std::vector<ExprPtr> &args) {
-    auto *call = std::get_if<Expr::Call>(&expr->node);
-    if (call == nullptr) {
-        args.push_back(std::move(expr));
-    } else {
-        collect_arguments(std::move(call->callee), args);
-        args.push_back(std::move(call->argument));
-    }
+auto ASTPrinter::dispatch(const ExprPtr &expr, Expr::Call &call, size_t indent)
+    -> std::string {
+    std::ostringstream out;
+    out << indent_str(indent) << "Call\n";
+    out << print(call.callee, indent + 2);
+    out << print(call.argument, indent + 2);
+    return attach_type(out.str(), expr, indent);
 }
 
-auto LambdaInliner::apply_arguments(ExprPtr lambda, std::vector<ExprPtr> args)
-    -> ExprPtr {
-    for (auto &arg : args) {
-        auto *lam = std::get_if<Expr::Lambda>(&lambda->node);
-        if (lam == nullptr || lam->parameters.empty()) break;
-
-        std::unordered_map<std::string, ExprPtr> subs;
-        subs[lam->parameters[0].name.lexeme] = std::move(arg);
-
-        if (lam->parameters.size() <= 1) {
-            SubstitutionVisitor substitution_visitor(std::move(subs));
-            lambda = substitution_visitor.visit(std::move(lam->body));
-        } else {
-            std::vector<Expr::Variable> remaining_params(
-                lam->parameters.begin() + 1, lam->parameters.end());
-            SubstitutionVisitor substitution_visitor(std::move(subs));
-            lambda = Expr::make<Expr::Lambda>(
-                std::move(remaining_params),
-                substitution_visitor.visit(std::move(lam->body)));
-        }
-    }
-    return lambda;
+auto ASTPrinter::dispatch(const ExprPtr &expr, Expr::Lambda &lam, size_t indent)
+    -> std::string {
+    std::ostringstream out;
+    out << indent_str(indent) << "Lambda(" << lam.parameter.lexeme << ")\n";
+    out << print(lam.body, indent + 2);
+    return attach_type(out.str(), expr, indent);
 }
 
-auto LambdaInliner::visit(ExprPtr expr) -> ExprPtr {
-    if (!expr) return nullptr;
-    return std::visit(*this, expr->node);
+auto ASTPrinter::dispatch(const ExprPtr &expr, Expr::Literal &lit,
+                          size_t indent) -> std::string {
+    std::ostringstream out;
+    out << indent_str(indent) << "Literal(" << lit.value.lexeme << ")";
+    return attach_type(out.str(), expr, indent, true);
 }
 
-auto LambdaInliner::operator()(Expr::Assignment &assign) -> ExprPtr {
-    return Expr::make<Expr::Assignment>(visit(std::move(assign.value)),
-                                        std::move(assign.name));
+auto ASTPrinter::dispatch(const ExprPtr &expr, Expr::Variable &var,
+                          size_t indent) -> std::string {
+    std::ostringstream out;
+    out << indent_str(indent) << "Variable(" << var.name.lexeme << ")";
+    return attach_type(out.str(), expr, indent, true);
 }
 
-auto LambdaInliner::operator()(Expr::Binary &bin) -> ExprPtr {
-    return Expr::make<Expr::Binary>(bin.op, visit(std::move(bin.lhs)),
-                                    visit(std::move(bin.rhs)));
-}
-
-auto LambdaInliner::operator()(Expr::Block &block) -> ExprPtr {
-    std::vector<ExprPtr> result;
-    result.reserve(block.size());
-    for (auto &expr : block)
-        result.emplace_back(visit(std::move(expr)));
-
-    return Expr::make<Expr::Block>(std::move(result));
-}
-
-auto LambdaInliner::operator()(Expr::Call &call) -> ExprPtr {
-    std::vector<ExprPtr> args;
-    collect_arguments(Expr::make<Expr::Call>(std::move(call.callee),
-                                             std::move(call.argument)),
-                      args);
-
-    ExprPtr lambda = visit(std::move(args.back()));
-    args.pop_back();
-
-    for (auto &arg : args)
-        arg = visit(std::move(arg));
-
-    if (auto result = apply_arguments(std::move(lambda), std::move(args)))
-        return result;
-
-    ExprPtr current = std::move(lambda);
-    for (auto &arg : std::ranges::reverse_view(args))
-        current = Expr::make<Expr::Call>(std::move(current), std::move(arg));
-
-    return current;
-}
-
-auto LambdaInliner::operator()(Expr::Lambda &lambda) -> ExprPtr {
-    return Expr::make<Expr::Lambda>(std::move(lambda.parameters),
-                                    visit(std::move(lambda.body)));
-}
-
-auto LambdaInliner::operator()(Expr::Literal &lit) -> ExprPtr {
-    return Expr::make<Expr::Literal>(std::move(lit));
-}
-
-auto LambdaInliner::operator()(Expr::Variable &var) -> ExprPtr {
-    return Expr::make<Expr::Variable>(std::move(var));
-}
-
-auto ASTPrinter::print(const Expr &expr) -> std::string {
-    return std::visit(*this, expr.node);
-}
-
-auto ASTPrinter::operator()(const Expr::Literal &lit) -> std::string {
-    return lit.value.lexeme;
-}
-
-auto ASTPrinter::operator()(const Expr::Variable &var) -> std::string {
-    return var.name.lexeme;
-}
-
-auto ASTPrinter::operator()(const Expr::Assignment &asg) -> std::string {
-    return print(*asg.value) + " -> " + asg.name.lexeme;
-}
-
-auto ASTPrinter::operator()(const Expr::Binary &bin) -> std::string {
-    return "(" + print(*bin.lhs) + " " + token_to_string(bin.op.kind) + " " +
-           print(*bin.rhs) + ")";
-}
-
-auto ASTPrinter::operator()(const Expr::Call &call) -> std::string {
-    return print(*call.callee) + "(" +
-           (call.argument ? print(*call.argument) : "") + ")";
-}
-
-auto ASTPrinter::operator()(const Expr::Block &block) -> std::string {
-    std::string result = "{\n";
-    for (const auto &expr : block) {
-        result += "  " + print(*expr) + ";\n";
-    }
-    return result + "}";
-}
-
-auto ASTPrinter::operator()(const Expr::Lambda &lambda) -> std::string {
-    std::string params;
-    for (const auto &param : lambda.parameters) {
-        if (!params.empty()) params += ", ";
-        params += param.name.lexeme;
-    }
-    return "λ(" + params + "). " + print(*lambda.body);
-}
-
-auto ASTPrinter::token_to_string(TokenKind kind) -> std::string {
+auto ASTPrinter::tokenkind_to_string(TokenKind kind) -> std::string {
     switch (kind) {
     case TokenKind::Plus:
         return "+";
@@ -204,7 +83,62 @@ auto ASTPrinter::token_to_string(TokenKind kind) -> std::string {
         return "/";
     case TokenKind::Arrow:
         return "->";
+    case TokenKind::LParen:
+        return "(";
+    case TokenKind::RParen:
+        return ")";
+    case TokenKind::LBra:
+        return "{";
+    case TokenKind::RBra:
+        return "}";
+    case TokenKind::Identifier:
+        return "identifier";
+    case TokenKind::Number:
+        return "number";
+    case TokenKind::Eof:
+        return "<eof>";
     default:
-        return "<?>";
+        return "<unknown>";
     }
+}
+
+auto ASTPrinter::indent_str(size_t indent) const -> std::string { // NOLINT
+    return std::string(indent, ' ');                              // NOLINT
+}
+
+auto ASTPrinter::attach_type(const std::string &str, const ExprPtr &expr,
+                             size_t indent, bool inline_type) -> std::string {
+    if (!expr->type) return str + (inline_type ? "\n" : "");
+    std::ostringstream out;
+    if (inline_type) {
+        out << " : " << type_to_string(expr->type) << "\n";
+    } else {
+        out << indent_str(indent + 2) << "[type: " << type_to_string(expr->type)
+            << "]\n";
+    }
+    return str + out.str();
+}
+
+auto ASTPrinter::type_to_string(const TypePtr &type) -> std::string {
+    if (auto *base = std::get_if<TypeBase>(&type->node)) {
+        switch (base->kind) {
+        case BaseTypeKind::Int:
+            return "int";
+        case BaseTypeKind::Bool:
+            return "bool";
+        case BaseTypeKind::Float:
+            return "float";
+        default:
+            return "<?>";
+        }
+    }
+
+    if (auto *fun = std::get_if<TypeFun>(&type->node))
+        return type_to_string(fun->param) + " -> " +
+               type_to_string(fun->result);
+
+    if (auto *var = std::get_if<TypeVar>(&type->node))
+        return "t" + std::to_string(var->id);
+
+    return "<?>";
 }

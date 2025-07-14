@@ -4,6 +4,8 @@
 #include "parser/tokenizer.hpp"
 
 #include "src/binaryen-c.h"
+#include "types/type.hpp"
+#include "types/type_inference.hpp"
 
 #include <fstream>
 #include <ios>
@@ -45,18 +47,20 @@ extern "C" auto run_compiler(float sample_freq, const char *src, char *math_bin,
         return 1;
     }
 
-    ASTPrinter printer;
-    std::cout << printer.print(**parse_result);
-
-    LambdaInliner lambda_inliner;
-    parse_result = lambda_inliner.visit(std::move(*parse_result));
-
-    std::cout << printer.print(**parse_result);
+    auto float_type = Type::make<TypeBase>(BaseTypeKind::Float);
+    std::unordered_map<std::string_view, TypePtr> env{
+        {"PI", float_type},
+        {"TIME", float_type},
+        {"sin", Type::make<TypeFun>(float_type, float_type)},
+    };
+    Substitution subst;
+    TypeGenerator gen;
+    infer_expr(*parse_result, env, subst, gen);
 
     auto *exprs = std::get_if<Expr::Block>(&parse_result.value()->node);
 
-    BinaryenModuleRef math_module = BinaryenModuleReadWithFeatures(
-        math_bin, math_bin_size, BinaryenFeatureAll());
+    auto *math_module = BinaryenModuleReadWithFeatures(math_bin, math_bin_size,
+                                                       BinaryenFeatureAll());
 
     if (!BinaryenModuleValidate(math_module)) {
         std::cerr << "Error loading math\n";
@@ -65,13 +69,15 @@ extern "C" auto run_compiler(float sample_freq, const char *src, char *math_bin,
 
     CodeGen code_gen(math_module, sample_freq);
 
-    BinaryenModuleRef module = code_gen.create_main_module(*exprs);
+    auto *module = code_gen.create_main_module(exprs->expressions);
 
-    BinaryenModuleOptimize(module);
+    BinaryenModulePrint(module);
+
     if (!BinaryenModuleValidate(module)) {
         std::cerr << "invalid module";
         return 1;
     }
+    BinaryenModuleOptimize(module);
 
     return write_module_to_file(module);
 }

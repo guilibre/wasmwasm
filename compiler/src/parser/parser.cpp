@@ -1,6 +1,7 @@
 #include "parser.hpp"
 
 #include "../ast/ast.hpp"
+#include "../types/type_inference.hpp"
 #include "tokenizer.hpp"
 
 #include <expected>
@@ -34,15 +35,18 @@ auto Parser::match(TokenKind kind) const -> bool {
 
 auto Parser::parse() -> ParseResult {
     std::vector<ExprPtr> blocks;
-    ParseResult block;
-    while ((block = parse_block())) {
-        if (block) blocks.emplace_back(std::move(*block));
+    while (auto block = parse_block()) {
+        if (!block) return std::unexpected(block.error());
+        blocks.emplace_back(std::move(*block));
     }
 
     if (!match(TokenKind::Eof))
         return std::unexpected("Unexpected token: " + current.to_string() +
                                " | (" + std::to_string(current.line) + "," +
                                std::to_string(current.column) + ")");
+
+    std::unordered_map<std::string_view, TypePtr> env;
+    Substitution subst;
 
     return Expr::make<Expr::Block>(std::move(blocks));
 }
@@ -149,19 +153,24 @@ auto Parser::parse_factor() -> ParseResult {
 }
 
 auto Parser::parse_lambda() -> ParseResult {
-    std::vector<Expr::Variable> parameters;
-    ParseResult maybe_parameter;
-    while ((maybe_parameter = parse_factor())) {
-        auto *parameter =
-            std::get_if<Expr::Variable>(&maybe_parameter.value()->node);
-        if (parameter == nullptr)
-            return std::unexpected("Expected a variable name");
-        parameters.emplace_back(*parameter);
+    ParseResult maybe_parameter = parse_factor();
+    if (!maybe_parameter) return std::unexpected("Expected a variable name");
+    auto *parameter =
+        std::get_if<Expr::Variable>(&maybe_parameter.value()->node);
+    if (parameter == nullptr)
+        return std::unexpected("Expected a variable name");
+
+    if (match(TokenKind::Period)) {
+        advance();
+        auto block = parse_block();
+        if (!match(TokenKind::RBra)) return std::unexpected("Expected '}'");
+        advance();
+        return Expr::make<Expr::Lambda>(std::move(parameter->name),
+                                        std::move(*block));
     }
-    if (!match(TokenKind::Period)) return std::unexpected("Expected '.'");
-    advance();
-    auto block = parse_block();
-    if (!match(TokenKind::RBra)) return std::unexpected("Expected '}'");
-    advance();
-    return Expr::make<Expr::Lambda>(std::move(parameters), std::move(*block));
+
+    auto inner_lambda = parse_lambda();
+    if (!inner_lambda) return std::unexpected(inner_lambda.error());
+    return Expr::make<Expr::Lambda>(std::move(parameter->name),
+                                    std::move(*inner_lambda));
 }

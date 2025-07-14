@@ -9,6 +9,8 @@
 #include <vector>
 
 class CodeGen {
+    int32_t heap_top = 1024;
+
     BinaryenModuleRef module;
     BinaryenModuleRef math_module;
     double sample_freq;
@@ -19,14 +21,19 @@ class CodeGen {
         parameters;
     std::unordered_map<std::string, std::pair<BinaryenIndex, BinaryenType>>
         variables;
-    std::unordered_map<std::string, BinaryenIndex> function_indices;
-    std::vector<std::pair<std::string, BinaryenFunctionRef>> lambda_functions;
-    std::vector<std::string> function_table;
+    std::unordered_map<std::string,
+                       std::pair<BinaryenIndex, BinaryenFunctionRef>>
+        function_indices;
+    std::unordered_set<std::string> mem_loaded_variables;
+    std::unordered_map<std::string, std::string> lambda_env;
 
     auto create(const ExprPtr &expr) -> BinaryenExpressionRef;
     static auto collect_free_vars(const ExprPtr &expr,
                                   const std::unordered_set<std::string> &bound)
         -> std::unordered_set<std::string>;
+    auto make_closure(BinaryenExpressionRef func_index_expr,
+                      const std::vector<BinaryenExpressionRef> &captured_values)
+        -> BinaryenExpressionRef;
 
   public:
     CodeGen(const CodeGen &) = default;

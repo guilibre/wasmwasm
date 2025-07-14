@@ -7,15 +7,6 @@
 #include <type_traits>
 #include <variant>
 
-class TypeGenerator {
-    size_t current_type = 0;
-
-  public:
-    auto fresh_type_var() -> TypePtr {
-        return Type::make<TypeVar>(current_type++);
-    }
-};
-
 auto occurs_in(size_t var_id, const TypePtr &type) -> bool {
     return std::visit(
         [&](const auto &node) -> bool {
@@ -99,45 +90,66 @@ void unify(const TypePtr &a, const TypePtr &b, Substitution &subst) {
 
 auto infer_expr(const ExprPtr &expr,
                 std::unordered_map<std::string_view, TypePtr> &env,
-                Substitution &subst) -> TypePtr {
-    auto gen = TypeGenerator();
+                Substitution &subst, TypeGenerator &gen) -> TypePtr {
     return std::visit(
         [&](const auto &node) -> TypePtr {
             using T = std::decay_t<decltype(node)>;
+            if constexpr (std::is_same_v<T, Expr::Assignment>) {
+                node.value->type = infer_expr(node.value, env, subst, gen);
+                env[node.name.lexeme] = node.value->type;
+                return node.value->type;
+            }
+
+            if constexpr (std::is_same_v<T, Expr::Binary>) {
+                node.lhs->type = infer_expr(node.lhs, env, subst, gen);
+                node.rhs->type = infer_expr(node.rhs, env, subst, gen);
+
+                unify(node.lhs->type, Type::make<TypeBase>(BaseTypeKind::Float),
+                      subst);
+                unify(node.rhs->type, Type::make<TypeBase>(BaseTypeKind::Float),
+                      subst);
+
+                node.lhs->type = apply_subst(subst, node.lhs->type);
+                node.rhs->type = apply_subst(subst, node.rhs->type);
+
+                return Type::make<TypeBase>(BaseTypeKind::Float);
+            }
+
+            if constexpr (std::is_same_v<T, Expr::Block>) {
+                for (auto &child : node.expressions)
+                    child->type = infer_expr(child, env, subst, gen);
+                return node.expressions.back()->type;
+            }
+
+            if constexpr (std::is_same_v<T, Expr::Call>) {
+                node.callee->type = infer_expr(node.callee, env, subst, gen);
+                node.argument->type =
+                    infer_expr(node.argument, env, subst, gen);
+                auto result_type = gen.fresh_type_var();
+                unify(node.callee->type,
+                      Type::make<TypeFun>(node.argument->type, result_type),
+                      subst);
+                return result_type;
+            }
+
+            if constexpr (std::is_same_v<T, Expr::Lambda>) {
+                auto param_type = gen.fresh_type_var();
+                env[node.parameter.lexeme] = param_type;
+                node.body->type = infer_expr(node.body, env, subst, gen);
+                env.erase(node.parameter.lexeme);
+                return Type::make<TypeFun>(apply_subst(subst, param_type),
+                                           apply_subst(subst, node.body->type));
+            }
 
             if constexpr (std::is_same_v<T, Expr::Literal>)
                 return Type::make<TypeBase>(BaseTypeKind::Float);
+
             if constexpr (std::is_same_v<T, Expr::Variable>) {
                 auto it = env.find(node.name.lexeme);
                 if (it == env.end())
                     throw std::runtime_error("Unbound variable: " +
                                              std::string(node.name.lexeme));
                 return apply_subst(subst, it->second);
-            }
-            if constexpr (std::is_same_v<T, Expr::Assignment>) {
-                auto rhs_type = infer_expr(node.value, env, subst);
-                env[node.name.lexeme] = rhs_type;
-                return rhs_type;
-            }
-
-            if constexpr (std::is_same_v<T, Expr::Call>) {
-                auto fn_type = infer_expr(node.callee, env, subst);
-                auto arg_type = infer_expr(node.argument, env, subst);
-                auto result_type = gen.fresh_type_var();
-                unify(fn_type, Type::make<TypeFun>(arg_type, result_type),
-                      subst);
-                return result_type;
-            }
-
-            if constexpr (std::is_same_v<T, Expr::Binary>) {
-                auto left_type = infer_expr(node.lhs, env, subst);
-                auto right_type = infer_expr(node.rhs, env, subst);
-
-                unify(left_type, Type::make<TypeBase>(BaseTypeKind::Float),
-                      subst);
-                unify(right_type, Type::make<TypeBase>(BaseTypeKind::Float),
-                      subst);
-                return Type::make<TypeBase>(BaseTypeKind::Float);
             }
 
             throw std::runtime_error("Unknown expression type");

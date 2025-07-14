@@ -1,10 +1,10 @@
 #pragma once
 
 #include "../parser/tokenizer.hpp"
+#include "../types/type.hpp"
 
 #include <cstdint>
 #include <memory>
-#include <unordered_map>
 #include <variant>
 #include <vector>
 
@@ -13,22 +13,9 @@ struct Expr;
 using ExprPtr = std::unique_ptr<Expr>;
 
 struct Expr {
-    struct Literal {
-        Token value;
-    };
-
     struct Assignment {
         ExprPtr value;
         Token name;
-    };
-
-    struct Variable {
-        Token name;
-    };
-
-    struct Call {
-        ExprPtr callee;
-        ExprPtr argument;
     };
 
     struct Binary {
@@ -37,73 +24,69 @@ struct Expr {
         ExprPtr rhs;
     };
 
-    using Block = std::vector<ExprPtr>;
+    struct Block {
+        std::vector<ExprPtr> expressions;
+    };
+
+    struct Call {
+        ExprPtr callee;
+        ExprPtr argument;
+    };
 
     struct Lambda {
-        std::vector<Variable> parameters;
+        Token parameter;
         ExprPtr body;
     };
 
-    using ExprNode = std::variant<Literal, Assignment, Variable, Call, Binary,
-                                  Block, Lambda>;
+    struct Literal {
+        Token value;
+    };
+
+    struct Variable {
+        Token name;
+    };
+
+    using ExprNode = std::variant<Assignment, Binary, Block, Call, Lambda,
+                                  Literal, Variable>;
 
     ExprNode node;
+    TypePtr type;
 
     template <typename T, typename... Args>
     static auto make(Args &&...args) -> std::unique_ptr<Expr> {
-        return std::make_unique<Expr>(Expr{T{std::forward<Args>(args)...}});
+        return std::make_unique<Expr>(Expr{
+            .node = T{std::forward<Args>(args)...},
+            .type = nullptr,
+        });
     }
 };
 
 enum class Precedence : uint8_t { Lowest = 0, AddSub, MulDiv, Call };
 
-class SubstitutionVisitor {
-    std::unordered_map<std::string, ExprPtr> replacements;
-
-  public:
-    explicit SubstitutionVisitor(
-        std::unordered_map<std::string, ExprPtr> replacements);
-
-    auto visit(ExprPtr expr) -> ExprPtr;
-
-    auto operator()(Expr::Assignment &assign) -> ExprPtr;
-    auto operator()(Expr::Binary &bin) -> ExprPtr;
-    auto operator()(Expr::Block &block) -> ExprPtr;
-    auto operator()(Expr::Call &call) -> ExprPtr;
-    auto operator()(Expr::Lambda &lambda) -> ExprPtr;
-    auto operator()(Expr::Literal &lit) -> ExprPtr;
-    auto operator()(Expr::Variable &var) -> ExprPtr;
-};
-
-class LambdaInliner {
-    void collect_arguments(ExprPtr expr, std::vector<ExprPtr> &args);
-    static auto apply_arguments(ExprPtr lambda, std::vector<ExprPtr> args)
-        -> ExprPtr;
-
-  public:
-    auto visit(ExprPtr expr) -> ExprPtr;
-
-    auto operator()(Expr::Assignment &assign) -> ExprPtr;
-    auto operator()(Expr::Binary &bin) -> ExprPtr;
-    auto operator()(Expr::Block &block) -> ExprPtr;
-    auto operator()(Expr::Call &call) -> ExprPtr;
-    auto operator()(Expr::Lambda &lambda) -> ExprPtr;
-    auto operator()(Expr::Literal &lit) -> ExprPtr;
-    auto operator()(Expr::Variable &var) -> ExprPtr;
-};
-
 class ASTPrinter {
   public:
-    auto print(const Expr &expr) -> std::string;
+    auto print(const ExprPtr &expr, size_t indent = 0) -> std::string;
+    auto operator()(ExprPtr expr) -> std::string;
 
-    auto operator()(const Expr::Assignment &asg) -> std::string;
-    auto operator()(const Expr::Binary &bin) -> std::string;
-    auto operator()(const Expr::Block &block) -> std::string;
-    auto operator()(const Expr::Call &call) -> std::string;
-    auto operator()(const Expr::Lambda &lambda) -> std::string;
-    auto operator()(const Expr::Literal &lit) -> std::string;
-    auto operator()(const Expr::Variable &var) -> std::string;
+    auto dispatch(const ExprPtr &expr, Expr::Assignment &asg, size_t indent)
+        -> std::string;
+    auto dispatch(const ExprPtr &expr, Expr::Binary &bin, size_t indent)
+        -> std::string;
+    auto dispatch(const ExprPtr &expr, Expr::Block &block, size_t indent)
+        -> std::string;
+    auto dispatch(const ExprPtr &expr, Expr::Call &call, size_t indent)
+        -> std::string;
+    auto dispatch(const ExprPtr &expr, Expr::Lambda &lam, size_t indent)
+        -> std::string;
+    auto dispatch(const ExprPtr &expr, Expr::Literal &lit, size_t indent)
+        -> std::string;
+    auto dispatch(const ExprPtr &expr, Expr::Variable &var, size_t indent)
+        -> std::string;
 
   private:
-    static auto token_to_string(TokenKind kind) -> std::string;
+    static auto tokenkind_to_string(TokenKind kind) -> std::string;
+    static auto type_to_string(const TypePtr &type) -> std::string;
+    [[nodiscard]] auto indent_str(size_t indent) const -> std::string;
+    auto attach_type(const std::string &str, const ExprPtr &expr, size_t indent,
+                     bool inline_type = false) -> std::string;
 };
