@@ -6,23 +6,8 @@
 
 #include <expected>
 #include <unordered_map>
-#include <unordered_set>
 #include <variant>
 #include <vector>
-
-namespace {
-
-auto precedences() -> const std::unordered_map<TokenKind, Precedence> & {
-    static const std::unordered_map<TokenKind, Precedence> precedences = {
-        {TokenKind::Plus, Precedence::AddSub},
-        {TokenKind::Minus, Precedence::AddSub},
-        {TokenKind::Star, Precedence::MulDiv},
-        {TokenKind::Slash, Precedence::MulDiv},
-    };
-    return precedences;
-}
-
-} // namespace
 
 Parser::Parser(Tokenizer tokenizer)
     : tokenizer(tokenizer), current(this->tokenizer.next()) {}
@@ -63,7 +48,7 @@ auto Parser::parse_block() -> ParseResult {
 }
 
 auto Parser::parse_assignment() -> ParseResult {
-    auto expr = parse_infix_expr(Precedence::Lowest);
+    auto expr = parse_application();
     if (!expr) return std::unexpected(expr.error());
 
     if (match(TokenKind::Arrow)) {
@@ -75,37 +60,6 @@ auto Parser::parse_assignment() -> ParseResult {
         return Expr::make<Expr::Assignment>(std::move(*expr), name);
     }
     return expr;
-}
-
-auto Parser::parse_infix_expr(Precedence prec) -> ParseResult {
-    auto left = parse_application();
-    if (!left) return std::unexpected(left.error());
-
-    auto is_infix_op = [](TokenKind kind) {
-        static const std::unordered_set<TokenKind> ops{
-            TokenKind::Plus, TokenKind::Minus, TokenKind::Star,
-            TokenKind::Slash};
-        return ops.contains(kind);
-    };
-
-    const auto &precs = precedences();
-    while (is_infix_op(current.kind)) {
-        Token op = current;
-        Precedence op_prec =
-            precs.contains(op.kind) ? precs.at(op.kind) : Precedence::Lowest;
-
-        if (op_prec < prec) break;
-
-        advance();
-
-        auto right = parse_infix_expr(
-            static_cast<Precedence>(static_cast<uint8_t>(op_prec) + 1));
-        if (!right) return std::unexpected(right.error());
-
-        left =
-            Expr::make<Expr::Binary>(op, std::move(*left), std::move(*right));
-    }
-    return left;
 }
 
 auto Parser::parse_application() -> ParseResult {

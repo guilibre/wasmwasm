@@ -10,23 +10,15 @@ auto ASTPrinter::print(const ExprPtr &expr, size_t indent) // NOLINT
                       expr->node);
 }
 
-auto ASTPrinter::operator()(ExprPtr expr) -> std::string { return print(expr); }
+auto ASTPrinter::operator()(const ExprPtr &expr) -> std::string {
+    return print(expr);
+}
 
 auto ASTPrinter::dispatch(const ExprPtr &expr, Expr::Assignment &asg,
                           size_t indent) -> std::string {
     std::ostringstream out;
     out << indent_str(indent) << "Assignment(" << asg.name.lexeme << ")\n";
     out << print(asg.value, indent + 2);
-    return attach_type(out.str(), expr, indent);
-}
-
-auto ASTPrinter::dispatch(const ExprPtr &expr, Expr::Binary &bin, size_t indent)
-    -> std::string {
-    std::ostringstream out;
-    out << indent_str(indent) << "Binary(" << tokenkind_to_string(bin.op.kind)
-        << ")\n";
-    out << print(bin.lhs, indent + 2);
-    out << print(bin.rhs, indent + 2);
     return attach_type(out.str(), expr, indent);
 }
 
@@ -73,14 +65,6 @@ auto ASTPrinter::dispatch(const ExprPtr &expr, Expr::Variable &var,
 
 auto ASTPrinter::tokenkind_to_string(TokenKind kind) -> std::string {
     switch (kind) {
-    case TokenKind::Plus:
-        return "+";
-    case TokenKind::Minus:
-        return "-";
-    case TokenKind::Star:
-        return "*";
-    case TokenKind::Slash:
-        return "/";
     case TokenKind::Arrow:
         return "->";
     case TokenKind::LParen:
@@ -128,6 +112,8 @@ auto ASTPrinter::type_to_string(const TypePtr &type) -> std::string {
             return "bool";
         case BaseTypeKind::Float:
             return "float";
+        case BaseTypeKind::Void:
+            return "void";
         default:
             return "<?>";
         }

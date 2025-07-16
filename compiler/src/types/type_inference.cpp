@@ -97,22 +97,7 @@ auto infer_expr(const ExprPtr &expr,
             if constexpr (std::is_same_v<T, Expr::Assignment>) {
                 node.value->type = infer_expr(node.value, env, subst, gen);
                 env[node.name.lexeme] = node.value->type;
-                return node.value->type;
-            }
-
-            if constexpr (std::is_same_v<T, Expr::Binary>) {
-                node.lhs->type = infer_expr(node.lhs, env, subst, gen);
-                node.rhs->type = infer_expr(node.rhs, env, subst, gen);
-
-                unify(node.lhs->type, Type::make<TypeBase>(BaseTypeKind::Float),
-                      subst);
-                unify(node.rhs->type, Type::make<TypeBase>(BaseTypeKind::Float),
-                      subst);
-
-                node.lhs->type = apply_subst(subst, node.lhs->type);
-                node.rhs->type = apply_subst(subst, node.rhs->type);
-
-                return Type::make<TypeBase>(BaseTypeKind::Float);
+                return Type::make<TypeBase>(BaseTypeKind::Void);
             }
 
             if constexpr (std::is_same_v<T, Expr::Block>) {
@@ -148,7 +133,7 @@ auto infer_expr(const ExprPtr &expr,
                 auto it = env.find(node.name.lexeme);
                 if (it == env.end())
                     throw std::runtime_error("Unbound variable: " +
-                                             std::string(node.name.lexeme));
+                                             node.name.lexeme);
                 return apply_subst(subst, it->second);
             }
 

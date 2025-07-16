@@ -9,18 +9,6 @@ auto Token::to_string() const -> std::string {
     case TokenKind::Arrow:
         kind_string = "->";
         break;
-    case TokenKind::Plus:
-        kind_string = "+";
-        break;
-    case TokenKind::Minus:
-        kind_string = "-";
-        break;
-    case TokenKind::Star:
-        kind_string = "*";
-        break;
-    case TokenKind::Slash:
-        kind_string = "/";
-        break;
     case TokenKind::LParen:
         kind_string = "(";
         break;
@@ -154,14 +142,13 @@ auto Tokenizer::next() -> Token {
 
     switch (c) {
     case '+':
-        return make_token(TokenKind::Plus);
+        return make_token(TokenKind::Identifier);
     case '-':
         if (match('>')) return make_token(TokenKind::Arrow);
-        return make_token(TokenKind::Minus);
+        return make_token(TokenKind::Identifier);
     case '*':
-        return make_token(TokenKind::Star);
     case '/':
-        return make_token(TokenKind::Slash);
+        return make_token(TokenKind::Identifier);
     case '(':
         return make_token(TokenKind::LParen);
     case ')':

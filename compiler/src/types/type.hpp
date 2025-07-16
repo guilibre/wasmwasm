@@ -17,7 +17,7 @@ struct TypeFun {
     TypePtr result;
 };
 
-enum struct BaseTypeKind : u_int8_t { Int, Float, Bool };
+enum struct BaseTypeKind : u_int8_t { Bool, Float, Int, Void };
 
 struct TypeBase {
     BaseTypeKind kind;

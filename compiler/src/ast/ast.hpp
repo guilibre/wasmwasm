@@ -3,7 +3,6 @@
 #include "../parser/tokenizer.hpp"
 #include "../types/type.hpp"
 
-#include <cstdint>
 #include <memory>
 #include <variant>
 #include <vector>
@@ -16,12 +15,6 @@ struct Expr {
     struct Assignment {
         ExprPtr value;
         Token name;
-    };
-
-    struct Binary {
-        Token op;
-        ExprPtr lhs;
-        ExprPtr rhs;
     };
 
     struct Block {
@@ -46,8 +39,8 @@ struct Expr {
         Token name;
     };
 
-    using ExprNode = std::variant<Assignment, Binary, Block, Call, Lambda,
-                                  Literal, Variable>;
+    using ExprNode =
+        std::variant<Assignment, Block, Call, Lambda, Literal, Variable>;
 
     ExprNode node;
     TypePtr type;
@@ -61,16 +54,10 @@ struct Expr {
     }
 };
 
-enum class Precedence : uint8_t { Lowest = 0, AddSub, MulDiv, Call };
-
 class ASTPrinter {
-  public:
     auto print(const ExprPtr &expr, size_t indent = 0) -> std::string;
-    auto operator()(ExprPtr expr) -> std::string;
 
     auto dispatch(const ExprPtr &expr, Expr::Assignment &asg, size_t indent)
-        -> std::string;
-    auto dispatch(const ExprPtr &expr, Expr::Binary &bin, size_t indent)
         -> std::string;
     auto dispatch(const ExprPtr &expr, Expr::Block &block, size_t indent)
         -> std::string;
@@ -83,10 +70,12 @@ class ASTPrinter {
     auto dispatch(const ExprPtr &expr, Expr::Variable &var, size_t indent)
         -> std::string;
 
-  private:
     static auto tokenkind_to_string(TokenKind kind) -> std::string;
     static auto type_to_string(const TypePtr &type) -> std::string;
     [[nodiscard]] auto indent_str(size_t indent) const -> std::string;
     auto attach_type(const std::string &str, const ExprPtr &expr, size_t indent,
                      bool inline_type = false) -> std::string;
+
+  public:
+    auto operator()(const ExprPtr &expr) -> std::string;
 };

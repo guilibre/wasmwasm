@@ -1,9 +1,7 @@
 #include "ast/ast.hpp"
-#include "code_gen/code_gen.hpp"
+#include "code_gen/main_module_builder.hpp"
 #include "parser/parser.hpp"
 #include "parser/tokenizer.hpp"
-
-#include "src/binaryen-c.h"
 #include "types/type.hpp"
 #include "types/type_inference.hpp"
 
@@ -17,7 +15,7 @@
 
 namespace {
 
-auto write_module_to_file(BinaryenModuleRef module) -> int {
+auto write_module_to_file(wasm::Module *module) -> int {
     std::ofstream out("/tmp/output.wasm", std::ios::binary);
     if (!out) {
         std::cerr << "failed to open file for writing.\n";
@@ -39,25 +37,6 @@ auto write_module_to_file(BinaryenModuleRef module) -> int {
 
 extern "C" auto run_compiler(float sample_freq, const char *src, char *math_bin,
                              size_t math_bin_size) -> int {
-    Tokenizer tokenizer(src);
-    Parser parser(tokenizer);
-    auto parse_result = parser.parse();
-    if (!parse_result) {
-        std::cerr << "Parser error: " + parse_result.error();
-        return 1;
-    }
-
-    auto float_type = Type::make<TypeBase>(BaseTypeKind::Float);
-    std::unordered_map<std::string_view, TypePtr> env{
-        {"PI", float_type},
-        {"TIME", float_type},
-        {"sin", Type::make<TypeFun>(float_type, float_type)},
-    };
-    Substitution subst;
-    TypeGenerator gen;
-    infer_expr(*parse_result, env, subst, gen);
-
-    auto *exprs = std::get_if<Expr::Block>(&parse_result.value()->node);
 
     auto *math_module = BinaryenModuleReadWithFeatures(math_bin, math_bin_size,
                                                        BinaryenFeatureAll());
@@ -67,9 +46,34 @@ extern "C" auto run_compiler(float sample_freq, const char *src, char *math_bin,
         return 1;
     }
 
-    CodeGen code_gen(math_module, sample_freq);
+    Tokenizer tokenizer(src);
+    Parser parser(tokenizer);
+    auto parse_result = parser.parse();
+    if (!parse_result) {
+        std::cerr << "Parser error: " + parse_result.error();
+        return 1;
+    }
 
-    auto *module = code_gen.create_main_module(exprs->expressions);
+    auto float_type = Type::make<TypeBase>(BaseTypeKind::Float);
+    auto float_to_float = Type::make<TypeFun>(float_type, float_type);
+    std::unordered_map<std::string_view, TypePtr> env{
+        {"PI", float_type},
+        {"TIME", float_type},
+        {"sin", float_to_float},
+        {"+", Type::make<TypeFun>(float_type, float_to_float)},
+        {"-", Type::make<TypeFun>(float_type, float_to_float)},
+        {"*", Type::make<TypeFun>(float_type, float_to_float)},
+        {"/", Type::make<TypeFun>(float_type, float_to_float)},
+    };
+    Substitution subst;
+    TypeGenerator gen;
+    infer_expr(*parse_result, env, subst, gen);
+
+    auto *exprs = std::get_if<Expr::Block>(&parse_result.value()->node);
+
+    MainModuleBuilder main_module_builder(math_module, sample_freq);
+
+    auto *module = main_module_builder.build(exprs->expressions);
 
     BinaryenModulePrint(module);
 
