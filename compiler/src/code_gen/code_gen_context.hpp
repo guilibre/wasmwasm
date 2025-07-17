@@ -20,6 +20,7 @@ using VarMap = std::unordered_map<std::string, BinaryenVariable>;
 
 struct CodeGenContext {
     BinaryenModuleRef module = nullptr;
+    std::vector<BinaryenIndex> offsets{0};
 
     std::unordered_map<std::string, BinaryenLiteral> constants;
     VarMap globals;

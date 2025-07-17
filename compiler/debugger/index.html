@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>WASM Firefox Debugging</title>
+    <script>
+      async function loadWasm() {
+        const memory = new WebAssembly.Memory({ initial: 4096, maximum: 4096 });
+        const imports = {
+          env: {
+            memory,
+            print_f64: (value) => console.log("WASM:", value),
+          },
+        };
+
+        const { instance } = await WebAssembly.instantiateStreaming(
+          fetch("output.wasm"),
+          imports
+        );
+        instance.exports.main(2, 2, 2);
+      }
+      loadWasm();
+    </script>
+  </head>
+  <body>
+    <p>Open DevTools (F12) to debug WASM.</p>
+  </body>
+</html>

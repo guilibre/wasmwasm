@@ -111,8 +111,7 @@ void infer_expr(const ExprPtr &expr,
             if constexpr (std::is_same_v<T, Expr::Assignment>) {
                 infer_expr(node.value, env, subst, gen);
                 env.emplace(node.name.lexeme, node.value->type);
-                return apply_subst(subst,
-                                   Type::make<TypeBase>(BaseTypeKind::Void));
+                return Type::make<TypeBase>(BaseTypeKind::Void);
             }
 
             if constexpr (std::is_same_v<T, Expr::Block>) {

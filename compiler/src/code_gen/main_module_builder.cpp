@@ -93,10 +93,11 @@ auto MainModuleBuilder::build(const std::vector<ExprPtr> &exprs)
                                                ctx->parameters.back().size()),
                                            .type = type,
                                        });
+        return ctx->parameters.back().at(name);
     };
-    add_param("BASE_PTR", BinaryenTypeInt32());
-    add_param("NUM_SAMPLES", BinaryenTypeInt32());
-    add_param("NUM_CHANNELS", BinaryenTypeInt32());
+    add_param("BASE_PTR$", BinaryenTypeInt32());
+    add_param("NUM_SAMPLE$S$", BinaryenTypeInt32());
+    add_param("NUM_CHANNEL$S$", BinaryenTypeInt32());
 
     auto add_var = [&](const std::string &name, BinaryenType type) {
         ctx->variables.back().emplace(name,
@@ -106,53 +107,38 @@ auto MainModuleBuilder::build(const std::vector<ExprPtr> &exprs)
                                               ctx->parameters.back().size()),
                                           .type = type,
                                       });
+        return ctx->variables.back().at(name);
     };
-    add_var("CHANNEL", BinaryenTypeInt32());
-    add_var("SAMPLE", BinaryenTypeInt32());
+    add_var("CHANNEL$", BinaryenTypeInt32());
+    add_var("SAMPLE$", BinaryenTypeInt32());
 
     auto *sample_cond = BinaryenBinary(
         ctx->module, BinaryenLtUInt32(),
-        ctx->variables.back()["SAMPLE"].get_local(ctx->module),
-        ctx->parameters.back()["NUM_SAMPLES"].get_local(ctx->module));
+        ctx->variables.back()["SAMPLE$"].get_local(ctx->module),
+        ctx->parameters.back()["NUM_SAMPLE$S$"].get_local(ctx->module));
     auto *channel_cond = BinaryenBinary(
         ctx->module, BinaryenLtUInt32(),
-        ctx->variables.back()["CHANNEL"].get_local(ctx->module),
-        ctx->parameters.back()["NUM_CHANNELS"].get_local(ctx->module));
+        ctx->variables.back()["CHANNEL$"].get_local(ctx->module),
+        ctx->parameters.back()["NUM_CHANNEL$S$"].get_local(ctx->module));
 
     auto *index_expr = BinaryenBinary(
         ctx->module, BinaryenAddInt32(),
-        ctx->variables.back()["CHANNEL"].get_local(ctx->module),
+        ctx->variables.back()["CHANNEL$"].get_local(ctx->module),
         BinaryenBinary(
             ctx->module, BinaryenMulInt32(),
-            ctx->variables.back()["SAMPLE"].get_local(ctx->module),
-            ctx->parameters.back()["NUM_CHANNELS"].get_local(ctx->module)));
+            ctx->variables.back()["SAMPLE$"].get_local(ctx->module),
+            ctx->parameters.back()["NUM_CHANNEL$S$"].get_local(ctx->module)));
 
     auto *address = BinaryenBinary(
         ctx->module, BinaryenAddInt32(),
-        ctx->parameters.back()["BASE_PTR"].get_local(ctx->module),
+        ctx->parameters.back()["BASE_PTR$"].get_local(ctx->module),
         BinaryenBinary(ctx->module, BinaryenMulInt32(), make_const_i32(4),
                        index_expr));
 
+    auto env = add_var("env$", BinaryenTypeInt32());
+
     define_binary_operator("+", BinaryenAddFloat64());
     define_binary_operator("*", BinaryenMulFloat64());
-
-    ctx->variables.back().emplace(
-        "env_ptr$",
-        BinaryenVariable{
-            .local = static_cast<BinaryenIndex>(ctx->parameters.back().size() +
-                                                ctx->variables.back().size()),
-            .type = BinaryenTypeInt32(),
-        });
-    auto &env_ptr = ctx->variables.back()["env_ptr$"];
-
-    ctx->variables.back().emplace(
-        "arg$",
-        BinaryenVariable{
-            .local = static_cast<BinaryenIndex>(ctx->parameters.back().size() +
-                                                ctx->variables.back().size()),
-            .type = BinaryenTypeInt32(),
-        });
-    auto &arg = ctx->variables.back()["arg$"];
 
     std::vector<BinaryenExpressionRef> binaryen_exprs;
     binaryen_exprs.reserve(exprs.size());
@@ -180,11 +166,11 @@ auto MainModuleBuilder::build(const std::vector<ExprPtr> &exprs)
             std::array{ctx->variables.back()["OUT"].get_local(ctx->module)}
                 .data(),
             1, BinaryenTypeNone()),
-        ctx->variables.back()["CHANNEL"].set_local(
+        ctx->variables.back()["CHANNEL$"].set_local(
             ctx->module,
             BinaryenBinary(
                 ctx->module, BinaryenAddInt32(),
-                ctx->variables.back()["CHANNEL"].get_local(ctx->module),
+                ctx->variables.back()["CHANNEL$"].get_local(ctx->module),
                 make_const_i32(1))),
         BinaryenBreak(ctx->module, "inner_loop", channel_cond, nullptr)};
     auto *inner_loop = BinaryenLoop(
@@ -200,14 +186,14 @@ auto MainModuleBuilder::build(const std::vector<ExprPtr> &exprs)
             make_const_f64(1.0)));
 
     std::vector<BinaryenExpressionRef> outer_block_children = {
-        ctx->variables.back()["CHANNEL"].set_local(ctx->module,
-                                                   make_const_i32(0)),
+        ctx->variables.back()["CHANNEL$"].set_local(ctx->module,
+                                                    make_const_i32(0)),
         inner_loop, pass_time,
-        ctx->variables.back()["SAMPLE"].set_local(
+        ctx->variables.back()["SAMPLE$"].set_local(
             ctx->module,
             BinaryenBinary(
                 ctx->module, BinaryenAddInt32(),
-                ctx->variables.back()["SAMPLE"].get_local(ctx->module),
+                ctx->variables.back()["SAMPLE$"].get_local(ctx->module),
                 make_const_i32(1))),
         BinaryenBreak(ctx->module, "outer_loop", sample_cond, nullptr)};
     auto *outer_loop = BinaryenLoop(
@@ -216,13 +202,13 @@ auto MainModuleBuilder::build(const std::vector<ExprPtr> &exprs)
                       outer_block_children.size(), BinaryenTypeNone()));
 
     std::vector<BinaryenExpressionRef> body_block = {
-        env_ptr.set_local(
-            ctx->module,
-            BinaryenConst(ctx->module, BinaryenLiteralInt32(1024))),
-        arg.set_local(ctx->module,
-                      BinaryenConst(ctx->module, BinaryenLiteralInt32(0))),
-        ctx->variables.back()["SAMPLE"].set_local(ctx->module,
-                                                  make_const_i32(0)),
+        env.set_local(ctx->module,
+                      BinaryenConst(ctx->module, BinaryenLiteralInt32(1024))),
+        BinaryenStore(ctx->module, 4, 0, 4, env.get_local(ctx->module),
+                      BinaryenConst(ctx->module, BinaryenLiteralInt32(1024)),
+                      BinaryenTypeInt32(), "memory"),
+        ctx->variables.back()["SAMPLE$"].set_local(ctx->module,
+                                                   make_const_i32(0)),
         outer_loop};
 
     auto *body = BinaryenBlock(ctx->module, "body", body_block.data(),
@@ -265,6 +251,10 @@ auto MainModuleBuilder::build(const std::vector<ExprPtr> &exprs)
 
 void MainModuleBuilder::define_binary_operator(const std::string &symbol,
                                                BinaryenOp op) {
+    ctx->parameters.emplace_back();
+    ctx->variables.emplace_back();
+    ctx->offsets.emplace_back(8);
+
     ctx->fun_indices.emplace(
         symbol + "$inner",
         BinaryenVariable{
@@ -279,62 +269,91 @@ void MainModuleBuilder::define_binary_operator(const std::string &symbol,
                                          .type = BinaryenTypeInt32(),
                                      });
 
+    std::vector<BinaryenExpressionRef> outer_fun_body;
+    outer_fun_body.reserve(4);
+
+    ctx->parameters.back().emplace("rhs$", BinaryenVariable{
+                                               .local = 1,
+                                               .type = BinaryenTypeFloat64(),
+                                               .offset = ctx->offsets.back(),
+                                           });
+    auto &rhs = ctx->parameters.back().at("rhs$");
+    ctx->offsets.back() += 8;
+
+    ctx->parameters.back().emplace("env$", BinaryenVariable{
+                                               .local = 0,
+                                               .type = BinaryenTypeInt32(),
+                                               .offset = ctx->offsets.back(),
+                                           });
+    auto &env = ctx->parameters.back().at("env$");
+    ctx->offsets.back() += 4;
+
+    outer_fun_body.emplace_back(BinaryenStore(
+        ctx->module, 8, rhs.offset, 8, env.get_local(ctx->module),
+        rhs.get_local(ctx->module), BinaryenTypeFloat64(), "memory"));
+
+    outer_fun_body.emplace_back(BinaryenStore(
+        ctx->module, 4, env.offset, 4, env.get_local(ctx->module),
+        env.get_local(ctx->module), BinaryenTypeInt32(), "memory"));
+
+    outer_fun_body.emplace_back(BinaryenStore(
+        ctx->module, 4, ctx->offsets.back(), 4, env.get_local(ctx->module),
+        BinaryenConst(ctx->module, BinaryenLiteralInt32(inner_fun_var.local)),
+        BinaryenTypeInt32(), "memory"));
+    ctx->offsets.back() += 4;
+
+    outer_fun_body.emplace_back(BinaryenBinary(
+        ctx->module, BinaryenAddInt32(), env.get_local(ctx->module),
+        BinaryenConst(ctx->module, BinaryenLiteralInt32(env.offset))));
+
     ctx->parameters.emplace_back();
+    ctx->variables.emplace_back();
+    ctx->offsets.emplace_back(8);
 
-    ctx->parameters.back().emplace(
-        "env_ptr$", BinaryenVariable{.local = 0, .type = BinaryenTypeInt32()});
-    auto &env_ptr = ctx->parameters.back()["env_ptr$"];
+    ctx->parameters.back().emplace("lhs$", BinaryenVariable{
+                                               .local = 1,
+                                               .type = BinaryenTypeFloat64(),
+                                               .offset = ctx->offsets.back(),
+                                           });
+    ctx->offsets.back() += 8;
+    auto &lhs = ctx->parameters.back().at("lhs$");
 
-    ctx->parameters.back().emplace(
-        "arg$", BinaryenVariable{.local = 1, .type = BinaryenTypeFloat64()});
-    auto &arg = ctx->parameters.back()["arg$"];
-
-    auto outer_fun_body = std::array{
-        BinaryenStore(ctx->module, 8, 0, 8, env_ptr.get_local(ctx->module),
-                      arg.get_local(ctx->module), BinaryenTypeFloat64(),
-                      "memory"),
-        BinaryenStore(ctx->module, 4, 8, 4, env_ptr.get_local(ctx->module),
-                      BinaryenConst(ctx->module,
-                                    BinaryenLiteralInt32(inner_fun_var.local)),
-                      BinaryenTypeInt32(), "memory"),
-        BinaryenStore(ctx->module, 4, 12, 4, env_ptr.get_local(ctx->module),
-                      env_ptr.get_local(ctx->module), BinaryenTypeInt32(),
-                      "memory"),
-        BinaryenLoad(ctx->module, 4, false, 8, 4, BinaryenTypeInt32(),
-                     BinaryenLoad(ctx->module, 4, false, 12, 4,
-                                  BinaryenTypeInt32(),
-                                  env_ptr.get_local(ctx->module), "memory"),
-                     "memory"),
-    };
-
-    ctx->parameters.emplace_back();
-    ctx->parameters.back().emplace(
-        "env_ptr$", BinaryenVariable{.local = 0, .type = BinaryenTypeInt32()});
-    ctx->parameters.back().emplace(
-        "arg$", BinaryenVariable{.local = 1, .type = BinaryenTypeFloat64()});
-
-    env_ptr = ctx->parameters.back()["env_ptr$"];
-    arg = ctx->parameters.back()["arg$"];
+    ctx->parameters.back().emplace("env$", BinaryenVariable{
+                                               .local = 0,
+                                               .type = BinaryenTypeInt32(),
+                                               .offset = ctx->offsets.back(),
+                                           });
+    ctx->offsets.back() += 4;
+    env = ctx->parameters.back().at("env$");
 
     BinaryenAddFunction(
         ctx->module, (symbol + "$inner").c_str(),
-        BinaryenTypeCreate(
-            std::array{BinaryenTypeInt32(), BinaryenTypeFloat64()}.data(), 2),
-        BinaryenTypeFloat64(), nullptr, 0,
-        BinaryenBinary(ctx->module, op, arg.get_local(ctx->module),
-                       BinaryenLoad(ctx->module, 8, false, 0, 8,
-                                    BinaryenTypeFloat64(),
-                                    env_ptr.get_local(ctx->module), "memory")));
+        BinaryenTypeCreate(get_types(ctx->parameters.back()).data(),
+                           ctx->parameters.back().size()),
+        BinaryenTypeFloat64(), get_types(ctx->variables.back()).data(),
+        ctx->variables.back().size(),
+        BinaryenBinary(
+            ctx->module, op, lhs.get_local(ctx->module),
+            BinaryenLoad(
+                ctx->module, 8, false, rhs.offset, 8, BinaryenTypeFloat64(),
+                BinaryenLoad(ctx->module, 4, false, 0, 4, BinaryenTypeInt32(),
+                             env.get_local(ctx->module), "memory"),
+                "memory")));
 
     ctx->parameters.pop_back();
+    ctx->variables.pop_back();
+    ctx->offsets.pop_back();
 
     BinaryenAddFunction(
         ctx->module, symbol.c_str(),
-        BinaryenTypeCreate(
-            std::array{BinaryenTypeInt32(), BinaryenTypeFloat64()}.data(), 2),
-        BinaryenTypeInt32(), nullptr, 0,
+        BinaryenTypeCreate(get_types(ctx->parameters.back()).data(),
+                           ctx->parameters.size()),
+        BinaryenTypeInt32(), get_types(ctx->variables.back()).data(),
+        ctx->variables.back().size(),
         BinaryenBlock(ctx->module, nullptr, outer_fun_body.data(),
                       outer_fun_body.size(), BinaryenTypeInt32()));
 
     ctx->parameters.pop_back();
+    ctx->variables.pop_back();
+    ctx->offsets.pop_back();
 }

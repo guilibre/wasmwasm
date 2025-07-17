@@ -119,8 +119,8 @@ auto ASTPrinter::type_to_string(const TypePtr &type) -> std::string {
     }
 
     if (auto *fun = std::get_if<TypeFun>(&type->node))
-        return type_to_string(fun->param) + " -> " +
-               type_to_string(fun->result);
+        return "(" + type_to_string(fun->param) + " -> " +
+               type_to_string(fun->result) + ")";
 
     if (auto *var = std::get_if<TypeVar>(&type->node))
         return "t" + std::to_string(var->id);

@@ -1,4 +1,5 @@
 #include "type.hpp"
+#include <variant>
 
 auto Type::to_binaryen_type() -> BinaryenType {
     if (auto *base = std::get_if<TypeBase>(&node)) {
@@ -12,6 +13,7 @@ auto Type::to_binaryen_type() -> BinaryenType {
             return BinaryenTypeNone();
         }
     }
+    if (std::holds_alternative<TypeVar>(node)) return BinaryenTypeFloat64();
 
     return BinaryenTypeInt32();
 }
