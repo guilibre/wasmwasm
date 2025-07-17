@@ -1,4 +1,5 @@
 #include "ast/ast.hpp"
+#include "binaryen-c.h"
 #include "code_gen/main_module_builder.hpp"
 #include "parser/parser.hpp"
 #include "parser/tokenizer.hpp"
@@ -6,10 +7,11 @@
 #include "types/type_inference.hpp"
 
 #include <fstream>
+#include <functional>
 #include <ios>
 #include <iostream>
 #include <sstream>
-#include <string_view>
+#include <stdexcept>
 #include <variant>
 #include <vector>
 
@@ -35,7 +37,7 @@ auto write_module_to_file(wasm::Module *module) -> int {
 
 } // namespace
 
-extern "C" auto run_compiler(float sample_freq, const char *src, char *math_bin,
+extern "C" auto run_compiler(float sample_rate, const char *src, char *math_bin,
                              size_t math_bin_size) -> int {
 
     auto *math_module = BinaryenModuleReadWithFeatures(math_bin, math_bin_size,
@@ -56,7 +58,7 @@ extern "C" auto run_compiler(float sample_freq, const char *src, char *math_bin,
 
     auto float_type = Type::make<TypeBase>(BaseTypeKind::Float);
     auto float_to_float = Type::make<TypeFun>(float_type, float_type);
-    std::unordered_map<std::string_view, TypePtr> env{
+    std::unordered_map<std::string, TypePtr> env{
         {"PI", float_type},
         {"TIME", float_type},
         {"sin", float_to_float},
@@ -69,21 +71,54 @@ extern "C" auto run_compiler(float sample_freq, const char *src, char *math_bin,
     TypeGenerator gen;
     infer_expr(*parse_result, env, subst, gen);
 
+    ASTPrinter ast_printer;
+    // ast_printer(*parse_result);
+
+    std::function<void(const ExprPtr &)> is_typed = [&](const auto &expr) {
+        std::visit(
+            [&](const auto &node) {
+                if (std::holds_alternative<TypeVar>(expr->type->node)) {
+                    ast_printer(*parse_result);
+                    std::cout << '\n';
+                    ast_printer(expr);
+                    throw std::runtime_error("untyped");
+                }
+
+                using T = std::decay_t<decltype(node)>;
+                if constexpr (std::is_same_v<T, Expr::Assignment>)
+                    is_typed(node.value);
+
+                if constexpr (std::is_same_v<T, Expr::Block>)
+                    for (const auto &expr : node.expressions)
+                        is_typed(expr);
+
+                if constexpr (std::is_same_v<T, Expr::Call>) {
+                    is_typed(node.callee);
+                    is_typed(node.argument);
+                }
+                if constexpr (std::is_same_v<T, Expr::Lambda>)
+                    is_typed(node.body);
+            },
+            expr->node);
+    };
+    is_typed(*parse_result);
+
     auto *exprs = std::get_if<Expr::Block>(&parse_result.value()->node);
 
-    MainModuleBuilder main_module_builder(math_module, sample_freq);
+    MainModuleBuilder main_module_builder(math_module, sample_rate);
 
-    auto *module = main_module_builder.build(exprs->expressions);
+    auto *main_module = main_module_builder.build(exprs->expressions);
 
-    BinaryenModulePrint(module);
-
-    if (!BinaryenModuleValidate(module)) {
+    BinaryenModulePrint(main_module);
+    if (!BinaryenModuleValidate(main_module)) {
         std::cerr << "invalid module";
         return 1;
     }
-    BinaryenModuleOptimize(module);
+    // BinaryenSetOptimizeLevel(3);
+    // BinaryenModuleOptimize(main_module);
+    // BinaryenModulePrint(main_module);
 
-    return write_module_to_file(module);
+    return write_module_to_file(main_module);
 }
 
 // for tests only
@@ -119,6 +154,6 @@ auto main(int argc, char **argv) -> int {
     std::ostringstream src_buffer;
     src_buffer << src_file.rdbuf();
 
-    return run_compiler(1.0F / 44100.0F, src_buffer.str().c_str(),
-                        math_buffer.data(), math_buffer.size());
+    return run_compiler(44100.0, src_buffer.str().c_str(), math_buffer.data(),
+                        math_buffer.size());
 }

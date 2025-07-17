@@ -1,5 +1,6 @@
 #include "ast.hpp"
 
+#include <iostream>
 #include <sstream>
 #include <string>
 #include <variant>
@@ -10,9 +11,7 @@ auto ASTPrinter::print(const ExprPtr &expr, size_t indent) // NOLINT
                       expr->node);
 }
 
-auto ASTPrinter::operator()(const ExprPtr &expr) -> std::string {
-    return print(expr);
-}
+void ASTPrinter::operator()(const ExprPtr &expr) { std::cout << print(expr); }
 
 auto ASTPrinter::dispatch(const ExprPtr &expr, Expr::Assignment &asg,
                           size_t indent) -> std::string {

@@ -5,7 +5,9 @@ import WasmWasm from "../audio/compiler";
 export default function App() {
   const audioContextRef = useRef<AudioContext | null>(null);
   const workletNodeRef = useRef<AudioWorkletNode | null>(null);
-  const [code, setCode] = useState("0.1 * sin (2 * PI * TIME * 440) -> OUT");
+  const [code, setCode] = useState(
+    "* 0.1 (sin (* (* (* 2 PI) TIME) 440)) -> OUT"
+  );
   const [isPlaying, setIsPlaying] = useState(false);
   const [signal, setSignal] = useState<number[]>([]);
   const canvasRef = useRef<HTMLCanvasElement>(null);

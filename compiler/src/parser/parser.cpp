@@ -30,7 +30,7 @@ auto Parser::parse() -> ParseResult {
                                " | (" + std::to_string(current.line) + "," +
                                std::to_string(current.column) + ")");
 
-    std::unordered_map<std::string_view, TypePtr> env;
+    std::unordered_map<std::string, TypePtr> env;
     Substitution subst;
 
     return Expr::make<Expr::Block>(std::move(blocks));

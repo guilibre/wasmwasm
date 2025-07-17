@@ -1,5 +1,6 @@
 #pragma once
 
+#include "binaryen-c.h"
 #include <memory>
 #include <sys/types.h>
 #include <variant>
@@ -35,4 +36,6 @@ struct Type {
         return std::make_shared<Type>(
             Type(TypeNode{T{std::forward<Args>(args)...}}));
     }
+
+    auto to_binaryen_type() -> BinaryenType;
 };

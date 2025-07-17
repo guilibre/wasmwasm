@@ -1,19 +1,22 @@
 #pragma once
 
 #include "../ast/ast.hpp"
-#include "code_gen_context.hpp"
-
 #include "binaryen-c.h"
+#include "code_gen_context.hpp"
+#include "expression_emitter.hpp"
 
 #include <vector>
 
 class MainModuleBuilder {
   public:
-    MainModuleBuilder(BinaryenModuleRef math_module, double sample_freq);
+    MainModuleBuilder(BinaryenModuleRef math_module, double sample_rate);
     auto build(const std::vector<ExprPtr> &exprs) -> BinaryenModuleRef;
 
   private:
-    CodeGenContext ctx;
+    std::shared_ptr<CodeGenContext> ctx;
+    std::shared_ptr<ExpressionEmitter> expression_emitter;
+
     BinaryenModuleRef math_module;
-    double sample_freq;
+
+    void define_binary_operator(const std::string &symbol, BinaryenOp op);
 };

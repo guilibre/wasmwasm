@@ -77,5 +77,5 @@ class ASTPrinter {
                      bool inline_type = false) -> std::string;
 
   public:
-    auto operator()(const ExprPtr &expr) -> std::string;
+    void operator()(const ExprPtr &expr);
 };

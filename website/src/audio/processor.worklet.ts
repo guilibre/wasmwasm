@@ -23,7 +23,7 @@ export default class WasmProcessor extends AudioWorkletProcessor {
   ): boolean {
     const width = outputs[0].length;
     const height = outputs[0][0].length;
-    this.main(0, height, width, 440);
+    this.main(0, height, width);
     for (let i = 0; i < width; ++i)
       outputs[0][i].set(this.heap.subarray(i * height, (i + 1) * height));
 

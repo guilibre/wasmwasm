@@ -2,7 +2,7 @@
 #include <numbers>
 
 extern "C" {
-auto wasmwasm_sin(double x) -> double {
+auto wasmwasm_sin(int /*unused*/, double x) -> double {
     constexpr double PI = std::numbers::pi;
     constexpr double TWO_PI = 2.0 * PI;
     constexpr double HALF_PI = PI / 2.0;
