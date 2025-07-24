@@ -6,7 +6,7 @@ export default function App() {
   const audioContextRef = useRef<AudioContext | null>(null);
   const workletNodeRef = useRef<AudioWorkletNode | null>(null);
   const [code, setCode] = useState(
-    "* 0.1 (sin (* (* (* 2 PI) TIME) 440)) -> OUT"
+    "* 0.1 (sin (* (* 880 PI) TIME)) -> OUT"
   );
   const [isPlaying, setIsPlaying] = useState(false);
   const [signal, setSignal] = useState<number[]>([]);
@@ -25,7 +25,7 @@ export default function App() {
 
       node.port.postMessage({
         type: "load-wasm",
-        buffer: await WasmWasm.init(1 / context.sampleRate, code),
+        buffer: await WasmWasm.init(context.sampleRate, code),
         code: code,
       });
 
@@ -37,7 +37,7 @@ export default function App() {
         workletNodeRef.current.port.postMessage({
           type: "load-wasm",
           buffer: await WasmWasm.init(
-            1 / audioContextRef.current.sampleRate,
+            audioContextRef.current.sampleRate,
             code
           ),
           code: code,

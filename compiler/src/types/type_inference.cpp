@@ -115,6 +115,8 @@ void infer_expr(const ExprPtr &expr,
             }
 
             if constexpr (std::is_same_v<T, Expr::Block>) {
+                if (node.expressions.size() == 0)
+                    return Type::make<TypeBase>(BaseTypeKind::Void);
                 for (auto &child : node.expressions)
                     infer_expr(child, env, subst, gen);
                 return apply_subst(subst, node.expressions.back()->type);

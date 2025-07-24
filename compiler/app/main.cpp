@@ -52,7 +52,7 @@ extern "C" auto run_compiler(float sample_rate, const char *src, char *math_bin,
     Parser parser(tokenizer);
     auto parse_result = parser.parse();
     if (!parse_result) {
-        std::cerr << "Parser error: " + parse_result.error();
+        std::cerr << "Parser error: " << parse_result.error() << '\n';
         return 1;
     }
 
@@ -130,11 +130,9 @@ extern "C" auto run_compiler(float sample_rate, const char *src, char *math_bin,
     ASTPrinter ast_printer;
     // ast_printer(*parse_result);
 
-    auto *exprs = std::get_if<Expr::Block>(&parse_result.value()->node);
-
     MainModuleBuilder main_module_builder(math_module, sample_rate);
 
-    auto *main_module = main_module_builder.build(exprs->expressions);
+    auto *main_module = main_module_builder.build(*parse_result);
 
     // BinaryenModulePrint(main_module);
     if (!BinaryenModuleValidate(main_module)) {

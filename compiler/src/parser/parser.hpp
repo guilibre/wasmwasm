@@ -20,7 +20,7 @@ class Parser {
     [[nodiscard]] auto match(TokenKind kind) const -> bool;
 
     auto parse_block() -> ParseResult;
-    auto parse_assignment() -> ParseResult;
+    auto parse_expression() -> ParseResult;
     auto parse_application() -> ParseResult;
     auto parse_factor() -> ParseResult;
     auto parse_lambda() -> ParseResult;

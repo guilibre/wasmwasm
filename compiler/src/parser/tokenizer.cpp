@@ -7,7 +7,7 @@ auto Token::to_string() const -> std::string {
     std::string kind_string;
     switch (kind) {
     case TokenKind::Arrow:
-        kind_string = "->";
+        kind_string = ">";
         break;
     case TokenKind::LParen:
         kind_string = "(";
@@ -34,7 +34,7 @@ auto Token::to_string() const -> std::string {
         kind_string = lexeme;
         break;
     }
-    return kind_string + "|(" + std::to_string(line) + "," +
+    return "'" + kind_string + "' | (" + std::to_string(line) + "," +
            std::to_string(column) + ")";
 }
 
@@ -80,12 +80,9 @@ void Tokenizer::skip_whitespace() {
             line++;
             column = 1;
             break;
-        case '/':
-            if (peek_next() == '/')
-                while (!is_done() && peek_char() != '\n')
-                    advance();
-            else
-                return;
+        case '#':
+            while (!is_done() && peek_char() != '\n')
+                advance();
             break;
         default:
             return;
@@ -94,17 +91,21 @@ void Tokenizer::skip_whitespace() {
 }
 
 auto Tokenizer::make_token(TokenKind kind) -> Token {
-    return Token{.kind = kind,
-                 .lexeme = std::string(source.substr(start, current - start)),
-                 .line = line,
-                 .column = column - (current - start)};
+    return Token{
+        .kind = kind,
+        .lexeme = std::string(source.substr(start, current - start)),
+        .line = line,
+        .column = column - (current - start),
+    };
 }
 
 auto Tokenizer::error_token(const std::string &msg) -> Token {
-    return Token{.kind = TokenKind::Invalid,
-                 .lexeme = msg,
-                 .line = line,
-                 .column = column};
+    return Token{
+        .kind = TokenKind::Invalid,
+        .lexeme = msg,
+        .line = line,
+        .column = column,
+    };
 }
 
 auto Tokenizer::scan_identifier() -> Token {
@@ -141,11 +142,10 @@ auto Tokenizer::next() -> Token {
     if (std::isdigit(c) != 0) return scan_number();
 
     switch (c) {
+    case '>':
+        return make_token(TokenKind::Arrow);
     case '+':
-        return make_token(TokenKind::Identifier);
     case '-':
-        if (match('>')) return make_token(TokenKind::Arrow);
-        return make_token(TokenKind::Identifier);
     case '*':
     case '/':
         return make_token(TokenKind::Identifier);

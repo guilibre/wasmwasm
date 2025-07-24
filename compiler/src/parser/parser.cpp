@@ -26,9 +26,7 @@ auto Parser::parse() -> ParseResult {
     }
 
     if (!match(TokenKind::Eof))
-        return std::unexpected("Unexpected token: " + current.to_string() +
-                               " | (" + std::to_string(current.line) + "," +
-                               std::to_string(current.column) + ")");
+        return std::unexpected("Unexpected token: " + current.to_string());
 
     std::unordered_map<std::string, TypePtr> env;
     Substitution subst;
@@ -39,7 +37,7 @@ auto Parser::parse() -> ParseResult {
 auto Parser::parse_block() -> ParseResult {
     std::vector<ExprPtr> expressions;
     ParseResult expression;
-    while ((expression = parse_assignment()))
+    while ((expression = parse_expression()))
         expressions.emplace_back(std::move(*expression));
 
     if (expressions.size() == 0) return std::unexpected("Expected a block");
@@ -47,7 +45,7 @@ auto Parser::parse_block() -> ParseResult {
     return Expr::make<Expr::Block>(std::move(expressions));
 }
 
-auto Parser::parse_assignment() -> ParseResult {
+auto Parser::parse_expression() -> ParseResult {
     auto expr = parse_application();
     if (!expr) return std::unexpected(expr.error());
 
@@ -65,9 +63,7 @@ auto Parser::parse_assignment() -> ParseResult {
 auto Parser::parse_application() -> ParseResult {
     auto expr = parse_factor();
     if (!expr)
-        return std::unexpected("Unexpected token: " + current.to_string() +
-                               " | (" + std::to_string(current.line) + "," +
-                               std::to_string(current.column) + ")");
+        return std::unexpected("Unexpected token: " + current.to_string());
 
     while (true) {
         auto arg = parse_factor();
@@ -89,7 +85,7 @@ auto Parser::parse_factor() -> ParseResult {
     }
     if (match(TokenKind::LParen)) {
         advance();
-        auto expr = parse_assignment();
+        auto expr = parse_expression();
         if (!expr) return std::unexpected(expr.error());
         if (!match(TokenKind::RParen)) return std::unexpected("Expected ')'");
         advance();
@@ -101,9 +97,7 @@ auto Parser::parse_factor() -> ParseResult {
         if (!expr) return std::unexpected(expr.error());
         return expr;
     }
-    return std::unexpected("Unexpected token: " + current.to_string() + " | (" +
-                           std::to_string(current.line) + "," +
-                           std::to_string(current.column) + ")");
+    return std::unexpected("Unexpected token: " + current.to_string());
 }
 
 auto Parser::parse_lambda() -> ParseResult {

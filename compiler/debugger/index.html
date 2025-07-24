@@ -4,23 +4,45 @@
     <title>WASM Firefox Debugging</title>
     <script>
       async function loadWasm() {
-        const memory = new WebAssembly.Memory({ initial: 4096, maximum: 4096 });
-        const imports = {
-          env: {
-            memory,
-            print_f64: (value) => console.log("WASM:", value),
-          },
-        };
+        const memory = new WebAssembly.Memory({ initial: 1, maximum: 1 });
+        this.heap = new Float32Array(memory.buffer);
+        const imports = { env: { memory } };
+        heap = new Float32Array(memory.buffer);
 
         const { instance } = await WebAssembly.instantiateStreaming(
           fetch("output.wasm"),
           imports
         );
-        instance.exports.main(2, 2, 2);
+        let output = Array.from({ length: 256 }, () =>
+          new Float32Array(2).fill(0)
+        );
+        const before = performance.now();
+        const width = output.length;
+        const height = output[0].length;
+        for (let i = 0; i < 200; i++) {
+          instance.exports.main(0, height, width);
+          for (let i = 0; i < width; ++i)
+            output[i].set(this.heap.subarray(i * height, (i + 1) * height));
+        }
+        console.log("wasm: ", (performance.now() - before) / 1000);
+
+        let TIME = 0;
+
+        const before2 = performance.now();
+        for (let i = 0; i < 200; i++) {
+          for (let k = 0; k < height; k++) {
+            for (let j = 0; j < width; j++) {
+              output[j][k] = Math.sin(880 * Math.PI * TIME);
+            }
+            TIME += 1;
+          }
+        }
+        console.log("js: ", (performance.now() - before2) / 1000);
       }
       loadWasm();
     </script>
   </head>
+
   <body>
     <p>Open DevTools (F12) to debug WASM.</p>
   </body>

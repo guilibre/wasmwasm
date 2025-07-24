@@ -8,12 +8,13 @@
 
 class ExpressionEmitter {
   public:
-    ExpressionEmitter(std::shared_ptr<CodeGenContext> ctx);
+    ExpressionEmitter(std::shared_ptr<CodeGenContext> ctx, double sample_rate);
     auto create(const ExprPtr &expr) -> BinaryenExpressionRef;
 
   private:
     std::shared_ptr<CodeGenContext> ctx;
     size_t heap_top = 1024;
+    double sample_rate = 44100;
 
     template <typename F>
     auto with_fresh_scope(F &&fn) -> BinaryenExpressionRef;

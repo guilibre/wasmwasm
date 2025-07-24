@@ -5,12 +5,10 @@
 #include "code_gen_context.hpp"
 #include "expression_emitter.hpp"
 
-#include <vector>
-
 class MainModuleBuilder {
   public:
     MainModuleBuilder(BinaryenModuleRef math_module, double sample_rate);
-    auto build(const std::vector<ExprPtr> &exprs) -> BinaryenModuleRef;
+    auto build(const ExprPtr &body) -> BinaryenModuleRef;
 
   private:
     std::shared_ptr<CodeGenContext> ctx;
@@ -18,5 +16,6 @@ class MainModuleBuilder {
 
     BinaryenModuleRef math_module;
 
+    void setup_module();
     void define_binary_operator(const std::string &symbol, BinaryenOp op);
 };
