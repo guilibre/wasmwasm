@@ -10,7 +10,8 @@ using ParseResult = std::expected<ExprPtr, std::string>;
 class Parser {
   public:
     explicit Parser(Tokenizer tokenizer);
-    auto parse() -> ParseResult;
+    auto parse_code() -> ParseResult;
+    auto parse_initialization() -> ParseResult;
 
   private:
     Tokenizer tokenizer;
@@ -19,9 +20,10 @@ class Parser {
     void advance();
     [[nodiscard]] auto match(TokenKind kind) const -> bool;
 
-    auto parse_block() -> ParseResult;
     auto parse_expression() -> ParseResult;
     auto parse_application() -> ParseResult;
     auto parse_factor() -> ParseResult;
     auto parse_lambda() -> ParseResult;
+    auto parse_block() -> ParseResult;
+    auto parse_buffer() -> ParseResult;
 };

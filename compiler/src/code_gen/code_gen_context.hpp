@@ -25,6 +25,7 @@ class CodeGenContext {
     std::vector<VarMap> parameters{VarMap{}};
     std::vector<VarMap> variables{VarMap{}};
     std::vector<BinaryenIndex> offsets{8};
+    std::unordered_map<std::string, BinaryenIndex> buffers_;
     BinaryenModuleRef module_ = nullptr;
 
   public:
@@ -55,6 +56,11 @@ class CodeGenContext {
     auto add_function(const std::string &name, BinaryenExpressionRef body,
                       BinaryenType result_type, BinaryenIndex offset)
         -> BinaryenVariable &;
+
+    auto has_buffer(const std::string &name) -> bool;
+    auto buffers() -> const std::unordered_map<std::string, BinaryenIndex> &;
+    void add_buffer(const std::string &name, BinaryenIndex size,
+                    BinaryenExpressionRef init_buffer_function);
 
     auto offset() -> BinaryenIndex;
     auto env() -> BinaryenVariable &;

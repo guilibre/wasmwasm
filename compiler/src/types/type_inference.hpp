@@ -24,5 +24,5 @@ auto apply_subst(const Substitution &subst, const TypePtr &type) -> TypePtr;
 void unify(const TypePtr &a, const TypePtr &b, Substitution &subst);
 
 void infer_expr(const ExprPtr &expr,
-                std::unordered_map<std::string, TypePtr> &env,
+                std::vector<std::unordered_map<std::string, TypePtr>> &env,
                 Substitution &subst, TypeGenerator &gen);

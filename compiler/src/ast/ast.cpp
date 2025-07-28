@@ -62,10 +62,19 @@ auto ASTPrinter::dispatch(const ExprPtr &expr, Expr::Variable &var,
     return attach_type(out.str(), expr, indent, true);
 }
 
+auto ASTPrinter::dispatch(const ExprPtr &expr, Expr::Buffer &buf, size_t indent)
+    -> std::string {
+    std::ostringstream out;
+    out << indent_str(indent) << "Buffer(" << buf.name << ", " << buf.size
+        << ")\n"
+        << print(buf.init_buffer_function, indent + 2);
+    return attach_type(out.str(), expr, indent);
+}
+
 auto ASTPrinter::tokenkind_to_string(TokenKind kind) -> std::string {
     switch (kind) {
     case TokenKind::Arrow:
-        return "->";
+        return ">";
     case TokenKind::LParen:
         return "(";
     case TokenKind::RParen:
@@ -96,7 +105,7 @@ auto ASTPrinter::attach_type(const std::string &str, const ExprPtr &expr,
     if (inline_type) {
         out << " : " << type_to_string(expr->type) << "\n";
     } else {
-        out << indent_str(indent + 2) << "[type: " << type_to_string(expr->type)
+        out << indent_str(indent) << "[type: " << type_to_string(expr->type)
             << "]\n";
     }
     return str + out.str();
@@ -105,12 +114,12 @@ auto ASTPrinter::attach_type(const std::string &str, const ExprPtr &expr,
 auto ASTPrinter::type_to_string(const TypePtr &type) -> std::string {
     if (auto *base = std::get_if<TypeBase>(&type->node)) {
         switch (base->kind) {
-        case BaseTypeKind::Int:
-            return "int";
         case BaseTypeKind::Bool:
             return "bool";
         case BaseTypeKind::Float:
             return "float";
+        case BaseTypeKind::Int:
+            return "int";
         case BaseTypeKind::Void:
             return "void";
         default:

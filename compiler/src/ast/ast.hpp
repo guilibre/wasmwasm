@@ -4,6 +4,7 @@
 #include "../types/type.hpp"
 
 #include <memory>
+#include <string>
 #include <variant>
 #include <vector>
 
@@ -26,6 +27,12 @@ struct Expr {
         ExprPtr argument;
     };
 
+    struct Buffer {
+        std::string name;
+        size_t size;
+        ExprPtr init_buffer_function;
+    };
+
     struct Lambda {
         Token parameter;
         ExprPtr body;
@@ -39,8 +46,8 @@ struct Expr {
         Token name;
     };
 
-    using ExprNode =
-        std::variant<Assignment, Block, Call, Lambda, Literal, Variable>;
+    using ExprNode = std::variant<Assignment, Block, Buffer, Call, Lambda,
+                                  Literal, Variable>;
 
     ExprNode node;
     TypePtr type;
@@ -62,6 +69,8 @@ class ASTPrinter {
     auto dispatch(const ExprPtr &expr, Expr::Block &block, size_t indent)
         -> std::string;
     auto dispatch(const ExprPtr &expr, Expr::Call &call, size_t indent)
+        -> std::string;
+    auto dispatch(const ExprPtr &expr, Expr::Buffer &buf, size_t indent)
         -> std::string;
     auto dispatch(const ExprPtr &expr, Expr::Lambda &lam, size_t indent)
         -> std::string;

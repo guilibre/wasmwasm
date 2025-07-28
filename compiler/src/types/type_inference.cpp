@@ -4,8 +4,11 @@
 
 #include <cstddef>
 #include <stdexcept>
+#include <string>
 #include <type_traits>
+#include <unordered_map>
 #include <variant>
+#include <vector>
 
 namespace {
 
@@ -102,7 +105,7 @@ void unify(const TypePtr &a, const TypePtr &b, Substitution &subst) {
 }
 
 void infer_expr(const ExprPtr &expr,
-                std::unordered_map<std::string, TypePtr> &env,
+                std::vector<std::unordered_map<std::string, TypePtr>> &env,
                 Substitution &subst, TypeGenerator &gen) {
     expr->type = std::visit(
         [&](const auto &node) -> TypePtr {
@@ -110,7 +113,15 @@ void infer_expr(const ExprPtr &expr,
 
             if constexpr (std::is_same_v<T, Expr::Assignment>) {
                 infer_expr(node.value, env, subst, gen);
-                env.emplace(node.name.lexeme, node.value->type);
+                auto it = env.front().end();
+                for (int i = env.size() - 1; i >= 0; --i) {
+                    it = env[i].find(node.name.lexeme);
+                    if (it != env[i].end()) break;
+                }
+                if (it == env.front().end())
+                    env.back().emplace(node.name.lexeme, node.value->type);
+                else
+                    unify(it->second, node.value->type, subst);
                 return Type::make<TypeBase>(BaseTypeKind::Void);
             }
 
@@ -137,9 +148,10 @@ void infer_expr(const ExprPtr &expr,
 
             if constexpr (std::is_same_v<T, Expr::Lambda>) {
                 auto param_type = gen.fresh_type_var();
-                env.emplace(node.parameter.lexeme, param_type);
+                env.emplace_back(std::unordered_map<std::string, TypePtr>(
+                    {{node.parameter.lexeme, param_type}}));
                 infer_expr(node.body, env, subst, gen);
-                env.erase(node.parameter.lexeme);
+                env.pop_back();
                 return Type::make<TypeFun>(apply_subst(subst, param_type),
                                            apply_subst(subst, node.body->type));
             }
@@ -148,11 +160,22 @@ void infer_expr(const ExprPtr &expr,
                 return Type::make<TypeBase>(BaseTypeKind::Float);
 
             if constexpr (std::is_same_v<T, Expr::Variable>) {
-                auto it = env.find(node.name.lexeme);
-                if (it == env.end())
+                auto it = env.front().end();
+                for (int i = env.size() - 1; i >= 0; --i) {
+                    it = env[i].find(node.name.lexeme);
+                    if (it != env[i].end()) break;
+                }
+                if (it == env.front().end())
                     throw std::runtime_error("Unbound variable: " +
                                              node.name.lexeme);
                 return apply_subst(subst, it->second);
+            }
+
+            if constexpr (std::is_same_v<T, Expr::Buffer>) {
+                infer_expr(node.init_buffer_function, env, subst, gen);
+                env.back().emplace(node.name,
+                                   Type::make<TypeBase>(BaseTypeKind::Float));
+                return Type::make<TypeBase>(BaseTypeKind::Void);
             }
 
             throw std::runtime_error("Unknown expression type");

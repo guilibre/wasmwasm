@@ -11,11 +11,13 @@ enum class TokenKind : uint8_t {
     LParen = 6,
     RParen = 7,
     Arrow = 8,
-    LBra = 9,
-    RBra = 10,
-    Period = 11,
-    Eof = 12,
-    Invalid = 13
+    Colon = 9,
+    LBra = 10,
+    RBra = 11,
+    Period = 12,
+    Eol = 13,
+    Eof = 14,
+    Invalid = 15,
 };
 
 struct Token {

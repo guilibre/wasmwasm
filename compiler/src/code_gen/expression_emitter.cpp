@@ -8,6 +8,7 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <type_traits>
 #include <utility>
 #include <variant>
 
@@ -20,6 +21,11 @@ auto ExpressionEmitter::create(const ExprPtr &expr) -> BinaryenExpressionRef {
         [&](const auto &node) -> BinaryenExpressionRef {
             using T = std::decay_t<decltype(node)>;
             if constexpr (std::is_same_v<T, Expr::Assignment>) {
+                if (ctx->has_buffer(node.name.lexeme))
+                    return BinaryenGlobalSet(
+                        ctx->module(), (node.name.lexeme + "$future").c_str(),
+                        create(node.value));
+
                 auto value_expr = create(node.value);
 
                 auto &var = ctx->add_variable(
@@ -151,9 +157,20 @@ auto ExpressionEmitter::create(const ExprPtr &expr) -> BinaryenExpressionRef {
                     return ctx->make_closure(fun);
                 }
 
-                if (!ctx->has_variable_or_parameter(node.name.lexeme))
+                if (!ctx->has_variable_or_parameter(node.name.lexeme)) {
+                    if (ctx->has_buffer(node.name.lexeme))
+                        return BinaryenLoad(
+                            ctx->module(), 8, false,
+                            ctx->buffers().at(node.name.lexeme), 8,
+                            BinaryenTypeFloat64(),
+                            BinaryenGlobalGet(ctx->module(),
+                                              node.name.lexeme.c_str(),
+                                              BinaryenTypeInt32()),
+                            "memory");
+
                     throw std::runtime_error("Unknown variable: " +
                                              node.name.lexeme);
+                }
 
                 auto [var, depth] =
                     ctx->variable_or_parameter(node.name.lexeme);
@@ -170,6 +187,70 @@ auto ExpressionEmitter::create(const ExprPtr &expr) -> BinaryenExpressionRef {
                 auto var_size = var.type == BinaryenTypeFloat64() ? 8 : 4;
                 return BinaryenLoad(ctx->module(), var_size, false, var.offset,
                                     var_size, var.type, acc, "memory");
+            }
+
+            if constexpr (std::is_same_v<T, Expr::Buffer>) {
+                ctx->push_context();
+                auto &lambda =
+                    std::get<Expr::Lambda>(node.init_buffer_function->node);
+                ctx->add_parameter(lambda.parameter.lexeme,
+                                   BinaryenTypeFloat64());
+                auto &env = ctx->add_variable("env$", BinaryenTypeInt32());
+                ctx->add_buffer(node.name, node.size, create(lambda.body));
+                ctx->pop_context();
+
+                auto &idx = ctx->add_variable("idx$", BinaryenTypeInt32());
+
+                auto loop_body = std::array{
+                    BinaryenStore(
+                        ctx->module(), 8, ctx->buffers().at(node.name), 8,
+                        idx.get_local(ctx->module()),
+                        BinaryenCall(
+                            ctx->module(), (node.name + "$init").c_str(),
+                            std::array{
+                                BinaryenBinary(
+                                    ctx->module(), BinaryenDivFloat64(),
+                                    BinaryenUnary(
+                                        ctx->module(),
+                                        BinaryenConvertSInt32ToFloat64(),
+                                        idx.get_local(ctx->module())),
+                                    BinaryenConst(ctx->module(),
+                                                  BinaryenLiteralFloat64(8.0))),
+                            }
+                                .data(),
+                            1, BinaryenTypeFloat64()),
+                        BinaryenTypeFloat64(), "memory"),
+
+                    idx.set_local(
+                        ctx->module(),
+                        BinaryenBinary(ctx->module(), BinaryenAddInt32(),
+                                       idx.get_local(ctx->module()),
+                                       BinaryenConst(ctx->module(),
+                                                     BinaryenLiteralInt32(8)))),
+
+                    BinaryenBreak(
+                        ctx->module(), (node.name + "$loop").c_str(),
+                        BinaryenBinary(
+                            ctx->module(), BinaryenGeSInt32(),
+                            BinaryenConst(ctx->module(),
+                                          BinaryenLiteralInt32(node.size)),
+                            idx.get_local(ctx->module())),
+                        nullptr),
+                };
+
+                auto main_body = std::array{
+                    idx.set_local(
+                        ctx->module(),
+                        BinaryenConst(ctx->module(), BinaryenLiteralInt32(0))),
+
+                    BinaryenLoop(
+                        ctx->module(), (node.name + "$loop").c_str(),
+                        BinaryenBlock(ctx->module(), nullptr, loop_body.data(),
+                                      loop_body.size(), BinaryenTypeNone())),
+                };
+
+                return BinaryenBlock(ctx->module(), nullptr, main_body.data(),
+                                     main_body.size(), BinaryenTypeNone());
             }
         },
         expr->node);

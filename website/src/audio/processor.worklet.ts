@@ -1,5 +1,5 @@
 export default class WasmProcessor extends AudioWorkletProcessor {
-  private main: CallableFunction = () => {};
+  private main: CallableFunction = () => { };
   private heap: Float32Array<ArrayBuffer> = new Float32Array();
 
   public constructor() {
@@ -14,6 +14,8 @@ export default class WasmProcessor extends AudioWorkletProcessor {
         env: { memory },
       });
       this.main = instance.exports.main as CallableFunction;
+
+      (instance.exports.init_buffers as CallableFunction)();
     };
   }
 

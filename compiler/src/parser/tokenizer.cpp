@@ -6,6 +6,9 @@
 auto Token::to_string() const -> std::string {
     std::string kind_string;
     switch (kind) {
+    case TokenKind::Colon:
+        kind_string = ":";
+        break;
     case TokenKind::Arrow:
         kind_string = ">";
         break;
@@ -75,11 +78,6 @@ void Tokenizer::skip_whitespace() {
         case '\t':
             advance();
             break;
-        case '\n':
-            advance();
-            line++;
-            column = 1;
-            break;
         case '#':
             while (!is_done() && peek_char() != '\n')
                 advance();
@@ -142,6 +140,8 @@ auto Tokenizer::next() -> Token {
     if (std::isdigit(c) != 0) return scan_number();
 
     switch (c) {
+    case ':':
+        return make_token(TokenKind::Colon);
     case '>':
         return make_token(TokenKind::Arrow);
     case '+':
@@ -159,6 +159,10 @@ auto Tokenizer::next() -> Token {
         return make_token(TokenKind::RBra);
     case '.':
         return make_token(TokenKind::Period);
+    case '\n':
+        line++;
+        column = 1;
+        return make_token(TokenKind::Eol);
     default:
         return error_token("unexpected character");
     }

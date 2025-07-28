@@ -7,6 +7,7 @@
 #include <cassert>
 #include <stdexcept>
 #include <string>
+#include <unordered_map>
 #include <utility>
 
 namespace {
@@ -150,6 +151,46 @@ auto CodeGenContext::add_function(const std::string &name,
                         variables.back().size(), body);
 
     return fun_indices.at(name);
+}
+
+auto CodeGenContext::has_buffer(const std::string &name) -> bool {
+    return buffers_.contains(name);
+}
+
+auto CodeGenContext::buffers()
+    -> const std::unordered_map<std::string, BinaryenIndex> & {
+    return buffers_;
+}
+
+void CodeGenContext::add_buffer(const std::string &name, BinaryenIndex size,
+                                BinaryenExpressionRef init_buffer_function) {
+    BinaryenAddGlobal(module(), name.c_str(), BinaryenTypeInt32(), true,
+                      BinaryenConst(module(), BinaryenLiteralInt32(0)));
+
+    BinaryenAddGlobal(module(), (name + "$size").c_str(), BinaryenTypeInt32(),
+                      false,
+                      BinaryenConst(module(), BinaryenLiteralInt32(size)));
+
+    BinaryenAddGlobal(module(), (name + "$future").c_str(),
+                      BinaryenTypeFloat64(), true,
+                      BinaryenConst(module(), BinaryenLiteralFloat64(0.0)));
+
+    auto function_body = std::array{
+        env().set_local(module(),
+                        BinaryenConst(module(), BinaryenLiteralInt32(1024))),
+
+        BinaryenStore(module(), 4, 0, 4, env().get_local(module()),
+                      env().get_local(module()), BinaryenTypeInt32(), "memory"),
+
+        init_buffer_function,
+    };
+
+    add_function(name + "$init",
+                 BinaryenBlock(module(), nullptr, function_body.data(),
+                               function_body.size(), BinaryenTypeFloat64()),
+                 BinaryenTypeFloat64(), 0);
+
+    buffers_.emplace(name, (buffers_.size() * 1024 * 8) + 4096);
 }
 
 auto CodeGenContext::offset() -> BinaryenIndex { return offsets.back(); }

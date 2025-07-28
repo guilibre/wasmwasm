@@ -6,7 +6,7 @@ export default function App() {
   const audioContextRef = useRef<AudioContext | null>(null);
   const workletNodeRef = useRef<AudioWorkletNode | null>(null);
   const [code, setCode] = useState(
-    "* 0.1 (sin (* (* 880 PI) TIME)) -> OUT"
+    "* 0.1 (sin (* (* 880 PI) TIME)) > OUT"
   );
   const [isPlaying, setIsPlaying] = useState(false);
   const [signal, setSignal] = useState<number[]>([]);
