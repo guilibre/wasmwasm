@@ -62,9 +62,22 @@ void unify(const TypePtr &a, const TypePtr &b, Substitution &subst) {
 
     std::visit(
         overloaded{
-            [&](const TypeVar &va) {
-                if (occurs_in(va.id, tb)) error("Occurs check failed (left)");
-                subst.emplace(va.id, tb);
+            [&](const TypeBase &ba) {
+                std::visit(
+                    overloaded{[&](const TypeBase &bb) {
+                                   if (ba.kind != bb.kind)
+                                       error("Base type mismatch");
+                               },
+                               [&](const TypeVar &vb) {
+                                   if (occurs_in(vb.id, ta))
+                                       error("Occurs check failed (right)");
+                                   subst.emplace(vb.id, ta);
+                               },
+                               [&](const auto &) {
+                                   error(
+                                       "Cannot unify base type with non-base");
+                               }},
+                    tb->node);
             },
             [&](const TypeFun &fa) {
                 std::visit(
@@ -84,101 +97,105 @@ void unify(const TypePtr &a, const TypePtr &b, Substitution &subst) {
                         }},
                     tb->node);
             },
-            [&](const TypeBase &ba) {
-                std::visit(
-                    overloaded{[&](const TypeBase &bb) {
-                                   if (ba.kind != bb.kind)
-                                       error("Base type mismatch");
-                               },
-                               [&](const TypeVar &vb) {
-                                   if (occurs_in(vb.id, ta))
-                                       error("Occurs check failed (right)");
-                                   subst.emplace(vb.id, ta);
-                               },
-                               [&](const auto &) {
-                                   error(
-                                       "Cannot unify base type with non-base");
-                               }},
-                    tb->node);
-            }},
+            [&](const TypeVar &va) {
+                if (occurs_in(va.id, tb)) error("Occurs check failed (left)");
+                subst.emplace(va.id, tb);
+            },
+        },
         ta->node);
 }
 
 void infer_expr(const ExprPtr &expr,
                 std::vector<std::unordered_map<std::string, TypePtr>> &env,
                 Substitution &subst, TypeGenerator &gen) {
-    expr->type = std::visit(
-        [&](const auto &node) -> TypePtr {
-            using T = std::decay_t<decltype(node)>;
+    try {
+        expr->type = std::visit(
+            [&](const auto &node) -> TypePtr {
+                using T = std::decay_t<decltype(node)>;
 
-            if constexpr (std::is_same_v<T, Expr::Assignment>) {
-                infer_expr(node.value, env, subst, gen);
-                auto it = env.front().end();
-                for (int i = env.size() - 1; i >= 0; --i) {
-                    it = env[i].find(node.name.lexeme);
-                    if (it != env[i].end()) break;
-                }
-                if (it == env.front().end())
-                    env.back().emplace(node.name.lexeme, node.value->type);
-                else
-                    unify(it->second, node.value->type, subst);
-                return Type::make<TypeBase>(BaseTypeKind::Void);
-            }
-
-            if constexpr (std::is_same_v<T, Expr::Block>) {
-                if (node.expressions.size() == 0)
+                if constexpr (std::is_same_v<T, Assignment>) {
+                    infer_expr(node.value, env, subst, gen);
+                    auto it = env.front().end();
+                    for (int i = env.size() - 1; i >= 0; --i) {
+                        it = env[i].find(node.name.lexeme);
+                        if (it != env[i].end()) break;
+                    }
+                    if (it == env.front().end())
+                        env.back().emplace(node.name.lexeme, node.value->type);
+                    else
+                        unify(it->second, node.value->type, subst);
                     return Type::make<TypeBase>(BaseTypeKind::Void);
-                for (auto &child : node.expressions)
-                    infer_expr(child, env, subst, gen);
-                return apply_subst(subst, node.expressions.back()->type);
-            }
-
-            if constexpr (std::is_same_v<T, Expr::Call>) {
-                infer_expr(node.callee, env, subst, gen);
-                infer_expr(node.argument, env, subst, gen);
-                auto result_type = gen.fresh_type_var();
-                auto fun_type =
-                    Type::make<TypeFun>(node.argument->type, result_type);
-                unify(node.callee->type, fun_type, subst);
-                node.callee->type = apply_subst(subst, node.callee->type);
-                infer_expr(node.callee, env, subst, gen);
-                infer_expr(node.argument, env, subst, gen);
-                return apply_subst(subst, result_type);
-            }
-
-            if constexpr (std::is_same_v<T, Expr::Lambda>) {
-                auto param_type = gen.fresh_type_var();
-                env.emplace_back(std::unordered_map<std::string, TypePtr>(
-                    {{node.parameter.lexeme, param_type}}));
-                infer_expr(node.body, env, subst, gen);
-                env.pop_back();
-                return Type::make<TypeFun>(apply_subst(subst, param_type),
-                                           apply_subst(subst, node.body->type));
-            }
-
-            if constexpr (std::is_same_v<T, Expr::Literal>)
-                return Type::make<TypeBase>(BaseTypeKind::Float);
-
-            if constexpr (std::is_same_v<T, Expr::Variable>) {
-                auto it = env.front().end();
-                for (int i = env.size() - 1; i >= 0; --i) {
-                    it = env[i].find(node.name.lexeme);
-                    if (it != env[i].end()) break;
                 }
-                if (it == env.front().end())
-                    throw std::runtime_error("Unbound variable: " +
-                                             node.name.lexeme);
-                return apply_subst(subst, it->second);
-            }
 
-            if constexpr (std::is_same_v<T, Expr::Buffer>) {
-                infer_expr(node.init_buffer_function, env, subst, gen);
-                env.back().emplace(node.name,
-                                   Type::make<TypeBase>(BaseTypeKind::Float));
-                return Type::make<TypeBase>(BaseTypeKind::Void);
-            }
+                if constexpr (std::is_same_v<T, BinaryOp>) {
+                    infer_expr(node.left, env, subst, gen);
+                    infer_expr(node.right, env, subst, gen);
+                    unify(node.left->type, node.right->type, subst);
+                    return node.left->type;
+                }
 
-            throw std::runtime_error("Unknown expression type");
-        },
-        expr->node);
+                if constexpr (std::is_same_v<T, Block>) {
+                    if (node.expressions.size() == 0)
+                        return Type::make<TypeBase>(BaseTypeKind::Void);
+                    for (auto &child : node.expressions)
+                        infer_expr(child, env, subst, gen);
+                    return apply_subst(subst, node.expressions.back()->type);
+                }
+
+                if constexpr (std::is_same_v<T, Buffer>) {
+                    infer_expr(node.init_buffer_function, env, subst, gen);
+                    env.back().emplace(
+                        node.name, Type::make<TypeBase>(BaseTypeKind::Float));
+                    return Type::make<TypeBase>(BaseTypeKind::Void);
+                }
+
+                if constexpr (std::is_same_v<T, Call>) {
+                    infer_expr(node.callee, env, subst, gen);
+                    infer_expr(node.argument, env, subst, gen);
+                    auto result_type = gen.fresh_type_var();
+                    auto fun_type =
+                        Type::make<TypeFun>(node.argument->type, result_type);
+                    unify(node.callee->type, fun_type, subst);
+                    node.callee->type = apply_subst(subst, node.callee->type);
+                    return apply_subst(subst, result_type);
+                }
+
+                if constexpr (std::is_same_v<T, Lambda>) {
+                    auto param_type = gen.fresh_type_var();
+                    env.emplace_back(std::unordered_map<std::string, TypePtr>(
+                        {{node.parameter.lexeme, param_type}}));
+                    infer_expr(node.body, env, subst, gen);
+                    env.pop_back();
+                    return Type::make<TypeFun>(
+                        apply_subst(subst, param_type),
+                        apply_subst(subst, node.body->type));
+                }
+
+                if constexpr (std::is_same_v<T, Literal>) {
+                    return Type::make<TypeBase>(BaseTypeKind::Float);
+                }
+
+                if constexpr (std::is_same_v<T, UnaryOp>) {
+                    infer_expr(node.expr, env, subst, gen);
+                    return node.expr->type;
+                }
+
+                if constexpr (std::is_same_v<T, Variable>) {
+                    auto it = env.front().end();
+                    for (int i = env.size() - 1; i >= 0; --i) {
+                        it = env[i].find(node.name.lexeme);
+                        if (it != env[i].end()) break;
+                    }
+                    if (it == env.front().end())
+                        throw std::runtime_error("Unbound variable: " +
+                                                 node.name.lexeme);
+                    return apply_subst(subst, it->second);
+                }
+
+                throw std::runtime_error("Unknown expression type");
+            },
+            expr->node);
+    } catch (const std::runtime_error &ex) {
+        throw ex;
+    }
 }

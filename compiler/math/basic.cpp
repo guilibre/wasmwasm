@@ -1,4 +1,6 @@
+#include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <numbers>
 
 extern "C" {
@@ -21,5 +23,18 @@ auto wasmwasm_sin(double x) -> double {
 
     double approx = base_x - (x3 / 6.0) + (x5 / 120.0) - (x7 / 5040.0);
     return sign * approx;
+}
+
+auto wasmwasm_sign(double x) -> double {
+    if (x >= 0) return 1.0;
+    return -1.0;
+}
+
+auto wasmwasm_fract(double x) -> double {
+    return x - static_cast<double>((static_cast<int64_t>(x)));
+}
+
+auto wasmwasm_clip(double x) -> double {
+    return std::min(std::max(x, -1.0), 1.0);
 }
 }

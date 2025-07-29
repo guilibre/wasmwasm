@@ -5,9 +5,7 @@ import WasmWasm from "../audio/compiler";
 export default function App() {
   const audioContextRef = useRef<AudioContext | null>(null);
   const workletNodeRef = useRef<AudioWorkletNode | null>(null);
-  const [code, setCode] = useState(
-    "* 0.1 (sin (* (* 880 PI) TIME)) > OUT"
-  );
+  const [code, setCode] = useState("0.2 * sin (TIME * 440 * 2 * PI) > OUT");
   const [isPlaying, setIsPlaying] = useState(false);
   const [signal, setSignal] = useState<number[]>([]);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -36,10 +34,7 @@ export default function App() {
       if (workletNodeRef.current && audioContextRef.current) {
         workletNodeRef.current.port.postMessage({
           type: "load-wasm",
-          buffer: await WasmWasm.init(
-            audioContextRef.current.sampleRate,
-            code
-          ),
+          buffer: await WasmWasm.init(audioContextRef.current.sampleRate, code),
           code: code,
         });
       }
@@ -70,7 +65,6 @@ export default function App() {
     ctx.beginPath();
 
     signal.forEach((val, i) => {
-      val = 10 * val;
       const x = (i / signal.length) * canvas.width;
       const y = (1 - (val + 1) / 2) * canvas.height;
       if (i === 0) ctx.moveTo(x, y);

@@ -14,16 +14,14 @@
                 fetch("output.wasm"),
                 imports
             );
-            let before = performance.now();
             instance.exports.init_buffers();
-            console.log("finished with buffers", (performance.now() - before) / 1000);
             let output = Array.from({ length: 2 }, () =>
                 new Float32Array(256).fill(0)
             );
             const width = output.length;
             const height = output[0].length;
-            before = performance.now();
-            for (let i = 0; i < 200; i++) {
+            let before = performance.now();
+            for (let i = 0; i < 2000; i++) {
                 instance.exports.main(0, height, width);
                 for (let i = 0; i < width; ++i)
                     output[i].set(this.heap.subarray(i * height, (i + 1) * height));
@@ -33,7 +31,7 @@
             let TIME = 0;
 
             before = performance.now();
-            for (let i = 0; i < 200; i++) {
+            for (let i = 0; i < 2000; i++) {
                 for (let k = 0; k < height; k++) {
                     for (let j = 0; j < width; j++) {
                         output[j][k] = Math.sin(880 * Math.PI * TIME);

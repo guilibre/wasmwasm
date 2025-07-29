@@ -16,65 +16,12 @@
 #include <iostream>
 #include <memory>
 #include <sstream>
+#include <stdexcept>
 #include <type_traits>
 #include <variant>
 #include <vector>
 
 namespace {
-
-void define_binary_operator(const std::shared_ptr<CodeGenContext> &ctx,
-                            const std::string &symbol, BinaryenOp op) {
-    ctx->push_context();
-    auto previous_offset = ctx->offset();
-
-    auto &rhs = ctx->add_parameter("rhs$", BinaryenTypeFloat64());
-    auto &outer_env = ctx->add_env();
-
-    ctx->push_context();
-
-    auto &lhs = ctx->add_parameter("lhs$", BinaryenTypeFloat64());
-    auto &inner_env = ctx->add_env();
-
-    auto &inner_fun = ctx->add_function(
-        symbol + "$inner",
-        BinaryenBinary(
-            ctx->module(), op,
-            BinaryenLoad(
-                ctx->module(), 8, false, rhs.offset, 8, BinaryenTypeFloat64(),
-                BinaryenLoad(ctx->module(), 4, false, 0, 4, BinaryenTypeInt32(),
-                             inner_env.get_local(ctx->module()), "memory"),
-                "memory"),
-            lhs.get_local(ctx->module())),
-        BinaryenTypeFloat64(), 0);
-
-    ctx->pop_context();
-
-    auto outer_fun_body = std::array{
-        BinaryenStore(
-            ctx->module(), 8, rhs.offset, 8, outer_env.get_local(ctx->module()),
-            rhs.get_local(ctx->module()), BinaryenTypeFloat64(), "memory"),
-        BinaryenStore(ctx->module(), 4, outer_env.offset, 4,
-                      outer_env.get_local(ctx->module()),
-                      outer_env.get_local(ctx->module()), BinaryenTypeInt32(),
-                      "memory"),
-        BinaryenStore(
-            ctx->module(), 4, ctx->offset(), 4,
-            outer_env.get_local(ctx->module()),
-            BinaryenConst(ctx->module(), BinaryenLiteralInt32(inner_fun.local)),
-            BinaryenTypeInt32(), "memory"),
-        BinaryenBinary(ctx->module(), BinaryenAddInt32(),
-                       outer_env.get_local(ctx->module()),
-                       BinaryenConst(ctx->module(),
-                                     BinaryenLiteralInt32(outer_env.offset)))};
-
-    auto &outer_fun = ctx->add_function(
-        symbol,
-        BinaryenBlock(ctx->module(), nullptr, outer_fun_body.data(),
-                      outer_fun_body.size(), BinaryenTypeInt32()),
-        BinaryenTypeInt32(), ctx->offset() - previous_offset + 4);
-
-    ctx->pop_context();
-}
 
 auto write_module_to_file(wasm::Module *module) -> int {
     std::ofstream out("/tmp/output.wasm", std::ios::binary);
@@ -124,26 +71,31 @@ extern "C" auto run_compiler(float sample_rate, const char *src, char *math_bin,
         return 1;
     }
 
-    ASTPrinter ast_printer;
-    ast_printer(*init_result);
-    ast_printer(*main_result);
+    // ASTPrinter ast_printer;
+    // ast_printer(*init_result);
+    // ast_printer(*main_result);
+    // return 0;
 
+    auto int_type = Type::make<TypeBase>(BaseTypeKind::Int);
     auto float_type = Type::make<TypeBase>(BaseTypeKind::Float);
+    auto void_type = Type::make<TypeBase>(BaseTypeKind::Void);
+    auto int_to_float = Type::make<TypeFun>(int_type, float_type);
     auto float_to_float = Type::make<TypeFun>(float_type, float_type);
     std::vector<std::unordered_map<std::string, TypePtr>> env{
-        {{"PI", float_type}},
-        {{"TIME", float_type}},
-        {{"OUT", float_type}},
-        {{"sin", float_to_float}},
-        {{"buffer",
-          Type::make<TypeFun>(
-              float_type, Type::make<TypeFun>(
-                              float_type, Type::make<TypeFun>(float_to_float,
-                                                              float_type)))}},
-        {{"+", Type::make<TypeFun>(float_type, float_to_float)}},
-        {{"-", Type::make<TypeFun>(float_type, float_to_float)}},
-        {{"*", Type::make<TypeFun>(float_type, float_to_float)}},
-        {{"/", Type::make<TypeFun>(float_type, float_to_float)}},
+        {
+            {"PI", float_type},
+            {"TIME", float_type},
+            {"OUT", float_type},
+            {"sin", float_to_float},
+            {"sign", float_to_float},
+            {"fract", float_to_float},
+            {"clip", float_to_float},
+            {"buffer",
+             Type::make<TypeFun>(
+                 float_type,
+                 Type::make<TypeFun>(
+                     int_type, Type::make<TypeFun>(int_to_float, void_type)))},
+        },
     };
     Substitution subst;
     TypeGenerator gen;
@@ -173,28 +125,31 @@ extern "C" auto run_compiler(float sample_rate, const char *src, char *math_bin,
         std::visit(
             [&](const auto &node) {
                 using T = std::decay_t<decltype(node)>;
-                if constexpr (std::is_same_v<T, Expr::Assignment>)
+                if constexpr (std::is_same_v<T, Assignment>)
                     monomorphize(node.value);
 
-                if constexpr (std::is_same_v<T, Expr::Block>) {
+                if constexpr (std::is_same_v<T, Block>) {
                     for (const auto &expr : node.expressions) {
                         monomorphize(expr);
                     }
                     expr->type = monomorphize_fun_type(expr->type);
                 }
 
-                if constexpr (std::is_same_v<T, Expr::Call>) {
+                if constexpr (std::is_same_v<T, Buffer>)
+                    monomorphize(node.init_buffer_function);
+
+                if constexpr (std::is_same_v<T, Call>) {
                     monomorphize(node.callee);
                     monomorphize(node.argument);
                     expr->type = monomorphize_fun_type(expr->type);
                 }
 
-                if constexpr (std::is_same_v<T, Expr::Lambda>) {
+                if constexpr (std::is_same_v<T, Lambda>) {
                     monomorphize(node.body);
                     expr->type = monomorphize_fun_type(expr->type);
                 }
 
-                if constexpr (std::is_same_v<T, Expr::Variable>) {
+                if constexpr (std::is_same_v<T, Variable>) {
                     if (std::holds_alternative<TypeVar>(expr->type->node))
                         expr->type = Type::make<TypeBase>(BaseTypeKind::Float);
 
@@ -202,9 +157,6 @@ extern "C" auto run_compiler(float sample_rate, const char *src, char *math_bin,
                         expr->type = monomorphize_fun_type(expr->type);
                     }
                 }
-
-                if constexpr (std::is_same_v<T, Expr::Buffer>)
-                    monomorphize(node.init_buffer_function);
             },
             expr->node);
     };
@@ -214,6 +166,7 @@ extern "C" auto run_compiler(float sample_rate, const char *src, char *math_bin,
     // ASTPrinter ast_printer;
     // ast_printer(*init_result);
     // ast_printer(*main_result);
+    // return 0;
 
     auto *main_module = BinaryenModuleCreate();
     if (main_module == nullptr) {
@@ -224,18 +177,43 @@ extern "C" auto run_compiler(float sample_rate, const char *src, char *math_bin,
 
     ctx->add_constant("PI", BinaryenLiteralFloat64(M_PI));
 
-    define_binary_operator(ctx, "+", BinaryenAddFloat64());
-    define_binary_operator(ctx, "-", BinaryenSubFloat64());
-    define_binary_operator(ctx, "*", BinaryenMulFloat64());
-    define_binary_operator(ctx, "/", BinaryenDivFloat64());
-
     ctx->push_context();
-    auto &phase = ctx->add_parameter("phase", BinaryenTypeFloat64());
+    auto &arg = ctx->add_parameter("phase", BinaryenTypeFloat64());
     ctx->add_env();
     ctx->add_function(
         "sin",
         BinaryenCall(ctx->module(), "wasmwasm_sin",
-                     std::array{phase.get_local(ctx->module())}.data(), 1,
+                     std::array{arg.get_local(ctx->module())}.data(), 1,
+                     BinaryenTypeFloat64()),
+        BinaryenTypeFloat64(), 0);
+    ctx->pop_context();
+    ctx->push_context();
+    arg = ctx->add_parameter("arg", BinaryenTypeFloat64());
+    ctx->add_env();
+    ctx->add_function(
+        "sign",
+        BinaryenCall(ctx->module(), "wasmwasm_sign",
+                     std::array{arg.get_local(ctx->module())}.data(), 1,
+                     BinaryenTypeFloat64()),
+        BinaryenTypeFloat64(), 0);
+    ctx->pop_context();
+    ctx->push_context();
+    arg = ctx->add_parameter("arg", BinaryenTypeFloat64());
+    ctx->add_env();
+    ctx->add_function(
+        "fract",
+        BinaryenCall(ctx->module(), "wasmwasm_fract",
+                     std::array{arg.get_local(ctx->module())}.data(), 1,
+                     BinaryenTypeFloat64()),
+        BinaryenTypeFloat64(), 0);
+    ctx->pop_context();
+    ctx->push_context();
+    arg = ctx->add_parameter("arg", BinaryenTypeFloat64());
+    ctx->add_env();
+    ctx->add_function(
+        "clip",
+        BinaryenCall(ctx->module(), "wasmwasm_clip",
+                     std::array{arg.get_local(ctx->module())}.data(), 1,
                      BinaryenTypeFloat64()),
         BinaryenTypeFloat64(), 0);
     ctx->pop_context();
@@ -246,16 +224,21 @@ extern "C" auto run_compiler(float sample_rate, const char *src, char *math_bin,
     MainModuleBuilder main_module_builder(ctx, expression_emitter, math_module,
                                           sample_rate);
 
-    init_buffers_builder.build(*init_result);
-    main_module_builder.build(*main_result);
+    try {
+        init_buffers_builder.build(*init_result);
+        main_module_builder.build(*main_result);
+    } catch (std::runtime_error &ex) {
+        std::cerr << ex.what();
+        return 1;
+    }
 
     // BinaryenModulePrint(main_module);
     if (!BinaryenModuleValidate(main_module)) {
         std::cerr << "invalid module";
         return 1;
     }
-    // BinaryenSetOptimizeLevel(3);
-    // BinaryenModuleOptimize(main_module);
+    BinaryenSetOptimizeLevel(3);
+    BinaryenModuleOptimize(main_module);
     // BinaryenModulePrint(main_module);
 
     return write_module_to_file(main_module);
@@ -282,7 +265,7 @@ auto main(int argc, char **argv) -> int {
         return 1;
     }
 
-    std::streamsize size = math_file.tellg();
+    auto size = math_file.tellg();
     math_file.seekg(0, std::ios::beg);
 
     std::vector<char> math_buffer(size);

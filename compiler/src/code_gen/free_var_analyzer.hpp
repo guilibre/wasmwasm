@@ -7,7 +7,7 @@
 
 namespace FreeVarAnalyzer {
 
-auto analyze(const ExprPtr &expr, const std::unordered_set<std::string> &bound,
+auto analyze(const ExprPtr &expr, std::unordered_set<std::string> &bound,
              const std::shared_ptr<CodeGenContext> &ctx)
     -> std::unordered_set<std::string>;
 

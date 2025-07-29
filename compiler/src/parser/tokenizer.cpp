@@ -3,45 +3,7 @@
 #include <cctype>
 #include <string>
 
-auto Token::to_string() const -> std::string {
-    std::string kind_string;
-    switch (kind) {
-    case TokenKind::Colon:
-        kind_string = ":";
-        break;
-    case TokenKind::Arrow:
-        kind_string = ">";
-        break;
-    case TokenKind::LParen:
-        kind_string = "(";
-        break;
-    case TokenKind::RParen:
-        kind_string = ")";
-        break;
-    case TokenKind::LBra:
-        kind_string = "{";
-        break;
-    case TokenKind::RBra:
-        kind_string = "}";
-        break;
-    case TokenKind::Period:
-        kind_string = ".";
-        break;
-    case TokenKind::Eof:
-        kind_string = "eof";
-        break;
-    case TokenKind::Invalid:
-        kind_string = "unknown";
-        break;
-    default:
-        kind_string = lexeme;
-        break;
-    }
-    return "'" + kind_string + "' | (" + std::to_string(line) + "," +
-           std::to_string(column) + ")";
-}
-
-Tokenizer::Tokenizer(std::string_view src) : source(src) {}
+Tokenizer::Tokenizer(std::string_view source) : source(source) {}
 
 [[nodiscard]] auto Tokenizer::is_done() const -> bool {
     return current >= source.size();
@@ -54,7 +16,7 @@ auto Tokenizer::advance() -> char {
     return c;
 }
 
-auto Tokenizer::peek_char() const -> char {
+auto Tokenizer::peek_current() const -> char {
     return is_done() ? '\0' : source[current];
 }
 
@@ -71,7 +33,7 @@ auto Tokenizer::match(char expected) -> bool {
 
 void Tokenizer::skip_whitespace() {
     while (!is_done()) {
-        char c = peek_char();
+        char c = peek_current();
         switch (c) {
         case ' ':
         case '\r':
@@ -79,7 +41,7 @@ void Tokenizer::skip_whitespace() {
             advance();
             break;
         case '#':
-            while (!is_done() && peek_char() != '\n')
+            while (!is_done() && peek_current() != '\n')
                 advance();
             break;
         default:
@@ -107,23 +69,24 @@ auto Tokenizer::error_token(const std::string &msg) -> Token {
 }
 
 auto Tokenizer::scan_identifier() -> Token {
-    while ((std::isalnum(peek_char()) != 0) || peek_char() == '_')
+    while ((std::isalnum(peek_current()) != 0) || peek_current() == '_')
         advance();
     return make_token(TokenKind::Identifier);
 }
 
 auto Tokenizer::scan_number() -> Token {
-    while (std::isdigit(peek_char()) != 0)
+    while (std::isdigit(peek_current()) != 0)
         advance();
-    if (peek_char() == '.' && std::isdigit(peek_next()) != 0) {
+
+    if (peek_current() == '.' && std::isdigit(peek_next()) != 0) {
         advance();
-        while (std::isdigit(peek_char()) != 0)
+        while (std::isdigit(peek_current()) != 0)
             advance();
     }
     return make_token(TokenKind::Number);
 }
 
-auto Tokenizer::peek() const -> Token {
+auto Tokenizer::peek_token() const -> Token {
     auto copy = *this;
     return copy.next();
 }
@@ -140,25 +103,28 @@ auto Tokenizer::next() -> Token {
     if (std::isdigit(c) != 0) return scan_number();
 
     switch (c) {
-    case ':':
-        return make_token(TokenKind::Colon);
-    case '>':
-        return make_token(TokenKind::Arrow);
     case '+':
     case '-':
+        return make_token(TokenKind::Additive);
     case '*':
     case '/':
-        return make_token(TokenKind::Identifier);
+        return make_token(TokenKind::Multiplicative);
+    case '>':
+        return make_token(TokenKind::Arrow);
+    case ':':
+        return make_token(TokenKind::Colon);
+    case ',':
+        return make_token(TokenKind::Comma);
+    case '.':
+        return make_token(TokenKind::Period);
+    case '{':
+        return make_token(TokenKind::LBrace);
+    case '}':
+        return make_token(TokenKind::RBrace);
     case '(':
         return make_token(TokenKind::LParen);
     case ')':
         return make_token(TokenKind::RParen);
-    case '{':
-        return make_token(TokenKind::LBra);
-    case '}':
-        return make_token(TokenKind::RBra);
-    case '.':
-        return make_token(TokenKind::Period);
     case '\n':
         line++;
         column = 1;
@@ -166,4 +132,54 @@ auto Tokenizer::next() -> Token {
     default:
         return error_token("unexpected character");
     }
+}
+
+auto Token::to_string() const -> std::string {
+    std::string kind_string;
+    switch (kind) {
+    case TokenKind::Additive:
+    case TokenKind::Multiplicative:
+        kind_string = lexeme;
+        break;
+    case TokenKind::Arrow:
+        kind_string = ">";
+        break;
+    case TokenKind::Colon:
+        kind_string = ":";
+        break;
+    case TokenKind::Comma:
+        kind_string = ",";
+        break;
+        kind_string = "*";
+        break;
+    case TokenKind::Period:
+        kind_string = ".";
+        break;
+    case TokenKind::LBrace:
+        kind_string = "{";
+        break;
+    case TokenKind::RBrace:
+        kind_string = "}";
+        break;
+    case TokenKind::LParen:
+        kind_string = "(";
+        break;
+    case TokenKind::RParen:
+        kind_string = ")";
+        break;
+    case TokenKind::Eol:
+        kind_string = "eol";
+        break;
+    case TokenKind::Eof:
+        kind_string = "eof";
+        break;
+    case TokenKind::Invalid:
+        kind_string = "unknown";
+        break;
+    default:
+        kind_string = lexeme;
+        break;
+    }
+    return "'" + kind_string + "' | (" + std::to_string(line) + "," +
+           std::to_string(column) + ")";
 }

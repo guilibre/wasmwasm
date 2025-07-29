@@ -1,0 +1,17 @@
+:buffer x 640 {x. fract (47681 * sin x)}
+:buffer x1 1 {x. 0}
+:buffer y 600 {x. 0}
+:buffer y1 1 {x. 0}
+
+{amp freq. amp * sin (TIME * freq * 2.0 * PI)} > sin_osc
+0.6 > alpha
+
+x > x1
+y > y1
+
+0.99 * (alpha * x + (1.0 - alpha) * x1) > tmp1
+tmp1 > x
+0.9999 * (alpha * y + (1.0 - alpha) * y1) > tmp2
+0.5 * (tmp1 + tmp2) > y
+
+y > OUT

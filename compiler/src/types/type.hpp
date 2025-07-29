@@ -9,8 +9,10 @@ struct Type;
 
 using TypePtr = std::shared_ptr<Type>;
 
-struct TypeVar {
-    size_t id;
+enum struct BaseTypeKind : u_int8_t { Bool, Float, Int, Void };
+
+struct TypeBase {
+    BaseTypeKind kind;
 };
 
 struct TypeFun {
@@ -18,13 +20,11 @@ struct TypeFun {
     TypePtr result;
 };
 
-enum struct BaseTypeKind : u_int8_t { Bool, Float, Int, Void };
-
-struct TypeBase {
-    BaseTypeKind kind;
+struct TypeVar {
+    size_t id;
 };
 
-using TypeNode = std::variant<TypeVar, TypeFun, TypeBase>;
+using TypeNode = std::variant<TypeBase, TypeFun, TypeVar>;
 
 struct Type {
     TypeNode node;

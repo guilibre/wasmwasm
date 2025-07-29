@@ -141,7 +141,7 @@ auto CodeGenContext::add_function(const std::string &name,
         name, BinaryenVariable{
                   .local = static_cast<BinaryenIndex>(fun_indices.size()),
                   .type = BinaryenTypeInt32(),
-                  .offset = offset + 4,
+                  .offset = offset + 16,
               });
 
     BinaryenAddFunction(module_, name.c_str(),

@@ -6,18 +6,21 @@
 #include <string_view>
 
 enum class TokenKind : uint8_t {
-    Identifier = 0,
-    Number = 1,
-    LParen = 6,
-    RParen = 7,
-    Arrow = 8,
-    Colon = 9,
-    LBra = 10,
-    RBra = 11,
-    Period = 12,
-    Eol = 13,
-    Eof = 14,
-    Invalid = 15,
+    Additive,
+    Arrow,
+    Colon,
+    Comma,
+    Eof,
+    Eol,
+    Identifier,
+    Invalid,
+    LBrace,
+    LParen,
+    Multiplicative,
+    Number,
+    Period,
+    RBrace,
+    RParen,
 };
 
 struct Token {
@@ -30,10 +33,10 @@ struct Token {
 
 class Tokenizer {
   public:
-    explicit Tokenizer(std::string_view src);
+    explicit Tokenizer(std::string_view source);
 
     auto next() -> Token;
-    [[nodiscard]] auto peek() const -> Token;
+    [[nodiscard]] auto peek_token() const -> Token;
     [[nodiscard]] auto is_done() const -> bool;
 
   private:
@@ -45,7 +48,7 @@ class Tokenizer {
 
     void skip_whitespace();
     auto advance() -> char;
-    [[nodiscard]] auto peek_char() const -> char;
+    [[nodiscard]] auto peek_current() const -> char;
     [[nodiscard]] auto peek_next() const -> char;
     auto match(char expected) -> bool;
 

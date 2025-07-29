@@ -1,0 +1,34 @@
+:buffer in1 1 {x. 0.1}
+:buffer in2 1 {x. 0}
+:buffer in3 1 {x. 0}
+:buffer lpf 1 {x. 0}
+:buffer hpf 1 {x. 0}
+
+15.7 > alpha
+28 > beta
+-1.143 > m0
+-0.714 > m1
+
+{x. x * sign x} > abs
+
+{x.
+  abs (x + 1) > tmp
+  tmp - abs (x - 1) > tmp
+  tmp * (m0 - m1) > tmp
+  tmp * 0.5 > tmp
+  tmp + m1 * x
+} > h
+
+in1 > x
+in2 > y
+in3 > z
+
+alpha * (y - x - h x) > xdot
+z + x - y > ydot
+beta * -y > zdot
+
+in1 + 0.02 * xdot > in1
+in2 + 0.02 * ydot > in2
+in3 + 0.02 * zdot > in3
+
+0.2 * in1 > OUT

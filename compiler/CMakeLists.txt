@@ -23,7 +23,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-set( COMPILE_OPTIONS
+set(COMPILE_OPTIONS
     -Wall
     -Wextra
     -Wpedantic
@@ -92,13 +92,13 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Emscripten")
         -g1 -O2
     )
 
-    add_executable(math math/sin.cpp)
+    add_executable(math math/basic.cpp)
     target_compile_options(math PRIVATE
         -O2 -ffast-math -msimd128 -g1
         ${COMPILE_OPTIONS}
     )
     target_link_options(math PRIVATE
-        -sEXPORTED_FUNCTIONS=["_wasmwasm_sin"]
+        -sEXPORTED_FUNCTIONS=["_wasmwasm_sin","_wasmwasm_sign","_wasmwasm_fract","_wasmwasm_clip"]
         -sWASM=1
         -O2 -ffast-math -msimd128 -g1
     )

@@ -1,0 +1,22 @@
+:buffer xb 1 {x. 0.0}
+:buffer yb 1 {y. 0.5}
+
+1   > k
+0.1 > h
+
+# read from buffer and store in a variable
+# as changes to the buffer will only happen
+# next frame
+xb > x
+yb > y
+
+# leapfrog is symplectic, so it converges energy
+# other integration methods will blow up
+y - k * x * h/2 > y
+x +     y * h   > x
+y - k * x * h/2 > y
+
+x > xb
+y > yb
+
+x > OUT

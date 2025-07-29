@@ -7,7 +7,7 @@
 
 namespace FreeVarAnalyzer {
 
-auto analyze(const ExprPtr &expr, const std::unordered_set<std::string> &bound,
+auto analyze(const ExprPtr &expr, std::unordered_set<std::string> &bound,
              const std::shared_ptr<CodeGenContext> &ctx)
     -> std::unordered_set<std::string> {
     std::unordered_set<std::string> result;
@@ -17,20 +17,26 @@ auto analyze(const ExprPtr &expr, const std::unordered_set<std::string> &bound,
             [&](const auto &node) {
                 using T = std::decay_t<decltype(node)>;
 
-                if constexpr (std::is_same_v<T, Expr::Assignment>) {
+                if constexpr (std::is_same_v<T, Assignment>) {
                     visit(node.value);
-                } else if constexpr (std::is_same_v<T, Expr::Block>) {
+                    bound.emplace(node.name.lexeme);
+                } else if constexpr (std::is_same_v<T, Block>) {
                     for (const auto &subexpr : node.expressions)
                         visit(subexpr);
-                } else if constexpr (std::is_same_v<T, Expr::Call>) {
+                } else if constexpr (std::is_same_v<T, BinaryOp>) {
+                    visit(node.left);
+                    visit(node.right);
+                } else if constexpr (std::is_same_v<T, Call>) {
                     visit(node.callee);
                     visit(node.argument);
-                } else if constexpr (std::is_same_v<T, Expr::Lambda>) {
+                } else if constexpr (std::is_same_v<T, Lambda>) {
                     auto inner_bound = bound;
                     inner_bound.emplace(node.parameter.lexeme);
                     auto inner_free = analyze(node.body, inner_bound, ctx);
                     result.insert(inner_free.begin(), inner_free.end());
-                } else if constexpr (std::is_same_v<T, Expr::Variable>) {
+                } else if constexpr (std::is_same_v<T, UnaryOp>) {
+                    visit(node.expr);
+                } else if constexpr (std::is_same_v<T, Variable>) {
                     if (!bound.contains(node.name.lexeme) &&
                         node.name.lexeme != "TIME" &&
                         !ctx->has_function(node.name.lexeme) &&
