@@ -9,7 +9,7 @@ declare module "./wasmwasm.js" {
     HEAPU8: Uint8Array;
   }
 
-  const Module: (moduleArg: any) => Promise<EmscriptenModule>;
+  const Module: () => Promise<EmscriptenModule>;
 }
 
 export default Module;

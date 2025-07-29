@@ -9,7 +9,7 @@ export default class WasmWasm {
     sample_rate: number,
     src: string
   ): Promise<Uint8Array<ArrayBufferLike>> {
-    if (!this.emscripten_module) this.emscripten_module = await Module({});
+    if (!this.emscripten_module) this.emscripten_module = await Module();
 
     try {
       const src_ptr = this.emscripten_module._malloc(src.length + 1);
