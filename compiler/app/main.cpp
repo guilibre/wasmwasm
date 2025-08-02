@@ -87,6 +87,7 @@ extern "C" auto run_compiler(float sample_rate, const char *src, char *math_bin,
             {"PI", float_type},
             {"TIME", float_type},
             {"OUT", float_type},
+            {"cos", float_to_float},
             {"sin", float_to_float},
             {"sign", float_to_float},
             {"fract", float_to_float},
@@ -179,11 +180,21 @@ extern "C" auto run_compiler(float sample_rate, const char *src, char *math_bin,
     ctx->add_constant("PI", BinaryenLiteralFloat64(std::numbers::pi));
 
     ctx->push_context();
-    auto &arg = ctx->add_parameter("phase", BinaryenTypeFloat64());
+    auto &arg = ctx->add_parameter("arg", BinaryenTypeFloat64());
     ctx->add_env();
     ctx->add_function(
         "sin",
         BinaryenCall(ctx->module(), "wasmwasm_sin",
+                     std::array{arg.get_local(ctx->module())}.data(), 1,
+                     BinaryenTypeFloat64()),
+        BinaryenTypeFloat64(), 0);
+    ctx->pop_context();
+    ctx->push_context();
+    arg = ctx->add_parameter("arg", BinaryenTypeFloat64());
+    ctx->add_env();
+    ctx->add_function(
+        "cos",
+        BinaryenCall(ctx->module(), "wasmwasm_cos",
                      std::array{arg.get_local(ctx->module())}.data(), 1,
                      BinaryenTypeFloat64()),
         BinaryenTypeFloat64(), 0);

@@ -112,7 +112,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Emscripten")
         ${COMPILE_OPTIONS}
     )
     target_link_options(math PRIVATE
-        -sEXPORTED_FUNCTIONS=["_wasmwasm_sin","_wasmwasm_sign","_wasmwasm_fract","_wasmwasm_clip"]
+        -sEXPORTED_FUNCTIONS=["_wasmwasm_sin","_wasmwasm_cos","_wasmwasm_sign","_wasmwasm_fract","_wasmwasm_clip"]
         -sWASM=1
         -O2 -ffast-math -msimd128 -g1
     )
