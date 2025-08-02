@@ -10,7 +10,7 @@
 xb > x
 yb > y
 
-# leapfrog is symplectic, so it converges energy
+# leapfrog is symplectic, so it conserves energy
 # other integration methods will blow up
 y - k * x * h/2 > y
 x +     y * h   > x
