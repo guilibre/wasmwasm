@@ -31,4 +31,5 @@ in1 + 0.02 * xdot > in1
 in2 + 0.02 * ydot > in2
 in3 + 0.02 * zdot > in3
 
-0.2 * in1 > OUT
+#always clip so your ears don't bleed
+0.2 * clip in1 > OUT

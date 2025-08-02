@@ -19,4 +19,5 @@ y - k * x * h/2 > y
 x > xb
 y > yb
 
-x > OUT
+#always clip so your ears don't bleed
+0.2 * clip x > OUT

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import workletUrl from "../audio/processor.worklet.js?url";
 import WasmWasm from "../audio/compiler";
+import "./app.scss";
 
 export default function App() {
   const audioContextRef = useRef<AudioContext | null>(null);
@@ -65,7 +66,7 @@ export default function App() {
     ctx.beginPath();
 
     signal.forEach((val, i) => {
-      const x = (i / signal.length) * canvas.width;
+      const x = (i / (signal.length - 1)) * canvas.width;
       const y = (1 - (val + 1) / 2) * canvas.height;
       if (i === 0) ctx.moveTo(x, y);
       else ctx.lineTo(x, y);
@@ -76,23 +77,12 @@ export default function App() {
   }, [signal]);
 
   return (
-    <div style={{ padding: "1rem", fontFamily: "sans-serif" }}>
-      <h1>WASM Synth</h1>
-      <canvas
-        ref={canvasRef}
-        width={512}
-        height={100}
-        style={{ border: "1px solid #ccc", marginTop: "1rem", width: "100%" }}
-      />
-      <textarea
-        rows={6}
-        style={{ width: "100%", fontFamily: "monospace", fontSize: "1rem" }}
-        value={code}
-        onChange={(e) => setCode(e.target.value)}
-      />
-      <button onClick={toggleAudio} style={{ marginTop: "1rem" }}>
-        {isPlaying ? "Stop" : "Play"}
-      </button>
+    <div>
+      <canvas ref={canvasRef} />
+      <span>
+        <textarea value={code} onChange={(e) => setCode(e.target.value)} />
+        <button onClick={toggleAudio}>{isPlaying ? "Stop" : "Play"}</button>
+      </span>
     </div>
   );
 }

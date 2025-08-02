@@ -4,6 +4,7 @@ class WasmProcessor extends AudioWorkletProcessor {
 
   constructor() {
     super();
+
     this.port.onmessage = async (event) => {
       if (event.data.type !== "load-wasm") return;
 
