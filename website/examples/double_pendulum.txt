@@ -1,0 +1,65 @@
+:buffer t1b 1 {x. 0}
+:buffer t2b 1 {x. 0}
+:buffer t1db 1 {x. 100}
+:buffer t2db 1 {x. 0}
+
+0.01 > dt
+9.8 > g
+7 > l1
+11 > l2
+29 > m1
+13 > m2
+0.001 > c
+
+t1b   > t1
+t2b   > t2
+t1db  > t1d
+t2db  > t2d
+
+t1 - t2 > t12
+m1 + m2 * sin(t12) * sin(t12) > delta
+
+m2*l1*t1d*t1d * sin(2*t12) / 2     > term1
+m2*l2*t2d*t2d * sin(t12)           > term2
+-(m1 + m2)*g  * sin(t1)            > term3
+m2*g          * sin(t2) * cos(t12) > term4
+(term1 + term2 + term3 + term4) / (l1 * delta) - c * t1d> t1dd
+
+-(m1 + m2)*l1*t1d*t1d * sin(t12)           > term1
+-(m1 + m2)*g          * sin(t2)            > term2
+ (m1 + m2)*g          * sin(t1) * cos(t12) > term3
+ (m1 + m2)*l2*t2d*t2d * sin(2*t12) / 2     > term4
+(term1 + term2 + term3 + term4) / (l2 * delta) - c * t2d> t2dd
+
+t1d + dt * t1dd/2 > t1d
+t2d + dt * t2dd/2 > t2d
+
+t1  + dt * t1d    > t1
+t2  + dt * t2d    > t2
+
+m2*l1*t1d*t1d * sin(2*t12) / 2     > term1
+m2*l2*t2d*t2d * sin(t12)           > term2
+-(m1 + m2)*g  * sin(t1)            > term3
+m2*g          * sin(t2) * cos(t12) > term4
+(term1 + term2 + term3 + term4) / (l1 * delta) - c * t1d> t1dd
+
+-(m1 + m2)*l1*t1d*t1d * sin(t12)           > term1
+-(m1 + m2)*g          * sin(t2)            > term2
+ (m1 + m2)*g          * sin(t1) * cos(t12) > term3
+ (m1 + m2)*l2*t2d*t2d * sin(2*t12) / 2     > term4
+(term1 + term2 + term3 + term4) / (l2 * delta) - c * t2d> t2dd
+
+t1d + dt * t1dd/2 > t1d
+t2d + dt * t2dd/2 > t2d
+
+t1   > t1b
+t2   > t2b
+t1d  > t1db
+t2d  > t2db
+
+l1 * sin(t1) > x1
+-l1 * cos(t1) > y1
+x1 + l2 * sin(t2) > x2
+y1 - l2 * cos(t2) > y2
+
+0.2 * clip (x1/l1) + 0.2 * clip (x2/(l1 + l2)) > OUT

@@ -46,13 +46,13 @@ auto BinaryenVariable::set_local(BinaryenModuleRef module,
 
 CodeGenContext::CodeGenContext(BinaryenModuleRef module) : module_(module) {}
 
-auto CodeGenContext::module() -> BinaryenModuleRef { return module_; }
+auto CodeGenContext::module() const -> BinaryenModuleRef { return module_; }
 
-auto CodeGenContext::has_constant(const std::string &name) -> bool {
+auto CodeGenContext::has_constant(const std::string &name) const -> bool {
     return constants.contains(name);
 }
 
-auto CodeGenContext::constant(const std::string &name)
+auto CodeGenContext::constant(const std::string &name) const
     -> BinaryenExpressionRef {
     return BinaryenConst(module_, constants.at(name));
 }
@@ -62,7 +62,7 @@ void CodeGenContext::add_constant(const std::string &name,
     constants.emplace(name, expr);
 }
 
-auto CodeGenContext::has_variable_or_parameter(const std::string &name)
+auto CodeGenContext::has_variable_or_parameter(const std::string &name) const
     -> bool {
     return std::ranges::any_of(
                variables,
@@ -119,7 +119,7 @@ auto CodeGenContext::add_variable(const std::string &name, BinaryenType type)
     return variables.back().at(name);
 }
 
-auto CodeGenContext::has_function(const std::string &name) -> bool {
+auto CodeGenContext::has_function(const std::string &name) const -> bool {
     return fun_indices.contains(name);
 }
 
@@ -154,13 +154,8 @@ auto CodeGenContext::add_function(const std::string &name,
     return fun_indices.at(name);
 }
 
-auto CodeGenContext::has_buffer(const std::string &name) -> bool {
-    return buffers_.contains(name);
-}
-
-auto CodeGenContext::buffers()
-    -> const std::unordered_map<std::string, BinaryenIndex> & {
-    return buffers_;
+auto CodeGenContext::has_buffer(const std::string &name) const -> bool {
+    return buffers.contains(name);
 }
 
 void CodeGenContext::add_buffer(const std::string &name, BinaryenIndex size,
@@ -191,7 +186,7 @@ void CodeGenContext::add_buffer(const std::string &name, BinaryenIndex size,
                                function_body.size(), BinaryenTypeFloat64()),
                  BinaryenTypeFloat64(), 0);
 
-    buffers_.emplace(name, (buffers_.size() * 1024 * 8) + 4096);
+    buffers.emplace(name, (buffers.size() * 1024 * 8) + 4096);
 }
 
 auto CodeGenContext::offset() -> BinaryenIndex { return offsets.back(); }

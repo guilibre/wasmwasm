@@ -101,8 +101,8 @@ void MainModuleBuilder::build(const ExprPtr &main) {
     };
 
     std::vector<BinaryenExpressionRef> update_buffers;
-    update_buffers.reserve(ctx->buffers().size());
-    for (const auto &buffer : ctx->buffers()) {
+    update_buffers.reserve(ctx->buffers.size());
+    for (const auto &buffer : ctx->buffers) {
         update_buffers.emplace_back(BinaryenStore(
             ctx->module(), 8, buffer.second, 8,
             BinaryenGlobalGet(ctx->module(), buffer.first.c_str(),

@@ -21,13 +21,14 @@ auto Parser::parse_code() -> ParseResult {
     std::vector<ExprPtr> expressions;
 
     while (true) {
+        while (match(TokenKind::Eol))
+            advance();
         while (match(TokenKind::Colon)) {
             while (!match(TokenKind::Eol))
                 advance();
-            advance();
+            while (match(TokenKind::Eol))
+                advance();
         }
-        while (match(TokenKind::Eol))
-            advance();
         if (match(TokenKind::Eof)) break;
         auto expression = parse_expression();
         if (!expression) return expression;
@@ -116,10 +117,6 @@ auto Parser::parse_application() -> ParseResult {
 
 auto Parser::parse_factor() -> ParseResult {
     auto tok = current;
-    if (match(TokenKind::Eol)) {
-        advance();
-        return parse_factor();
-    }
     if (match(TokenKind::Identifier)) {
         advance();
         return Expr::make<Variable>(tok);

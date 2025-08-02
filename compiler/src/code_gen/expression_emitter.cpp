@@ -2,7 +2,6 @@
 
 #include "binaryen-c.h"
 #include "code_gen_context.hpp"
-#include "free_var_analyzer.hpp"
 
 #include <array>
 #include <memory>
@@ -22,12 +21,32 @@ auto ExpressionEmitter::create(const ExprPtr &expr) -> BinaryenExpressionRef {
         [&](const auto &node) -> BinaryenExpressionRef {
             using T = std::decay_t<decltype(node)>;
             if constexpr (std::is_same_v<T, Assignment>) {
+                auto value_expr = create(node.value);
+
                 if (ctx->has_buffer(node.name.lexeme))
                     return BinaryenGlobalSet(
                         ctx->module(), (node.name.lexeme + "$future").c_str(),
-                        create(node.value));
+                        value_expr);
 
-                auto value_expr = create(node.value);
+                if (ctx->has_variable_or_parameter(node.name.lexeme)) {
+                    auto [var, depth] =
+                        ctx->variable_or_parameter(node.name.lexeme);
+                    if (depth == 0)
+                        return var.set_local(ctx->module(), value_expr);
+
+                    auto *acc = BinaryenLocalGet(
+                        ctx->module(), ctx->env().local, BinaryenTypeInt32());
+
+                    for (int i = 0; i < depth; ++i)
+                        acc = BinaryenLoad(ctx->module(), 4, false, 0, 4,
+                                           BinaryenTypeInt32(), acc, "memory");
+
+                    auto var_size = var.type == BinaryenTypeFloat64() ? 8 : 4;
+                    return BinaryenStore(ctx->module(), var_size, var.offset,
+                                         var_size, acc, value_expr, var.type,
+                                         "memory");
+                }
+
                 auto &var = ctx->add_variable(
                     node.name.lexeme, node.value->type->to_binaryen_type());
                 return var.set_local(ctx->module(), value_expr);
@@ -83,7 +102,7 @@ auto ExpressionEmitter::create(const ExprPtr &expr) -> BinaryenExpressionRef {
 
                 auto loop_body = std::array{
                     BinaryenStore(
-                        ctx->module(), 8, ctx->buffers().at(node.name), 8,
+                        ctx->module(), 8, ctx->buffers.at(node.name), 8,
                         idx.get_local(ctx->module()),
                         BinaryenCall(
                             ctx->module(), (node.name + "$init").c_str(),
@@ -139,9 +158,32 @@ auto ExpressionEmitter::create(const ExprPtr &expr) -> BinaryenExpressionRef {
                 auto arg_expr = create(node.argument);
                 auto callee_expr = create(node.callee);
 
-                auto result = std::array{
-                    temp.set_local(ctx->module(), callee_expr),
-                    BinaryenCallIndirect(
+                std::vector<BinaryenExpressionRef> result;
+
+                for (const auto &var : ctx->variables.back()) {
+                    auto var_size =
+                        var.second.type == BinaryenTypeFloat64() ? 8 : 4;
+                    result.emplace_back(BinaryenStore(
+                        ctx->module(), var_size, var.second.offset, var_size,
+                        ctx->env().get_local(ctx->module()),
+                        var.second.get_local(ctx->module()), var.second.type,
+                        "memory"));
+                }
+
+                for (const auto &var : ctx->parameters.back()) {
+                    auto var_size =
+                        var.second.type == BinaryenTypeFloat64() ? 8 : 4;
+                    result.emplace_back(BinaryenStore(
+                        ctx->module(), var_size, var.second.offset, var_size,
+                        ctx->env().get_local(ctx->module()),
+                        var.second.get_local(ctx->module()), var.second.type,
+                        "memory"));
+                }
+
+                result.emplace_back(temp.set_local(ctx->module(), callee_expr));
+
+                if (expr->type->to_binaryen_type() == BinaryenTypeNone()) {
+                    result.emplace_back(BinaryenCallIndirect(
                         ctx->module(), "fun_table",
                         BinaryenLoad(ctx->module(), 4, false, 4, 4,
                                      BinaryenTypeInt32(),
@@ -156,8 +198,86 @@ auto ExpressionEmitter::create(const ExprPtr &expr) -> BinaryenExpressionRef {
                             }
                                 .data(),
                             2),
-                        expr->type->to_binaryen_type()),
-                };
+                        expr->type->to_binaryen_type()));
+
+                    for (const auto &var : ctx->variables.back()) {
+                        auto var_size =
+                            var.second.type == BinaryenTypeFloat64() ? 8 : 4;
+                        result.emplace_back(var.second.set_local(
+                            ctx->module(),
+                            BinaryenLoad(ctx->module(), var_size, false,
+                                         var.second.offset, var_size,
+                                         var.second.type,
+                                         ctx->env().get_local(ctx->module()),
+                                         "memory")));
+                    }
+
+                    for (const auto &var : ctx->parameters.back()) {
+                        auto var_size =
+                            var.second.type == BinaryenTypeFloat64() ? 8 : 4;
+                        result.emplace_back(var.second.set_local(
+                            ctx->module(),
+                            BinaryenLoad(ctx->module(), var_size, false,
+                                         var.second.offset, var_size,
+                                         var.second.type,
+                                         ctx->env().get_local(ctx->module()),
+                                         "memory")));
+                    }
+                } else {
+                    auto &temp2 =
+                        ctx->add_variable(expr->type->to_binaryen_type());
+                    auto var_size =
+                        expr->type->to_binaryen_type() == BinaryenTypeFloat64()
+                            ? 8
+                            : 4;
+                    result.emplace_back(BinaryenStore(
+                        ctx->module(), var_size, temp2.offset, var_size,
+                        ctx->env().get_local(ctx->module()),
+                        BinaryenCallIndirect(
+                            ctx->module(), "fun_table",
+                            BinaryenLoad(ctx->module(), 4, false, 4, 4,
+                                         BinaryenTypeInt32(),
+                                         temp.get_local(ctx->module()),
+                                         "memory"),
+                            std::array{arg_expr, temp.get_local(ctx->module())}
+                                .data(),
+                            2,
+                            BinaryenTypeCreate(
+                                std::array{
+                                    node.argument->type->to_binaryen_type(),
+                                    BinaryenTypeInt32(),
+                                }
+                                    .data(),
+                                2),
+                            expr->type->to_binaryen_type()),
+                        expr->type->to_binaryen_type(), "memory"));
+
+                    for (const auto &var : ctx->variables.back()) {
+                        auto var_size =
+                            var.second.type == BinaryenTypeFloat64() ? 8 : 4;
+                        result.emplace_back(var.second.set_local(
+                            ctx->module(),
+                            BinaryenLoad(ctx->module(), var_size, false,
+                                         var.second.offset, var_size,
+                                         var.second.type,
+                                         ctx->env().get_local(ctx->module()),
+                                         "memory")));
+                    }
+
+                    for (const auto &var : ctx->parameters.back()) {
+                        auto var_size =
+                            var.second.type == BinaryenTypeFloat64() ? 8 : 4;
+                        result.emplace_back(var.second.set_local(
+                            ctx->module(),
+                            BinaryenLoad(ctx->module(), var_size, false,
+                                         var.second.offset, var_size,
+                                         var.second.type,
+                                         ctx->env().get_local(ctx->module()),
+                                         "memory")));
+                    }
+
+                    result.emplace_back(temp2.get_local(ctx->module()));
+                }
 
                 return BinaryenBlock(ctx->module(), nullptr, result.data(),
                                      result.size(),
@@ -193,31 +313,7 @@ auto ExpressionEmitter::create(const ExprPtr &expr) -> BinaryenExpressionRef {
 
                 ctx->pop_context();
 
-                std::unordered_set<std::string> bound;
-                auto free_vars = FreeVarAnalyzer::analyze(expr, bound, ctx);
-
-                std::vector<BinaryenExpressionRef> result;
-                for (const auto &var : free_vars) {
-                    if (!ctx->has_variable_or_parameter(var))
-                        throw std::runtime_error("Unbound variable: " + var);
-
-                    auto [var_info, depth] = ctx->variable_or_parameter(var);
-
-                    if (depth > 0) continue;
-
-                    auto var_size =
-                        var_info.type == BinaryenTypeFloat64() ? 8 : 4;
-                    result.emplace_back(BinaryenStore(
-                        ctx->module(), var_size, var_info.offset, var_size,
-                        ctx->env().get_local(ctx->module()),
-                        var_info.get_local(ctx->module()), var_info.type,
-                        "memory"));
-                }
-
-                result.emplace_back(ctx->make_closure(lambda));
-
-                return BinaryenBlock(ctx->module(), nullptr, result.data(),
-                                     result.size(), BinaryenTypeInt32());
+                return ctx->make_closure(lambda);
             }
 
             if constexpr (std::is_same_v<T, Literal>) {
@@ -252,7 +348,7 @@ auto ExpressionEmitter::create(const ExprPtr &expr) -> BinaryenExpressionRef {
                     if (ctx->has_buffer(node.name.lexeme))
                         return BinaryenLoad(
                             ctx->module(), 8, false,
-                            ctx->buffers().at(node.name.lexeme), 8,
+                            ctx->buffers.at(node.name.lexeme), 8,
                             BinaryenTypeFloat64(),
                             BinaryenGlobalGet(ctx->module(),
                                               node.name.lexeme.c_str(),
@@ -268,8 +364,8 @@ auto ExpressionEmitter::create(const ExprPtr &expr) -> BinaryenExpressionRef {
 
                 if (depth == 0) return var.get_local(ctx->module());
 
-                auto *acc = BinaryenLocalGet(ctx->module(), ctx->env().local,
-                                             BinaryenTypeInt32());
+                BinaryenExpressionRef acc = BinaryenLocalGet(
+                    ctx->module(), ctx->env().local, BinaryenTypeInt32());
 
                 for (int i = 0; i < depth; ++i)
                     acc = BinaryenLoad(ctx->module(), 4, false, 0, 4,

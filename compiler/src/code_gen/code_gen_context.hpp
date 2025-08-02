@@ -10,7 +10,7 @@
 struct BinaryenVariable {
     BinaryenIndex local = static_cast<BinaryenIndex>(-1);
     BinaryenType type = static_cast<BinaryenType>(-1);
-    BinaryenIndex offset = 0;
+    BinaryenIndex offset = static_cast<BinaryenIndex>(-1);
 
     auto get_local(BinaryenModuleRef module) const -> BinaryenExpressionRef;
     auto set_local(BinaryenModuleRef module, BinaryenExpressionRef value) const
@@ -19,25 +19,24 @@ struct BinaryenVariable {
 
 using VarMap = std::unordered_map<std::string, BinaryenVariable>;
 
-class CodeGenContext {
+struct CodeGenContext {
     VarMap fun_indices;
     std::unordered_map<std::string, BinaryenLiteral> constants;
     std::vector<VarMap> parameters{VarMap{}};
     std::vector<VarMap> variables{VarMap{}};
     std::vector<BinaryenIndex> offsets{8};
-    std::unordered_map<std::string, BinaryenIndex> buffers_;
+    std::unordered_map<std::string, BinaryenIndex> buffers;
     BinaryenModuleRef module_ = nullptr;
 
-  public:
     CodeGenContext(BinaryenModuleRef module);
 
-    auto module() -> BinaryenModuleRef;
+    auto module() const -> BinaryenModuleRef;
 
-    auto has_constant(const std::string &name) -> bool;
-    auto constant(const std::string &name) -> BinaryenExpressionRef;
+    auto has_constant(const std::string &name) const -> bool;
+    auto constant(const std::string &name) const -> BinaryenExpressionRef;
     void add_constant(const std::string &name, BinaryenLiteral expr);
 
-    auto has_variable_or_parameter(const std::string &name) -> bool;
+    auto has_variable_or_parameter(const std::string &name) const -> bool;
     auto variable_or_parameter(const std::string &name)
         -> std::pair<BinaryenVariable &, int>;
 
@@ -49,7 +48,7 @@ class CodeGenContext {
     auto add_variable(const std::string &name, BinaryenType var_type)
         -> BinaryenVariable &;
 
-    auto has_function(const std::string &name) -> bool;
+    auto has_function(const std::string &name) const -> bool;
     auto function(const std::string &name) -> BinaryenVariable &;
     auto add_function(BinaryenExpressionRef body, BinaryenType result_type,
                       BinaryenIndex offset) -> BinaryenVariable &;
@@ -57,8 +56,7 @@ class CodeGenContext {
                       BinaryenType result_type, BinaryenIndex offset)
         -> BinaryenVariable &;
 
-    auto has_buffer(const std::string &name) -> bool;
-    auto buffers() -> const std::unordered_map<std::string, BinaryenIndex> &;
+    auto has_buffer(const std::string &name) const -> bool;
     void add_buffer(const std::string &name, BinaryenIndex size,
                     BinaryenExpressionRef init_buffer_function);
 

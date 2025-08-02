@@ -103,17 +103,18 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Emscripten")
         -sINVOKE_RUN=0
         -sWASM=1
         -sMAIN_MODULE=2
-        -g1 -O2
+        -sALLOW_MEMORY_GROWTH=1
+        -g0 -O2
     )
 
     add_executable(math math/basic.cpp)
     target_compile_options(math PRIVATE
-        -O2 -ffast-math -msimd128 -g1
+        -O2 -g0 -ffast-math -msimd128 -msse4.2 -fno-math-errno
         ${COMPILE_OPTIONS}
     )
     target_link_options(math PRIVATE
-        -sEXPORTED_FUNCTIONS=["_wasmwasm_sin","_wasmwasm_cos","_wasmwasm_sign","_wasmwasm_fract","_wasmwasm_clip"]
+        -sEXPORTED_FUNCTIONS=["_wasmwasm_sin","_wasmwasm_cos","_wasmwasm_clip","_wasmwasm_fract","_wasmwasm_sign"]
         -sWASM=1
-        -O2 -ffast-math -msimd128 -g1
+        -O2 -g0 -ffast-math -msimd128 -msse4.2 -fno-math-errno
     )
 endif()

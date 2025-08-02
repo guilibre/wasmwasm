@@ -32,4 +32,4 @@ in2 + 0.02 * ydot > in2
 in3 + 0.02 * zdot > in3
 
 #always clip so your ears don't bleed
-0.2 * clip in1 > OUT
+0.2 * clip (0.2 * in1) > OUT

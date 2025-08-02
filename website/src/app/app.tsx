@@ -2,6 +2,10 @@ import { useEffect, useRef, useState } from "react";
 import workletUrl from "../audio/processor.worklet.js?url";
 import WasmWasm from "../audio/compiler";
 import "./app.scss";
+import chuas_circuit from "../../examples/chuas_circuit.txt?raw";
+import double_pendulum from "../../examples/double_pendulum.txt?raw";
+import harmonic_oscillator from "../../examples/harmonic_oscillator.txt?raw";
+import karplus_strong from "../../examples/karplus_strong.txt?raw";
 
 export default function App() {
   const audioContextRef = useRef<AudioContext | null>(null);
@@ -77,9 +81,17 @@ export default function App() {
   }, [signal]);
 
   return (
-    <div>
+    <div className="app">
       <canvas ref={canvasRef} />
-      <span>
+      <div className="app__examples">
+        <button onClick={() => setCode(chuas_circuit)}>Chua's Circuit</button>
+        <button onClick={() => setCode(double_pendulum)}>Double Pedulum</button>
+        <button onClick={() => setCode(harmonic_oscillator)}>
+          Harmonic Oscillator
+        </button>
+        <button onClick={() => setCode(karplus_strong)}>Karplus-Strong</button>
+      </div>
+      <span className="app__editor">
         <textarea value={code} onChange={(e) => setCode(e.target.value)} />
         <button onClick={toggleAudio}>{isPlaying ? "Stop" : "Play"}</button>
       </span>
