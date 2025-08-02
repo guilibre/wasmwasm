@@ -15,7 +15,7 @@ export default class WasmWasm {
       const src_ptr = this.emscripten_module._malloc(src.length + 1);
       this.emscripten_module.HEAPU8.set(new TextEncoder().encode(src), src_ptr);
       this.emscripten_module.HEAPU8[src_ptr + src.length] = 0;
-      const fn_response = await fetch("/math.wasm");
+      const fn_response = await fetch("/wasmwasm/math.wasm");
       const fn_buffer = await fn_response.bytes();
       const fn_ptr = this.emscripten_module._malloc(fn_buffer.length);
       this.emscripten_module.HEAPU8.set(fn_buffer, fn_ptr);

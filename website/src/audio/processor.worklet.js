@@ -1,8 +1,8 @@
-export default class WasmProcessor extends AudioWorkletProcessor {
-  private main: CallableFunction = () => { };
-  private heap: Float32Array<ArrayBuffer> = new Float32Array();
+class WasmProcessor extends AudioWorkletProcessor {
+  main = () => {};
+  heap = new Float32Array();
 
-  public constructor() {
+  constructor() {
     super();
     this.port.onmessage = async (event) => {
       if (event.data.type !== "load-wasm") return;
@@ -13,16 +13,13 @@ export default class WasmProcessor extends AudioWorkletProcessor {
       const { instance } = await WebAssembly.instantiate(event.data.buffer, {
         env: { memory },
       });
-      this.main = instance.exports.main as CallableFunction;
+      this.main = instance.exports.main;
 
-      (instance.exports.init_buffers as CallableFunction)();
+      instance.exports.init_buffers();
     };
   }
 
-  public process(
-    _inputs: Float32Array[][],
-    outputs: Float32Array[][]
-  ): boolean {
+  process(_inputs, outputs) {
     const width = outputs[0].length;
     const height = outputs[0][0].length;
     this.main(0, height, width);
@@ -32,7 +29,7 @@ export default class WasmProcessor extends AudioWorkletProcessor {
     if (this.port && currentFrame % 128 === 0) {
       this.port.postMessage({
         type: "signal",
-        data: Array.from(outputs[0][0].slice(0, 128)), // small chunk for display
+        data: Array.from(outputs[0][0].slice(0, 128)),
       });
     }
 
@@ -41,3 +38,5 @@ export default class WasmProcessor extends AudioWorkletProcessor {
 }
 
 registerProcessor("wasm-processor", WasmProcessor);
+
+export default null;

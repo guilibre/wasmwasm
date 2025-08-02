@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import workletUrl from "../audio/processor.worklet.ts?url";
+import workletUrl from "../audio/processor.worklet.js?url";
 import WasmWasm from "../audio/compiler";
 
 export default function App() {
