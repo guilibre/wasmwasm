@@ -23,24 +23,38 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-set(COMPILE_OPTIONS
-    -Wall
-    -Wextra
-    -Wpedantic
-    -Wconversion
-    -Wsign-conversion
-    -Wshadow
-    -Wold-style-cast
-    -Wnon-virtual-dtor
-    -Woverloaded-virtual
-    -Wnull-dereference
-    -Wdouble-promotion
-    -Wformat=2
-    -Wimplicit-fallthrough
-    -fstrict-aliasing
-    -fno-common
-    -fPIC
-)
+if(MSVC)
+    add_compile_definitions(
+        _CRT_SECURE_NO_WARNINGS
+        NOMINMAX
+    )
+    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    set(COMPILE_OPTIONS
+        /W4
+        /WX
+        /permissive-
+        /Zc:__cplusplus
+    )
+else()
+    set(COMPILE_OPTIONS
+        -Wall
+        -Wextra
+        -Wpedantic
+        -Wconversion
+        -Wsign-conversion
+        -Wshadow
+        -Wold-style-cast
+        -Wnon-virtual-dtor
+        -Woverloaded-virtual
+        -Wnull-dereference
+        -Wdouble-promotion
+        -Wformat=2
+        -Wimplicit-fallthrough
+        -fstrict-aliasing
+        -fno-common
+        -fPIC
+    )
+endif()
 
 include_directories(includes)
 

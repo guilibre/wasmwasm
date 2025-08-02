@@ -8,13 +8,14 @@
 #include "parser/tokenizer.hpp"
 #include "types/type.hpp"
 #include "types/type_inference.hpp"
+#include "wasm.h"
 
-#include <cmath>
 #include <fstream>
 #include <functional>
 #include <ios>
 #include <iostream>
 #include <memory>
+#include <numbers>
 #include <sstream>
 #include <stdexcept>
 #include <type_traits>
@@ -175,7 +176,7 @@ extern "C" auto run_compiler(float sample_rate, const char *src, char *math_bin,
     }
     auto ctx = std::make_shared<CodeGenContext>(main_module);
 
-    ctx->add_constant("PI", BinaryenLiteralFloat64(M_PI));
+    ctx->add_constant("PI", BinaryenLiteralFloat64(std::numbers::pi));
 
     ctx->push_context();
     auto &arg = ctx->add_parameter("phase", BinaryenTypeFloat64());

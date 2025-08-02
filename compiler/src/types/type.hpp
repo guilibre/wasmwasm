@@ -9,7 +9,7 @@ struct Type;
 
 using TypePtr = std::shared_ptr<Type>;
 
-enum struct BaseTypeKind : u_int8_t { Bool, Float, Int, Void };
+enum struct BaseTypeKind : uint8_t { Bool, Float, Int, Void };
 
 struct TypeBase {
     BaseTypeKind kind;
