@@ -1,2 +1,0 @@
-Run `./build.sh` and hopes it builds. If it doesn't then ask for help or figure it out.
-Then `cd website` and do `npm run dev`
