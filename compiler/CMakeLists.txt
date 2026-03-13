@@ -15,7 +15,7 @@ set(BUILD_TOOLS OFF CACHE BOOL "" FORCE)
 FetchContent_Declare(
     binaryen
     GIT_REPOSITORY https://github.com/WebAssembly/binaryen.git
-    GIT_TAG version_123
+    GIT_TAG version_127
 )
 FetchContent_MakeAvailable(binaryen)
 
@@ -68,7 +68,7 @@ target_include_directories(${PROJECT_NAME}_lib PUBLIC
 )
 target_compile_options(${PROJECT_NAME}_lib PRIVATE
     $<$<CONFIG:Debug>:-O0 -g>
-    $<$<CONFIG:Release>:-O2 -DNDEBUG>
+    $<$<CONFIG:Release>:-O0 -DNDEBUG>
 )
 
 add_executable(${PROJECT_NAME} app/main.cpp)
@@ -78,23 +78,19 @@ target_include_directories(${PROJECT_NAME} PRIVATE
     src
 )
 target_compile_options(${PROJECT_NAME} PRIVATE
-    $<$<CONFIG:Debug>:-O0 -g>
-    $<$<CONFIG:Release>:-O2 -DNDEBUG>
+    $<$<CONFIG:Debug>:-g -Og>
+    $<$<CONFIG:Release>:-DNDEBUG -g0 -O3 -ffast-math -msimd128 -msse4.2 -fno-math-errno>
 )
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Emscripten")
-    target_include_directories(${PROJECT_NAME}_lib PRIVATE
-        /home/gui/src/emsdk/upstream/emscripten/cache/sysroot/include/
-    )
     target_compile_options(${PROJECT_NAME}_lib PRIVATE
-        -O2 -DNDEBUG
         ${COMPILE_OPTIONS}
     )
     target_compile_options(${PROJECT_NAME} PRIVATE
-        -O2 -DNDEBUG
         ${COMPILE_OPTIONS}
     )
     target_link_options(${PROJECT_NAME} PRIVATE
+        -sASSERTIONS
         -sENVIRONMENT=web
         -sEXPORT_ES6=1
         -sEXPORTED_FUNCTIONS=["_free","_run_compiler","_malloc"]
@@ -104,17 +100,18 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Emscripten")
         -sWASM=1
         -sMAIN_MODULE=2
         -sALLOW_MEMORY_GROWTH=1
-        -g0 -O2
+        ${COMPILE_OPTIONS}
     )
 
     add_executable(math math/basic.cpp)
     target_compile_options(math PRIVATE
-        -O2 -g0 -ffast-math -msimd128 -msse4.2 -fno-math-errno
         ${COMPILE_OPTIONS}
     )
     target_link_options(math PRIVATE
-        -sEXPORTED_FUNCTIONS=["_wasmwasm_sin","_wasmwasm_cos","_wasmwasm_clip","_wasmwasm_fract","_wasmwasm_sign"]
-        -sWASM=1
-        -O2 -g0 -ffast-math -msimd128 -msse4.2 -fno-math-errno
+        -sASSERTIONS
+        -sEXPORTED_FUNCTIONS=["_wasmwasm_sin","_wasmwasm_cos","_wasmwasm_clip","_wasmwasm_fract","_wasmwasm_sign","_wasmwasm_exp"]
+        -sSTANDALONE_WASM=1
+        --no-entry
+        ${COMPILE_OPTIONS}
     )
 endif()

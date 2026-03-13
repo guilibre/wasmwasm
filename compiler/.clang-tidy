@@ -1,14 +1,14 @@
 Checks: >
   clang-analyzer-*,
-  cppcoreguidelines-*, -cppcoreguidelines-avoid-magic-numbers, -cppcoreguidelines-narrowing-conversions, -cppcoreguidelines-owning-memory, -cppcoreguidelines-no-malloc,
+  cppcoreguidelines-*, -cppcoreguidelines-avoid-magic-numbers, -cppcoreguidelines-narrowing-conversions, -cppcoreguidelines-owning-memory, -cppcoreguidelines-no-malloc, -cppcoreguidelines-pro-bounds-pointer-arithmetic,
   modernize-*,
   performance-*,
   readability-*, -readability-identifier-length, -readability-braces-around-statements, -readability-magic-numbers, -readability-function-cognitive-complexity,
   misc-*, -misc-unused-parameters, -misc-non-private-member-variables-in-classes, -misc-no-recursion,
   bugprone-*, -bugprone-narrowing-conversions, -bugprone-easily-swappable-parameters,
-  cert-*,
+  cert-*, -cert-err58-cpp,
   clang-diagnostic-*,
 
-WarningsAsErrors: ''
-HeaderFilterRegex: '.*'  # check all headers
-FormatStyle:     file   # use .clang-format if present
+WarningsAsErrors: ""
+HeaderFilterRegex: ".*" # check all headers
+FormatStyle: file # use .clang-format if present

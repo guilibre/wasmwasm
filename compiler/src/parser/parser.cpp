@@ -214,7 +214,7 @@ auto Parser::parse_buffer() -> ParseResult {
     if (!match(TokenKind::Number))
         return std::unexpected("Expected a a number: " + current.to_string());
     auto size = static_cast<size_t>(
-        std::max(std::min(std::stoi(current.lexeme), 1024), 1) * 8);
+        std::max(std::min(std::stoi(current.lexeme), 1024), 1));
     advance();
 
     if (!match(TokenKind::LBrace))

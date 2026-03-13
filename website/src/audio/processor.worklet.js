@@ -14,9 +14,8 @@ class WasmProcessor extends AudioWorkletProcessor {
       const { instance } = await WebAssembly.instantiate(event.data.buffer, {
         env: { memory },
       });
+      instance.exports.init();
       this.main = instance.exports.main;
-
-      instance.exports.init_buffers();
     };
   }
 

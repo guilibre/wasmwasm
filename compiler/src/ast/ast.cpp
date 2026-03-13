@@ -25,8 +25,9 @@ auto op_to_string(const Operation &op) -> std::string {
 
 auto ASTPrinter::print(const ExprPtr &expr, size_t indent) // NOLINT
     -> std::string {
-    return std::visit([&](auto &node) { return dispatch(expr, node, indent); },
-                      expr->node);
+    return std::visit(
+        [&](auto &node) -> std::string { return dispatch(expr, node, indent); },
+        expr->node);
 }
 
 void ASTPrinter::operator()(const ExprPtr &expr) { std::cout << print(expr); }
