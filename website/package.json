@@ -12,6 +12,9 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@codemirror/commands": "^6.10.3",
+    "@codemirror/state": "^6.6.0",
+    "@codemirror/view": "^6.40.0",
     "@wasmer/wasi": "^1.2.2",
     "react": "^19.1.0",
     "react-dom": "^19.1.0"

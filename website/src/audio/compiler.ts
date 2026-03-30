@@ -5,6 +5,15 @@ export default class WasmWasm {
 
   private static emscripten_module: EmscriptenModule | null = null;
 
+  static getModule(): EmscriptenModule {
+    if (!this.emscripten_module) throw new Error("WasmWasm not initialized");
+    return this.emscripten_module;
+  }
+
+  static async ensureReady(): Promise<void> {
+    if (!this.emscripten_module) this.emscripten_module = await Module({});
+  }
+
   static async init(
     sample_rate: number,
     src: string

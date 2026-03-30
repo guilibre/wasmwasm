@@ -13,13 +13,79 @@
     height: 10rem;
   }
 
-  span {
+  &__editor {
     display: flex;
     flex-direction: column;
     height: 100%;
+    flex: 1;
+    min-height: 0;
+  }
 
-    textarea {
-      height: 90%;
+  &__code-wrapper {
+    position: relative;
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+    background: #1a1d2e;
+  }
+
+  &__code {
+    width: 100%;
+    height: 100%;
+  }
+
+  &__hover-tooltip {
+    background: #1e2732;
+    border: 1px solid #37474f;
+    border-radius: 4px;
+    padding: 4px 8px;
+    font-family: monospace;
+    font-size: 0.85rem;
+    color: #89ddff;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+    pointer-events: none;
+  }
+
+  &__completions {
+    position: absolute;
+    z-index: 10;
+    background: #1e2732;
+    border: 1px solid #37474f;
+    border-radius: 4px;
+    min-width: 180px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+    font-family: monospace;
+    font-size: 0.85rem;
+  }
+
+  &__completion-item {
+    display: flex;
+    gap: 0.5rem;
+    padding: 4px 8px;
+    cursor: pointer;
+
+    &:hover,
+    &.selected {
+      background: #263238;
     }
   }
+
+  &__completion-label {
+    color: #89ddff;
+  }
+
+  &__completion-detail {
+    color: #546e7a;
+    font-size: 0.8em;
+    align-self: center;
+  }
 }
+
+// Token highlight classes
+.ww-keyword  { color: #c792ea; font-weight: bold; }
+.ww-number   { color: #f78c6c; }
+.ww-function { color: #89ddff; }
+.ww-variable { color: #82aaff; }
+.ww-operator { color: #89ddff; }
+.ww-comment  { color: #546e7a; font-style: italic; }
+.ww-error    { text-decoration: underline wavy red; }

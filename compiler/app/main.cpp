@@ -59,7 +59,7 @@ extern "C" auto run_compiler(float sample_rate, const char *src, char *math_bin,
         Parser main_parser(main_tokenizer);
         auto main_result = main_parser.parse_code();
         if (!main_result) {
-            std::cerr << "Parser error: " << main_result.error() << '\n';
+            std::cerr << "Parser error: " << main_result.error().msg << '\n';
             return 1;
         }
 
@@ -67,7 +67,7 @@ extern "C" auto run_compiler(float sample_rate, const char *src, char *math_bin,
         Parser init_parser(init_tokenizer);
         auto init_result = init_parser.parse_initialization();
         if (!init_result) {
-            std::cerr << "Initialization error: " << init_result.error()
+            std::cerr << "Initialization error: " << init_result.error().msg
                       << '\n';
             return 1;
         }
@@ -205,11 +205,12 @@ auto main(int argc, char **argv) -> int {
         return 1;
     }
 
-    auto math_size = math_file.tellg();
+    auto math_size = static_cast<size_t>(math_file.tellg());
     math_file.seekg(0, std::ios::beg);
 
     std::vector<char> math_buffer(math_size);
-    if (!math_file.read(math_buffer.data(), math_size)) {
+    if (!math_file.read(math_buffer.data(),
+                        static_cast<std::streamsize>(math_size))) {
         std::cerr << "Failed to read file.\n";
         return 1;
     }
@@ -217,6 +218,6 @@ auto main(int argc, char **argv) -> int {
     std::ostringstream src_buffer;
     src_buffer << src_file.rdbuf();
 
-    return run_compiler(44100.0, src_buffer.str().c_str(), math_buffer.data(),
-                        static_cast<size_t>(math_size));
+    return run_compiler(48'000.0, src_buffer.str().c_str(), math_buffer.data(),
+                        math_size);
 }

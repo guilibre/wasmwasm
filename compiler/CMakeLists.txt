@@ -93,7 +93,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Emscripten")
         -sASSERTIONS
         -sENVIRONMENT=web
         -sEXPORT_ES6=1
-        -sEXPORTED_FUNCTIONS=["_free","_run_compiler","_malloc"]
+        -sEXPORTED_FUNCTIONS=["_free","_malloc","_run_compiler","_lsp_diagnostics","_lsp_tokens","_lsp_completions","_lsp_hover"]
         -sEXPORTED_RUNTIME_METHODS=["FS_readFile","FS","HEAPF32","HEAPU8","lengthBytesUTF8","stringToUTF8"]
         -sFORCE_FILESYSTEM
         -sINVOKE_RUN=0

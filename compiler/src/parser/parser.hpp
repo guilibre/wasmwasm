@@ -5,7 +5,13 @@
 
 #include <expected>
 
-using ParseResult = std::expected<ExprPtr, std::string>;
+struct ParseError {
+    std::string msg;
+    size_t line = 0;
+    size_t col = 0;
+};
+
+using ParseResult = std::expected<ExprPtr, ParseError>;
 
 class Parser {
   public:

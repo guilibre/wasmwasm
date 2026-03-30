@@ -64,6 +64,11 @@ struct Variable {
     Token name;
 };
 
+struct SourcePos {
+    size_t line = 0;
+    size_t col = 0;
+};
+
 struct Expr {
 
     using ExprNode = std::variant<Assignment, Block, BinaryOp, Buffer, Call,
@@ -71,12 +76,14 @@ struct Expr {
 
     ExprNode node;
     TypePtr type;
+    SourcePos pos;
 
     template <typename T, typename... Args>
     static auto make(Args &&...args) -> std::unique_ptr<Expr> {
         return std::make_unique<Expr>(Expr{
             .node = T{std::forward<Args>(args)...},
             .type = nullptr,
+            .pos = {},
         });
     }
 };
