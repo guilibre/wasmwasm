@@ -1,5 +1,7 @@
 # wasmwasm
 
+**[https://guilibre.github.io/wasmwasm](https://guilibre.github.io/wasmwasm)**
+
 A functional audio synthesis language that compiles to WebAssembly in the browser. Write signal-processing expressions, hit Play, and hear the result in real time.
 
 ## How it works
@@ -19,14 +21,14 @@ Programs consist of expressions and assignments. The special variable `OUT` is t
 ### Basic synthesis
 
 ```
-0.2 * sin (TIME * 440 * 2 * PI) > OUT
+OUT <- 0.2 * sin (TIME * 440 * 2 * PI)
 ```
 
 ### Functions (lambdas)
 
 ```
-{amp freq. amp * sin (TIME * freq * 2 * PI)} > osc
-0.2 * osc 1.0 440 > OUT
+osc = {amp freq. amp * sin (TIME * freq * 2 * PI)}
+OUT <- 0.2 * osc 1.0 440
 ```
 
 ### Buffers (persistent state between frames)
@@ -34,20 +36,20 @@ Programs consist of expressions and assignments. The special variable `OUT` is t
 Buffers hold values that persist across audio frames — essential for filters, delays, and oscillators with feedback.
 
 ```
-:buffer x 1 {i. 0.0}
+x = delay 1 {i. 0.0}
 ```
 
-This declares a buffer named `x` of size 1, initialized to `0.0`. Read from the buffer like a variable; write to it with `>`.
+This declares a buffer named `x` of size 1, initialized to `0.0`. Read from it with `@x`; write to it with `x <- value`.
 
 ### Built-in functions
 
-| Function | Description |
-|----------|-------------|
-| `sin x` | Sine |
-| `cos x` | Cosine |
-| `sign x` | Sign (±1) |
-| `fract x` | Fractional part |
-| `clip x` | Clamp to `[-1, 1]` |
+| Function  | Description        |
+| --------- | ------------------ |
+| `sin x`   | Sine               |
+| `cos x`   | Cosine             |
+| `sign x`  | Sign (±1)          |
+| `fract x` | Fractional part    |
+| `clip x`  | Clamp to `[-1, 1]` |
 
 ### Comments
 
@@ -60,42 +62,45 @@ This declares a buffer named `x` of size 1, initialized to `0.0`. Read from the 
 ### Harmonic oscillator
 
 ```
-:buffer xb 1 {x. 0.0}
-:buffer yb 1 {y. 0.5}
+xb = delay 1 {x. 0.0}
+yb = delay 1 {y. 0.5}
 
-1   > k
-0.1 > h
+k = 1
+h = 0.1
 
-xb > x
-yb > y
+x = @xb
+y = @yb
 
-y - k * x * h/2 > y
-x +     y * h   > x
-y - k * x * h/2 > y
+y = y - k * x * h/2
+x = x +     y * h
+y = y - k * x * h/2
 
-x > xb
-y > yb
+xb <- x
+yb <- y
 
-0.2 * clip x > OUT
+OUT <- 0.2 * clip x
 ```
 
 ### Karplus-Strong (plucked string)
 
 ```
-:buffer x 1024 {x. 10 * fract (47684873451.123783453 * sin (x/1024))}
-:buffer y 1024 {x. 0}
+x    = delay 128 {x. fract (47684873451.123783453 * sin (x/1024))}
+x_m1 = delay 1 {x. 0}
+y_m1 = delay 1 {x. 0}
+y_m2 = delay 1 {x. 0}
 
-0.51 > alpha
+c = cos (1000/SAMPLE_RATE)
+r = exp (-15000/SAMPLE_RATE)
+k = 1 - r
 
-x > x1
-y > y1
+y = (c + r) * @y_m1 - c * r * @y_m2 - k * c * @x + k * @x_m1
 
-0.1 * (alpha * x + (1.0 - alpha) * x1) > tmp1
-tmp1 > x
-0.99 * (alpha * y + (1.0 - alpha) * y1) > tmp2
-tmp1 + tmp2 > y
+x_m1 <- @x
+x    <- y
+y_m2 <- @y_m1
+y_m1 <- y
 
-0.2 * clip y > OUT
+OUT <- 0.2 * clip y
 ```
 
 More examples (Chua's circuit, double pendulum) are available in `website/examples/`.

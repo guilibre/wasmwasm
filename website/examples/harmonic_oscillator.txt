@@ -1,22 +1,22 @@
-:buffer xb 1 {x. 0.0}
-:buffer yb 1 {y. 0.5}
+xb = delay 1 {x. 0.0}
+yb = delay 1 {y. 0.5}
 
-1   > k
-0.1 > h
+k = 1
+h = 0.1
 
 # read from buffer and store in a variable
 # as changes to the buffer will only happen
 # next frame
-xb > x
-yb > y
+x = @xb
+y = @yb
 
 # leapfrog
-y - k * x * h/2 > y
-x +     y * h   > x
-y - k * x * h/2 > y
+y = y - k * x * h/2
+x = x +     y * h
+y = y - k * x * h/2
 
-x > xb
-y > yb
+xb <- x
+yb <- y
 
 #always clip so your ears don't bleed
-0.2 * clip x > OUT
+OUT <- 0.2 * clip x

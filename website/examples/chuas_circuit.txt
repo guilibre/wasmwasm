@@ -1,35 +1,34 @@
-:buffer in1 1 {x. 0.1}
-:buffer in2 1 {x. 0}
-:buffer in3 1 {x. 0}
-:buffer lpf 1 {x. 0}
-:buffer hpf 1 {x. 0}
+in1 = delay 1 {x. 0.1}
+in2 = delay 1 {x. 0}
+in3 = delay 1 {x. 0}
 
-15.7 > alpha
-28 > beta
--1.143 > m0
--0.714 > m1
+alpha = 15.7
+beta = 28
+m0 = -1.143
+m1 = -0.714
+dt = 0.02
 
-{x. x * sign x} > abs
+abs = {x. x * sign x}
 
-{x.
-  abs (x + 1) > tmp
-  tmp - abs (x - 1) > tmp
-  tmp * (m0 - m1) > tmp
-  tmp * 0.5 > tmp
+h = {x.
+  tmp = abs (x + 1)
+  tmp = tmp - abs (x - 1)
+  tmp = tmp * (m0 - m1)
+  tmp = tmp * 0.5
   tmp + m1 * x
-} > h
+}
 
-in1 > x
-in2 > y
-in3 > z
+x = @in1
+y = @in2
+z = @in3
 
-alpha * (y - x - h x) > xdot
-z + x - y > ydot
-beta * -y > zdot
+xdot = alpha * (y - x - h x)
+ydot = z + x - y
+zdot = beta * -y
 
-in1 + 0.02 * xdot > in1
-in2 + 0.02 * ydot > in2
-in3 + 0.02 * zdot > in3
+in1 <- x + dt * xdot
+in2 <- y + dt * ydot
+in3 <- z + dt * zdot
 
 #always clip so your ears don't bleed
-0.2 * clip (0.2 * in1) > OUT
+OUT <- 0.2 * clip (0.2 * x)

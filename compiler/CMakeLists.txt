@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.14)
 
 find_program(CCACHE_FOUND ccache)
 if(CCACHE_FOUND)
-   set_property(GLOBAL PROPERTY RULE_LAUNCH_COMPILE ccache)
+    set_property(GLOBAL PROPERTY RULE_LAUNCH_COMPILE ccache)
 endif()
 
 project(wasmwasm)
@@ -12,12 +12,12 @@ set(BUILD_STATIC_LIB ON)
 include(FetchContent)
 set(BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(BUILD_TOOLS OFF CACHE BOOL "" FORCE)
-FetchContent_Declare(
+fetchcontent_declare(
     binaryen
     GIT_REPOSITORY https://github.com/WebAssembly/binaryen.git
     GIT_TAG version_127
 )
-FetchContent_MakeAvailable(binaryen)
+fetchcontent_makeavailable(binaryen)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_CXX_STANDARD 23)

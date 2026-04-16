@@ -1,18 +1,18 @@
-:buffer x 128 {x. fract (47684873451.123783453 * sin (x/1024))}
-:buffer x_m1 1 {x. 0}
-:buffer y_m1 1 {x. 0}
-:buffer y_m2 1 {x. 0}
+x    = delay 128 {x. fract (47684873451.123783453 * sin (x/1024))}
+x_m1 = delay 1 {x. 0}
+y_m1 = delay 1 {x. 0}
+y_m2 = delay 1 {x. 0}
 
-cos(1000/SAMPLE_RATE)   > c
-exp(-15000/SAMPLE_RATE) > r
-1 - r                   > k
+c = cos (1000/SAMPLE_RATE)
+r = exp (-15000/SAMPLE_RATE)
+k = 1 - r
 
-(c + r)*y_m1 - c*r*y_m2 - k*c*x + k*x_m1 > y
+y = (c + r) * @y_m1 - c * r * @y_m2 - k * c * @x + k * @x_m1
 
-x    > x_m1
-y    > x
-y_m1 > y_m2
-y    > y_m1
+x_m1 <- @x
+x    <- y
+y_m2 <- @y_m1
+y_m1 <- y
 
 #always clip so your ears don't bleed
-0.2 * clip y > OUT
+OUT <- 0.2 * clip y

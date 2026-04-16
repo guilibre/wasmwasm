@@ -108,13 +108,15 @@ struct Lowerer {
                     for (const auto &expr : node.expressions) {
                         auto fv = free_vars_of(expr, inner);
                         result.insert(fv.begin(), fv.end());
-                        if (const auto *asg =
-                                std::get_if<Assignment>(&expr->node))
-                            inner.insert(asg->name.lexeme);
+                        if (const auto *b = std::get_if<Bind>(&expr->node))
+                            inner.insert(b->name.lexeme);
                     }
                     return result;
                 }
-                if constexpr (std::is_same_v<T, Assignment>)
+                if constexpr (std::is_same_v<T, Bind>)
+                    return free_vars_of(node.value, bound);
+                if constexpr (std::is_same_v<T, BufferRead>) return {};
+                if constexpr (std::is_same_v<T, BufferWrite>)
                     return free_vars_of(node.value, bound);
 
                 return {};
@@ -215,21 +217,42 @@ struct Lowerer {
                         return IRLocalRef{r};
                     }
 
-                    if (bufs.contains(name)) {
-                        auto r = tmp();
-                        emit(IRBufferRead{
-                            .result = r,
-                            .buffer = name,
-                        });
-                        return IRLocalRef{r};
-                    }
-
                     if (fns.contains(name))
                         throw std::runtime_error("Function '" + name +
                                                  "' used as value (partial "
                                                  "application not supported)");
 
                     return IRLocalRef{name};
+                }
+
+                if constexpr (std::is_same_v<T, BufferRead>) {
+                    const auto &name = node.name.lexeme;
+                    if (!bufs.contains(name))
+                        throw std::runtime_error("@" + name +
+                                                 " is not a buffer");
+                    auto r = tmp();
+                    emit(IRBufferRead{.result = r, .buffer = name});
+                    return IRLocalRef{r};
+                }
+
+                if constexpr (std::is_same_v<T, BufferWrite>) {
+                    const auto &target = node.target.lexeme;
+                    auto val = lower_expr(node.value);
+                    if (!val)
+                        throw std::runtime_error("assigning void to buffer");
+                    if (target == "OUT") {
+                        emit(IRAssign{
+                            .result = "OUT",
+                            .value = *val,
+                            .type = IRType::Float,
+                        });
+                    } else {
+                        if (!bufs.contains(target))
+                            throw std::runtime_error(target +
+                                                     " is not a buffer");
+                        emit(IRBufferWrite{.buffer = target, .value = *val});
+                    }
+                    return std::nullopt;
                 }
 
                 if constexpr (std::is_same_v<T, UnaryOp>) {
@@ -249,7 +272,7 @@ struct Lowerer {
                     return IRLocalRef{res};
                 }
 
-                if constexpr (std::is_same_v<T, Assignment>) {
+                if constexpr (std::is_same_v<T, Bind>) {
                     const auto &name = node.name.lexeme;
 
                     if (std::holds_alternative<Lambda>(node.value->node)) {
@@ -257,14 +280,38 @@ struct Lowerer {
                         return std::nullopt;
                     }
 
-                    if (bufs.contains(name)) {
-                        auto val = lower_expr(node.value);
-                        if (!val)
+                    if (std::holds_alternative<BufferCtor>(node.value->node)) {
+                        const auto &ctor =
+                            std::get<BufferCtor>(node.value->node);
+                        if (!std::holds_alternative<Lambda>(ctor.init_fn->node))
                             throw std::runtime_error(
-                                "assigning void to buffer");
-                        emit(IRBufferWrite{
-                            .buffer = name,
-                            .value = *val,
+                                "Buffer init must be a lambda");
+                        const auto &lam = std::get<Lambda>(ctor.init_fn->node);
+                        std::string init_name = name + "$init";
+
+                        IRFunction init_fn;
+                        init_fn.name = init_name;
+                        init_fn.return_type = IRType::Float;
+                        init_fn.params.emplace_back(lam.parameter.lexeme,
+                                                    IRType::Float);
+
+                        auto *saved_cur = cur;
+                        auto saved_locals = locals;
+                        cur = &init_fn.body;
+                        locals[lam.parameter.lexeme] = IRType::Float;
+
+                        auto result = lower_expr(lam.body);
+                        if (result) emit(IRReturn{result});
+
+                        cur = saved_cur;
+                        locals = saved_locals;
+
+                        mod.functions.emplace_back(std::move(init_fn));
+                        bufs.insert(name);
+                        mod.buffers.push_back({
+                            .name = name,
+                            .size_elements = ctor.size,
+                            .init_fn = init_name,
                         });
                         return std::nullopt;
                     }
@@ -345,57 +392,14 @@ struct Lowerer {
                     throw std::runtime_error("Dynamic dispatch not supported");
                 }
 
-                if constexpr (std::is_same_v<T, Buffer>)
+                if constexpr (std::is_same_v<T, BufferCtor>)
                     throw std::runtime_error(
-                        "Buffer declaration in unexpected context");
+                        "delay(...) must appear as the rhs of a bind (name = "
+                        "delay N f)");
 
                 return std::nullopt;
             },
             e->node);
-    }
-
-    void lower_init(const ExprPtr &init_ast) {
-        mod.init_fn = "init";
-        if (!std::holds_alternative<Block>(init_ast->node)) return;
-        const auto &block = std::get<Block>(init_ast->node);
-
-        for (const auto &expr : block.expressions) {
-            if (const auto *buf_node = std::get_if<Buffer>(&expr->node)) {
-                const auto &buf = *buf_node;
-                if (!std::holds_alternative<Lambda>(
-                        buf.init_buffer_function->node))
-                    throw std::runtime_error("Buffer init must be a lambda");
-
-                const auto &lam =
-                    std::get<Lambda>(buf.init_buffer_function->node);
-                std::string init_name = buf.name + "$init";
-
-                IRFunction init_fn;
-                init_fn.name = init_name;
-                init_fn.return_type = IRType::Float;
-                init_fn.params.emplace_back(lam.parameter.lexeme,
-                                            IRType::Float);
-
-                auto *saved_cur = cur;
-                auto saved_locals = locals;
-                cur = &init_fn.body;
-                locals[lam.parameter.lexeme] = IRType::Float;
-
-                auto result = lower_expr(lam.body);
-                if (result) emit(IRReturn{result});
-
-                cur = saved_cur;
-                locals = saved_locals;
-
-                mod.functions.emplace_back(std::move(init_fn));
-                bufs.insert(buf.name);
-                mod.buffers.push_back({
-                    .name = buf.name,
-                    .size_elements = buf.size,
-                    .init_fn = init_name,
-                });
-            }
-        }
     }
 
     void lower_main(const ExprPtr &main_ast) {
@@ -425,9 +429,9 @@ struct Lowerer {
 
 } // namespace
 
-auto lower(const ExprPtr &init, const ExprPtr &main) -> IRModule {
+auto lower(const ExprPtr &program) -> IRModule {
     Lowerer l;
-    l.lower_init(init);
-    l.lower_main(main);
+    l.mod.init_fn = "init";
+    l.lower_main(program);
     return std::move(l.mod);
 }

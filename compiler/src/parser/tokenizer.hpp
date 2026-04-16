@@ -7,14 +7,15 @@
 
 enum class TokenKind : uint8_t {
     Additive,
-    Arrow,
-    Colon,
+    At,
     Comma,
     Eof,
     Eol,
+    Eq,
     Identifier,
     Invalid,
     LBrace,
+    LeftArrow,
     LParen,
     Multiplicative,
     Number,

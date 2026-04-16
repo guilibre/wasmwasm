@@ -63,19 +63,7 @@ extern "C" auto run_compiler(float sample_rate, const char *src, char *math_bin,
             return 1;
         }
 
-        Tokenizer init_tokenizer(src);
-        Parser init_parser(init_tokenizer);
-        auto init_result = init_parser.parse_initialization();
-        if (!init_result) {
-            std::cerr << "Initialization error: " << init_result.error().msg
-                      << '\n';
-            return 1;
-        }
-
-        auto int_type = Type::make<TypeBase>(BaseTypeKind::Int);
         auto float_type = Type::make<TypeBase>(BaseTypeKind::Float);
-        auto void_type = Type::make<TypeBase>(BaseTypeKind::Void);
-        auto int_to_float = Type::make<TypeFun>(int_type, float_type);
         auto float_to_float = Type::make<TypeFun>(float_type, float_type);
         std::vector<std::unordered_map<std::string, TypePtr>> env{
             {
@@ -89,16 +77,10 @@ extern "C" auto run_compiler(float sample_rate, const char *src, char *math_bin,
                 {"fract", float_to_float},
                 {"clip", float_to_float},
                 {"exp", float_to_float},
-                {"buffer",
-                 Type::make<TypeFun>(
-                     float_type, Type::make<TypeFun>(
-                                     int_type, Type::make<TypeFun>(
-                                                   int_to_float, void_type)))},
             },
         };
         Substitution subst;
         TypeGenerator gen;
-        infer_expr(*init_result, env, subst, gen);
         infer_expr(*main_result, env, subst, gen);
 
         std::function<TypePtr(const TypePtr &)> monomorphize_fun_type =
@@ -122,15 +104,17 @@ extern "C" auto run_compiler(float sample_rate, const char *src, char *math_bin,
             std::visit(
                 [&](const auto &node) {
                     using T = std::decay_t<decltype(node)>;
-                    if constexpr (std::is_same_v<T, Assignment>)
+                    if constexpr (std::is_same_v<T, Bind>)
                         monomorphize(node.value);
+                    if constexpr (std::is_same_v<T, BufferWrite>)
+                        monomorphize(node.value);
+                    if constexpr (std::is_same_v<T, BufferCtor>)
+                        monomorphize(node.init_fn);
                     if constexpr (std::is_same_v<T, Block>) {
                         for (const auto &e : node.expressions)
                             monomorphize(e);
                         expr->type = monomorphize_fun_type(expr->type);
                     }
-                    if constexpr (std::is_same_v<T, Buffer>)
-                        monomorphize(node.init_buffer_function);
                     if constexpr (std::is_same_v<T, Call>) {
                         monomorphize(node.callee);
                         monomorphize(node.argument);
@@ -150,10 +134,9 @@ extern "C" auto run_compiler(float sample_rate, const char *src, char *math_bin,
                 },
                 expr->node);
         };
-        monomorphize(*init_result);
         monomorphize(*main_result);
 
-        auto ir = lower(*init_result, *main_result);
+        auto ir = lower(*main_result);
 
         auto *main_module = BinaryenModuleCreate();
         if (main_module == nullptr) {

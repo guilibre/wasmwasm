@@ -2,7 +2,7 @@ import { linter, type Diagnostic } from "@codemirror/lint";
 import { getDiagnostics } from "../lsp";
 
 export const wasmwasmLinter = linter(
-  (view) => {
+  (view: import("@codemirror/view").EditorView) => {
     const src = view.state.doc.toString();
     const raw = getDiagnostics(src);
     const result: Diagnostic[] = [];

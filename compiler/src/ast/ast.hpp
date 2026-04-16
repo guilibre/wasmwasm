@@ -13,9 +13,23 @@ struct Expr;
 
 using ExprPtr = std::unique_ptr<Expr>;
 
-struct Assignment {
-    ExprPtr value;
+struct Bind {
     Token name;
+    ExprPtr value;
+};
+
+struct BufferCtor {
+    size_t size;
+    ExprPtr init_fn;
+};
+
+struct BufferRead {
+    Token name;
+};
+
+struct BufferWrite {
+    Token target;
+    ExprPtr value;
 };
 
 enum Operation : uint8_t {
@@ -33,12 +47,6 @@ struct BinaryOp {
 
 struct Block {
     std::vector<ExprPtr> expressions;
-};
-
-struct Buffer {
-    std::string name;
-    size_t size;
-    ExprPtr init_buffer_function;
 };
 
 struct Call {
@@ -71,8 +79,9 @@ struct SourcePos {
 
 struct Expr {
 
-    using ExprNode = std::variant<Assignment, Block, BinaryOp, Buffer, Call,
-                                  Lambda, Literal, UnaryOp, Variable>;
+    using ExprNode =
+        std::variant<Bind, Block, BinaryOp, BufferCtor, BufferRead, BufferWrite,
+                     Call, Lambda, Literal, UnaryOp, Variable>;
 
     ExprNode node;
     TypePtr type;
@@ -91,13 +100,17 @@ struct Expr {
 class ASTPrinter {
     auto print(const ExprPtr &expr, size_t indent = 0) -> std::string;
 
-    auto dispatch(const ExprPtr &expr, Assignment &asg, size_t indent)
+    auto dispatch(const ExprPtr &expr, Bind &bind, size_t indent)
         -> std::string;
     auto dispatch(const ExprPtr &expr, Block &block, size_t indent)
         -> std::string;
     auto dispatch(const ExprPtr &expr, BinaryOp &op, size_t indent)
         -> std::string;
-    auto dispatch(const ExprPtr &expr, Buffer &buf, size_t indent)
+    auto dispatch(const ExprPtr &expr, BufferCtor &ctor, size_t indent)
+        -> std::string;
+    auto dispatch(const ExprPtr &expr, BufferRead &rd, size_t indent)
+        -> std::string;
+    auto dispatch(const ExprPtr &expr, BufferWrite &wr, size_t indent)
         -> std::string;
     auto dispatch(const ExprPtr &expr, Call &call, size_t indent)
         -> std::string;

@@ -8,7 +8,7 @@ import double_pendulum from "../../examples/double_pendulum.txt?raw";
 import harmonic_oscillator from "../../examples/harmonic_oscillator.txt?raw";
 import karplus_strong from "../../examples/karplus_strong.txt?raw";
 
-const INITIAL_CODE = "0.2 * sin (TIME * 440 * 2 * PI) > OUT";
+const INITIAL_CODE = "OUT <- 0.2 * sin (TIME * 440 * 2 * PI)";
 
 export default function App() {
   const audioContextRef = useRef<AudioContext | null>(null);

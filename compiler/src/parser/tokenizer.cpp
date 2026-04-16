@@ -109,10 +109,13 @@ auto Tokenizer::next() -> Token {
     case '*':
     case '/':
         return make_token(TokenKind::Multiplicative);
-    case '>':
-        return make_token(TokenKind::Arrow);
-    case ':':
-        return make_token(TokenKind::Colon);
+    case '<':
+        if (match('-')) return make_token(TokenKind::LeftArrow);
+        return error_token("unexpected character '<' (did you mean '<-'?)");
+    case '=':
+        return make_token(TokenKind::Eq);
+    case '@':
+        return make_token(TokenKind::At);
     case ',':
         return make_token(TokenKind::Comma);
     case '.':
@@ -141,16 +144,17 @@ auto Token::to_string() const -> std::string {
     case TokenKind::Multiplicative:
         kind_string = lexeme;
         break;
-    case TokenKind::Arrow:
-        kind_string = ">";
+    case TokenKind::At:
+        kind_string = "@";
         break;
-    case TokenKind::Colon:
-        kind_string = ":";
+    case TokenKind::Eq:
+        kind_string = "=";
+        break;
+    case TokenKind::LeftArrow:
+        kind_string = "<-";
         break;
     case TokenKind::Comma:
         kind_string = ",";
-        break;
-        kind_string = "*";
         break;
     case TokenKind::Period:
         kind_string = ".";

@@ -113,7 +113,7 @@ void infer_expr(const ExprPtr &expr,
             [&](const auto &node) -> TypePtr {
                 using T = std::decay_t<decltype(node)>;
 
-                if constexpr (std::is_same_v<T, Assignment>) {
+                if constexpr (std::is_same_v<T, Bind>) {
                     infer_expr(node.value, env, subst, gen);
                     auto it = env.front().end();
                     for (int i = env.size() - 1; i >= 0; --i) {
@@ -142,10 +142,25 @@ void infer_expr(const ExprPtr &expr,
                     return apply_subst(subst, node.expressions.back()->type);
                 }
 
-                if constexpr (std::is_same_v<T, Buffer>) {
-                    infer_expr(node.init_buffer_function, env, subst, gen);
-                    env.back().emplace(
-                        node.name, Type::make<TypeBase>(BaseTypeKind::Float));
+                if constexpr (std::is_same_v<T, BufferCtor>) {
+                    infer_expr(node.init_fn, env, subst, gen);
+                    return Type::make<TypeBase>(BaseTypeKind::Float);
+                }
+
+                if constexpr (std::is_same_v<T, BufferRead>) {
+                    auto it = env.front().end();
+                    for (int i = env.size() - 1; i >= 0; --i) {
+                        it = env[i].find(node.name.lexeme);
+                        if (it != env[i].end()) break;
+                    }
+                    if (it == env.front().end())
+                        throw std::runtime_error("Unbound buffer: @" +
+                                                 node.name.lexeme);
+                    return apply_subst(subst, it->second);
+                }
+
+                if constexpr (std::is_same_v<T, BufferWrite>) {
+                    infer_expr(node.value, env, subst, gen);
                     return Type::make<TypeBase>(BaseTypeKind::Void);
                 }
 

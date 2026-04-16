@@ -121,7 +121,10 @@ auto find_node_at(const ExprPtr &expr, size_t line, size_t col)
                     return expr.get();
                 return find_node_at(node.body, line, col);
             }
-            if constexpr (std::is_same_v<T, Assignment>) {
+            if constexpr (std::is_same_v<T, Bind>) {
+                return find_node_at(node.value, line, col);
+            }
+            if constexpr (std::is_same_v<T, BufferWrite>) {
                 return find_node_at(node.value, line, col);
             }
             if constexpr (std::is_same_v<T, Block>) {
@@ -142,8 +145,8 @@ auto find_node_at(const ExprPtr &expr, size_t line, size_t col)
                 auto *hit = find_node_at(node.callee, line, col);
                 return hit ? hit : find_node_at(node.argument, line, col);
             }
-            if constexpr (std::is_same_v<T, Buffer>) {
-                return find_node_at(node.init_buffer_function, line, col);
+            if constexpr (std::is_same_v<T, BufferCtor>) {
+                return find_node_at(node.init_fn, line, col);
             }
             return nullptr;
         },
@@ -155,13 +158,12 @@ void collect_user_defs(const ExprPtr &expr, std::vector<std::string> &defs) {
     std::visit(
         [&](const auto &node) {
             using T = std::decay_t<decltype(node)>;
-            if constexpr (std::is_same_v<T, Assignment>) {
+            if constexpr (std::is_same_v<T, Bind>) {
                 defs.push_back(node.name.lexeme);
                 collect_user_defs(node.value, defs);
             }
-            if constexpr (std::is_same_v<T, Buffer>) {
-                defs.push_back(node.name);
-                collect_user_defs(node.init_buffer_function, defs);
+            if constexpr (std::is_same_v<T, BufferWrite>) {
+                collect_user_defs(node.value, defs);
             }
             if constexpr (std::is_same_v<T, Block>) {
                 for (const auto &child : node.expressions)
@@ -256,27 +258,10 @@ extern "C" auto lsp_diagnostics(const char *src) -> const char * {
         return s_result.data();
     }
 
-    Tokenizer init_tok(src);
-    Parser init_parser(init_tok);
-    auto init_result = init_parser.parse_initialization();
-    if (!init_result) {
-        const auto &err = init_result.error();
-        std::string error_json = R"([{"msg":")" + json_escape(err.msg) +
-                                 R"(","line":)" + std::to_string(err.line) +
-                                 ",\"col\":" + std::to_string(err.col) +
-                                 R"(,"severity":"error"}])";
-        if (error_json.size() >= s_result.size())
-            std::strcpy(s_result.data(), "[]");
-        else
-            std::strcpy(s_result.data(), error_json.c_str());
-        return s_result.data();
-    }
-
     try {
         auto env = make_builtin_env();
         Substitution subst;
         TypeGenerator gen;
-        infer_expr(*init_result, env, subst, gen);
         infer_expr(*main_result, env, subst, gen);
     } catch (const std::exception &e) {
         std::string error_json = R"([{"msg":")" + json_escape(e.what()) +
@@ -335,7 +320,7 @@ extern "C" auto lsp_tokens(const char *src) -> const char * {
             emit(t.line, t.column, len, "number");
             break;
         case TokenKind::Identifier:
-            if (t.lexeme == "buffer")
+            if (t.lexeme == "delay")
                 emit(t.line, t.column, len, "keyword");
             else if (builtins.contains(t.lexeme))
                 emit(t.line, t.column, len, "function");
@@ -344,9 +329,10 @@ extern "C" auto lsp_tokens(const char *src) -> const char * {
             break;
         case TokenKind::Additive:
         case TokenKind::Multiplicative:
-        case TokenKind::Arrow:
+        case TokenKind::Eq:
+        case TokenKind::At:
+        case TokenKind::LeftArrow:
         case TokenKind::Period:
-        case TokenKind::Colon:
             emit(t.line, t.column, len, "operator");
             break;
         default:
@@ -382,8 +368,8 @@ extern "C" auto lsp_completions(const char *src, int /*line*/, int /*col*/)
         {.label = "TIME", .detail = "Float", .kind = "constant"},
         {.label = "SAMPLE_RATE", .detail = "Float", .kind = "constant"},
         {.label = "OUT", .detail = "Float", .kind = "constant"},
-        {.label = "buffer",
-         .detail = "Float -> Int -> (Int -> Float) -> Void",
+        {.label = "delay",
+         .detail = "Int -> (Int -> Float) -> Buffer",
          .kind = "keyword"},
     }};
 
@@ -438,19 +424,10 @@ extern "C" auto lsp_hover(const char *src, int line, int col) -> const char * {
         return s_result.data();
     }
 
-    Tokenizer init_tok(src);
-    Parser init_parser(init_tok);
-    auto init_result = init_parser.parse_initialization();
-    if (!init_result) {
-        std::strcpy(s_result.data(), "null");
-        return s_result.data();
-    }
-
     try {
         auto env = make_builtin_env();
         Substitution subst;
         TypeGenerator gen;
-        infer_expr(*init_result, env, subst, gen);
         infer_expr(*main_result, env, subst, gen);
     } catch (...) {
         std::strcpy(s_result.data(), "null");
@@ -461,7 +438,6 @@ extern "C" auto lsp_hover(const char *src, int line, int col) -> const char * {
     auto ucol = static_cast<size_t>(col);
 
     const Expr *hit = find_node_at(*main_result, uline, ucol);
-    if (hit == nullptr) hit = find_node_at(*init_result, uline, ucol);
 
     if ((hit == nullptr) || !hit->type) {
         std::strcpy(s_result.data(), "null");
