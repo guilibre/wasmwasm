@@ -2,6 +2,8 @@
 
 #include <cctype>
 #include <string>
+#include <string_view>
+#include <unordered_map>
 
 Tokenizer::Tokenizer(std::string_view source) : source(source) {}
 
@@ -11,7 +13,7 @@ Tokenizer::Tokenizer(std::string_view source) : source(source) {}
 
 auto Tokenizer::advance() -> char {
     if (is_done()) return '\0';
-    char c = source[current++];
+    const auto c = source[current++];
     column++;
     return c;
 }
@@ -33,7 +35,7 @@ auto Tokenizer::match(char expected) -> bool {
 
 void Tokenizer::skip_whitespace() {
     while (!is_done()) {
-        char c = peek_current();
+        const auto c = peek_current();
         switch (c) {
         case ' ':
         case '\r':
@@ -41,8 +43,7 @@ void Tokenizer::skip_whitespace() {
             advance();
             break;
         case '#':
-            while (!is_done() && peek_current() != '\n')
-                advance();
+            while (!is_done() && peek_current() != '\n') advance();
             break;
         default:
             return;
@@ -71,24 +72,23 @@ auto Tokenizer::error_token(const std::string &msg) -> Token {
 auto Tokenizer::scan_identifier() -> Token {
     while ((std::isalnum(peek_current()) != 0) || peek_current() == '_')
         advance();
+    static const std::unordered_map<std::string_view, TokenKind> keywords = {
+        {"delay", TokenKind::Delay},
+    };
+    const auto lexeme = source.substr(start, current - start);
+    if (auto it = keywords.find(lexeme); it != keywords.end())
+        return make_token(it->second);
     return make_token(TokenKind::Identifier);
 }
 
 auto Tokenizer::scan_number() -> Token {
-    while (std::isdigit(peek_current()) != 0)
-        advance();
+    while (std::isdigit(peek_current()) != 0) advance();
 
     if (peek_current() == '.' && std::isdigit(peek_next()) != 0) {
         advance();
-        while (std::isdigit(peek_current()) != 0)
-            advance();
+        while (std::isdigit(peek_current()) != 0) advance();
     }
     return make_token(TokenKind::Number);
-}
-
-auto Tokenizer::peek_token() const -> Token {
-    auto copy = *this;
-    return copy.next();
 }
 
 auto Tokenizer::next() -> Token {
@@ -97,7 +97,7 @@ auto Tokenizer::next() -> Token {
 
     if (is_done()) return make_token(TokenKind::Eof);
 
-    char c = advance();
+    const auto c = advance();
 
     if ((std::isalpha(c) != 0) || c == '_') return scan_identifier();
     if (std::isdigit(c) != 0) return scan_number();
@@ -109,10 +109,13 @@ auto Tokenizer::next() -> Token {
     case '*':
     case '/':
         return make_token(TokenKind::Multiplicative);
-    case '>':
-        return make_token(TokenKind::Arrow);
-    case ':':
-        return make_token(TokenKind::Colon);
+    case '<':
+        if (match('-')) return make_token(TokenKind::LeftArrow);
+        return error_token("unexpected character '<' (did you mean '<-'?)");
+    case '=':
+        return make_token(TokenKind::Eq);
+    case '@':
+        return make_token(TokenKind::At);
     case ',':
         return make_token(TokenKind::Comma);
     case '.':
@@ -141,16 +144,17 @@ auto Token::to_string() const -> std::string {
     case TokenKind::Multiplicative:
         kind_string = lexeme;
         break;
-    case TokenKind::Arrow:
-        kind_string = ">";
+    case TokenKind::At:
+        kind_string = "@";
         break;
-    case TokenKind::Colon:
-        kind_string = ":";
+    case TokenKind::Eq:
+        kind_string = "=";
+        break;
+    case TokenKind::LeftArrow:
+        kind_string = "<-";
         break;
     case TokenKind::Comma:
         kind_string = ",";
-        break;
-        kind_string = "*";
         break;
     case TokenKind::Period:
         kind_string = ".";

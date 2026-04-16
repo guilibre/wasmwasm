@@ -33,8 +33,9 @@ auto wasmwasm_sin(double x) -> double {
     const double poly =
         x_reduced *
         (SIN_C1 +
-         x2 * (SIN_C3 +
-               x2 * (SIN_C5 + x2 * (SIN_C7 + x2 * (SIN_C9 + x2 * SIN_C11)))));
+         (x2 * (SIN_C3 +
+                (x2 * (SIN_C5 +
+                       (x2 * (SIN_C7 + (x2 * (SIN_C9 + (x2 * SIN_C11))))))))));
 
     const double sign = 1.0 - (2.0 * static_cast<double>(x < 0.0));
     return sign * poly;
@@ -50,10 +51,12 @@ auto wasmwasm_cos(double x) -> double {
     const double x2 = x_reduced * x_reduced;
     const double poly =
         COS_C0 +
-        (x2 * (COS_C2 +
-               x2 * (COS_C4 +
-                     x2 * (COS_C6 +
-                           x2 * (COS_C8 + x2 * (COS_C10 + x2 * COS_C12))))));
+        (x2 *
+         (COS_C2 +
+          (x2 *
+           (COS_C4 +
+            (x2 * (COS_C6 +
+                   (x2 * (COS_C8 + (x2 * (COS_C10 + (x2 * COS_C12)))))))))));
 
     const double sign = 1.0 - (2.0 * static_cast<double>(x_abs >= HALF_PI));
     return sign * poly;
@@ -71,7 +74,9 @@ auto wasmwasm_clip(double x) -> double {
 }
 
 auto wasmwasm_exp(double x) -> double {
-    const long long I = (6497320848556798 * x) + 4607182418800017408;
+    const auto I =
+        static_cast<long long>((static_cast<double>(6497320848556798LL) * x) +
+                               static_cast<double>(4607182418800017408LL));
     return std::bit_cast<double>(I);
 }
 }

@@ -7,14 +7,16 @@
 
 enum class TokenKind : uint8_t {
     Additive,
-    Arrow,
-    Colon,
+    At,
     Comma,
+    Delay,
     Eof,
     Eol,
+    Eq,
     Identifier,
     Invalid,
     LBrace,
+    LeftArrow,
     LParen,
     Multiplicative,
     Number,
@@ -32,14 +34,6 @@ struct Token {
 };
 
 class Tokenizer {
-  public:
-    explicit Tokenizer(std::string_view source);
-
-    auto next() -> Token;
-    [[nodiscard]] auto peek_token() const -> Token;
-    [[nodiscard]] auto is_done() const -> bool;
-
-  private:
     std::string_view source;
     size_t start = 0;
     size_t current = 0;
@@ -57,4 +51,10 @@ class Tokenizer {
 
     auto scan_identifier() -> Token;
     auto scan_number() -> Token;
+
+  public:
+    explicit Tokenizer(std::string_view source);
+
+    auto next() -> Token;
+    [[nodiscard]] auto is_done() const -> bool;
 };

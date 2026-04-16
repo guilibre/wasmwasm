@@ -84,6 +84,8 @@ struct IRBufferDecl {
     std::string init_fn;
 };
 
+inline constexpr uint32_t buffer_memory_start = 4096;
+
 struct IRModule {
     std::vector<IRFunction> functions;
     std::vector<IRBufferDecl> buffers;

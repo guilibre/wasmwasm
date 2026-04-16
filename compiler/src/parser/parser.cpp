@@ -3,10 +3,14 @@
 #include "../ast/ast.hpp"
 #include "tokenizer.hpp"
 
+#include <algorithm>
 #include <expected>
 #include <utility>
 #include <variant>
 #include <vector>
+
+static constexpr int buffer_size_min = 1;
+static constexpr int buffer_size_max = 1024;
 
 Parser::Parser(Tokenizer tokenizer)
     : tokenizer(tokenizer), current(this->tokenizer.next()) {}
@@ -17,42 +21,62 @@ auto Parser::match(TokenKind kind) const -> bool {
     return current.kind == kind;
 }
 
+auto Parser::expect_variable(const ExprPtr &expr) const
+    -> std::expected<Token, ParseError> {
+    const auto *var = std::get_if<Variable>(&expr->node);
+    if (var == nullptr)
+        return std::unexpected(ParseError{
+            .msg = "Expected an identifier",
+            .line = current.line,
+            .col = current.column,
+        });
+    return var->name;
+}
+
 auto Parser::parse_code() -> ParseResult {
     std::vector<ExprPtr> expressions;
 
     while (true) {
-        while (match(TokenKind::Eol))
-            advance();
-        while (match(TokenKind::Colon)) {
-            while (!match(TokenKind::Eol))
-                advance();
-            while (match(TokenKind::Eol))
-                advance();
-        }
+        while (match(TokenKind::Eol)) advance();
         if (match(TokenKind::Eof)) break;
         auto expression = parse_expression();
         if (!expression) return expression;
         expressions.emplace_back(std::move(*expression));
     }
 
-    return Expr::make<Block>(std::move(expressions));
+    return Expr::make<CodeBlock>(std::move(expressions));
 }
 
 auto Parser::parse_expression() -> ParseResult {
     auto expr = parse_additive();
     if (!expr) return std::unexpected(expr.error());
 
-    if (match(TokenKind::Arrow)) {
-        advance();
-        if (!match(TokenKind::Identifier))
+    if (match(TokenKind::Eq)) {
+        auto name = expect_variable(*expr);
+        if (!name)
             return std::unexpected(ParseError{
-                .msg = "Expected identifier after '>'",
+                .msg = "Expected identifier on left side of '='",
                 .line = current.line,
                 .col = current.column,
             });
-        auto name = current;
         advance();
-        return Expr::make<Assignment>(std::move(*expr), name);
+        auto rhs = parse_expression();
+        if (!rhs) return rhs;
+        return Expr::make<Bind>(*name, std::move(*rhs));
+    }
+
+    if (match(TokenKind::LeftArrow)) {
+        auto target = expect_variable(*expr);
+        if (!target)
+            return std::unexpected(ParseError{
+                .msg = "Expected identifier on left side of '<-'",
+                .line = current.line,
+                .col = current.column,
+            });
+        advance();
+        auto rhs = parse_additive();
+        if (!rhs) return rhs;
+        return Expr::make<BufferWrite>(*target, std::move(*rhs));
     }
 
     return expr;
@@ -83,7 +107,7 @@ auto Parser::parse_additive() -> ParseResult {
 }
 
 auto Parser::parse_multiplicative() -> ParseResult {
-    auto left = parse_application();
+    auto left = parse_unary();
     if (!left) return left;
     while (match(TokenKind::Multiplicative)) {
         Operation op{};
@@ -93,28 +117,31 @@ auto Parser::parse_multiplicative() -> ParseResult {
             op = Operation::Div;
         else
             return std::unexpected(ParseError{
-                .msg = "Unknown unary operation: " + current.to_string(),
+                .msg = "Unknown binary operation: " + current.to_string(),
                 .line = current.line,
                 .col = current.column,
             });
 
         advance();
-        auto right = parse_application();
+        auto right = parse_unary();
         if (!right) return right;
         left = Expr::make<BinaryOp>(op, std::move(*left), std::move(*right));
     }
     return left;
 }
 
-auto Parser::parse_application() -> ParseResult {
-    ParseResult expr;
+auto Parser::parse_unary() -> ParseResult {
     if (match(TokenKind::Additive) && current.lexeme == "-") {
         advance();
-        auto right = parse_factor();
-        if (!right) return right;
-        expr = Expr::make<UnaryOp>(Operation::Sub, std::move(*right));
-    } else
-        expr = parse_factor();
+        auto operand = parse_application();
+        if (!operand) return operand;
+        return Expr::make<UnaryOp>(Operation::Sub, std::move(*operand));
+    }
+    return parse_application();
+}
+
+auto Parser::parse_application() -> ParseResult {
+    auto expr = parse_factor();
     if (!expr) return expr;
 
     while (true) {
@@ -126,16 +153,32 @@ auto Parser::parse_application() -> ParseResult {
 }
 
 auto Parser::parse_factor() -> ParseResult {
-    auto tok = current;
+    const auto tok = current;
+
+    if (match(TokenKind::At)) {
+        advance();
+        if (!match(TokenKind::Identifier))
+            return std::unexpected(ParseError{
+                .msg = "Expected identifier after '@'",
+                .line = current.line,
+                .col = current.column,
+            });
+        auto name = current;
+        advance();
+        auto e = Expr::make<BufferRead>(name);
+        e->pos = {.line = name.line, .col = name.column};
+        return e;
+    }
+
+    if (match(TokenKind::Delay)) { return parse_buffer_ctor(); }
+
     if (match(TokenKind::Identifier)) {
         advance();
         auto e = Expr::make<Variable>(tok);
-        e->pos = {
-            .line = tok.line,
-            .col = tok.column,
-        };
+        e->pos = {.line = tok.line, .col = tok.column};
         return e;
     }
+
     if (match(TokenKind::LParen)) {
         advance();
         auto expr = parse_expression();
@@ -149,19 +192,19 @@ auto Parser::parse_factor() -> ParseResult {
         advance();
         return expr;
     }
+
     if (match(TokenKind::LBrace)) {
         advance();
         return parse_lambda();
     }
+
     if (match(TokenKind::Number)) {
         advance();
         auto e = Expr::make<Literal>(tok);
-        e->pos = {
-            .line = tok.line,
-            .col = tok.column,
-        };
+        e->pos = {.line = tok.line, .col = tok.column};
         return e;
     }
+
     return std::unexpected(ParseError{
         .msg = "Unexpected token: " + current.to_string(),
         .line = current.line,
@@ -170,7 +213,7 @@ auto Parser::parse_factor() -> ParseResult {
 }
 
 auto Parser::parse_lambda() -> ParseResult {
-    auto maybe_parameter = parse_factor();
+    const auto maybe_parameter = parse_factor();
     if (!maybe_parameter)
         return std::unexpected(ParseError{
             .msg = "Expected a variable name",
@@ -208,95 +251,51 @@ auto Parser::parse_lambda() -> ParseResult {
 auto Parser::parse_block() -> ParseResult {
     std::vector<ExprPtr> expressions;
     while (true) {
-        while (match(TokenKind::Eol))
-            advance();
+        while (match(TokenKind::Eol)) advance();
         ParseResult expression = parse_expression();
         if (!expression) break;
         expressions.emplace_back(std::move(*expression));
     }
 
-    if (expressions.size() == 0)
+    if (expressions.empty())
         return std::unexpected(ParseError{
             .msg = "Expected an expression",
             .line = current.line,
             .col = current.column,
         });
 
-    return Expr::make<Block>(std::move(expressions));
+    return Expr::make<CodeBlock>(std::move(expressions));
 }
 
-auto Parser::parse_initialization() -> ParseResult {
-    std::vector<ExprPtr> expressions;
-
-    while (true) {
-        while (match(TokenKind::Colon)) {
-            advance();
-            auto expression = parse_buffer();
-            if (!expression) return expression;
-            expressions.emplace_back(std::move(*expression));
-            advance();
-        }
-        while (!match(TokenKind::Eol) && !match(TokenKind::Eof))
-            advance();
-        while (match(TokenKind::Eol))
-            advance();
-        if (match(TokenKind::Eof)) break;
-    }
-
-    return Expr::make<Block>(std::move(expressions));
-}
-
-auto Parser::parse_buffer() -> ParseResult {
-    if (!match(TokenKind::Identifier) || current.lexeme != "buffer")
-        return std::unexpected(ParseError{
-            .msg = "Expected 'buffer': " + current.to_string(),
-            .line = current.line,
-            .col = current.column,
-        });
-    advance();
-
-    if (!match(TokenKind::Identifier))
-        return std::unexpected(ParseError{
-            .msg = "Expected an identifier: " + current.to_string(),
-            .line = current.line,
-            .col = current.column,
-        });
-    auto name = current.lexeme;
+auto Parser::parse_buffer_ctor() -> ParseResult {
     advance();
 
     if (!match(TokenKind::Number))
         return std::unexpected(ParseError{
-            .msg = "Expected a number: " + current.to_string(),
+            .msg = "Expected a size after 'delay': " + current.to_string(),
             .line = current.line,
             .col = current.column,
         });
-    auto size = static_cast<size_t>(
-        std::max(std::min(std::stoi(current.lexeme), 1024), 1));
+    const auto size = static_cast<size_t>(std::clamp(
+        std::stoi(current.lexeme), buffer_size_min, buffer_size_max));
     advance();
 
     if (!match(TokenKind::LBrace))
         return std::unexpected(ParseError{
-            .msg = "Expected a lambda: " + current.to_string(),
+            .msg = "Expected a lambda after size in 'delay': " +
+                   current.to_string(),
             .line = current.line,
             .col = current.column,
         });
     advance();
 
-    auto init_buffer_function = parse_lambda();
-    if (!init_buffer_function)
+    auto init_fn = parse_lambda();
+    if (!init_fn)
         return std::unexpected(ParseError{
-            .msg = "Invalid lambda: " + current.to_string(),
+            .msg = "Invalid lambda in 'delay': " + current.to_string(),
             .line = current.line,
             .col = current.column,
         });
 
-    if (!match(TokenKind::Eol))
-        return std::unexpected(ParseError{
-            .msg = "Unexpected token at buffer: " + current.to_string(),
-            .line = current.line,
-            .col = current.column,
-        });
-
-    return Expr::make<Buffer>(std::move(name), size,
-                              std::move(*init_buffer_function));
+    return Expr::make<BufferCtor>(size, std::move(*init_fn));
 }

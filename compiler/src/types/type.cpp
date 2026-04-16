@@ -16,5 +16,5 @@ auto Type::to_binaryen_type() -> BinaryenType {
     }
     if (std::holds_alternative<TypeVar>(node)) return BinaryenTypeFloat64();
 
-    return BinaryenTypeInt32();
+    return BinaryenTypeFloat64();
 }

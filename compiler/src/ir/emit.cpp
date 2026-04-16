@@ -3,13 +3,13 @@
 #include "../ast/ast.hpp"
 #include "binaryen-c.h"
 #include "ir.hpp"
-#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <stdexcept>
 #include <string>
 #include <type_traits>
 #include <unordered_map>
+#include <utility>
 #include <variant>
 #include <vector>
 
@@ -24,21 +24,21 @@ auto to_btype(IRType t) -> BinaryenType {
     case IRType::Void:
         return BinaryenTypeNone();
     }
-    return BinaryenTypeNone();
+    std::unreachable();
 }
 
 auto to_bop(Operation op) -> BinaryenOp {
     switch (op) {
-    case Add:
+    case Operation::Add:
         return BinaryenAddFloat64();
-    case Sub:
+    case Operation::Sub:
         return BinaryenSubFloat64();
-    case Mul:
+    case Operation::Mul:
         return BinaryenMulFloat64();
-    case Div:
+    case Operation::Div:
         return BinaryenDivFloat64();
     }
-    return BinaryenAddFloat64();
+    std::unreachable();
 }
 
 struct FnCtx {
@@ -64,7 +64,7 @@ struct FnCtx {
     }
 
     auto local_type(const std::string &name) -> BinaryenType {
-        auto i = idx.at(name);
+        const auto i = idx.at(name);
         if (i < param_types.size()) return param_types[i];
         return var_types[i - param_types.size()];
     }
@@ -91,7 +91,7 @@ struct FnCtx {
 void prescan(FnCtx &ctx, const std::vector<IRInstr> &body) {
     for (const auto &instr : body) {
         std::visit(
-            [&](const auto &i) {
+            [&](const auto &i) -> auto {
                 using T = std::decay_t<decltype(i)>;
                 if constexpr (std::is_same_v<T, IRBinOp>)
                     ctx.ensure_var(i.result, IRType::Float);
@@ -117,7 +117,7 @@ auto emit_body(FnCtx &ctx, const std::vector<IRInstr> &body, IRType ret_type)
 
     for (const auto &instr : body) {
         std::visit(
-            [&](const auto &i) {
+            [&](const auto &i) -> auto {
                 using T = std::decay_t<decltype(i)>;
 
                 if constexpr (std::is_same_v<T, IRBinOp>) {
@@ -137,8 +137,7 @@ auto emit_body(FnCtx &ctx, const std::vector<IRInstr> &body, IRType ret_type)
                 if constexpr (std::is_same_v<T, IRCall>) {
                     std::vector<BinaryenExpressionRef> args;
                     args.reserve(i.args.size());
-                    for (const auto &a : i.args)
-                        args.push_back(ctx.get(a));
+                    for (const auto &a : i.args) args.push_back(ctx.get(a));
                     auto *call =
                         BinaryenCall(ctx.mod, i.callee.c_str(), args.data(),
                                      static_cast<BinaryenIndex>(args.size()),
@@ -149,7 +148,7 @@ auto emit_body(FnCtx &ctx, const std::vector<IRInstr> &body, IRType ret_type)
                         stmts.push_back(ctx.set(i.result, call));
                 }
                 if constexpr (std::is_same_v<T, IRBufferRead>) {
-                    auto base = ctx.ir->buffer_base(i.buffer);
+                    const auto base = ctx.ir->buffer_base(i.buffer);
                     auto *ptr = BinaryenGlobalGet(ctx.mod, i.buffer.c_str(),
                                                   BinaryenTypeInt32());
                     stmts.push_back(
@@ -193,8 +192,7 @@ auto emit_body(FnCtx &ctx, const std::vector<IRInstr> &body, IRType ret_type)
 void emit_function(const IRFunction &fn, BinaryenModuleRef mod,
                    double sample_rate, const IRModule &ir) {
     FnCtx ctx{.mod = mod, .sample_rate = sample_rate, .ir = &ir};
-    for (const auto &p : fn.params)
-        ctx.add_param(p.name, p.type);
+    for (const auto &p : fn.params) ctx.add_param(p.name, p.type);
     prescan(ctx, fn.body);
 
     auto *body = emit_body(ctx, fn.body, fn.return_type);
@@ -212,10 +210,10 @@ void emit_init_buffers(const IRModule &ir, BinaryenModuleRef mod) {
     std::array<BinaryenType, 1> idx_type = {BinaryenTypeInt32()};
 
     for (const auto &buf : ir.buffers) {
-        auto base = ir.buffer_base(buf.name);
-        auto n = static_cast<int32_t>(buf.size_elements);
+        const auto base = ir.buffer_base(buf.name);
+        const auto n = static_cast<int32_t>(buf.size_elements);
 
-        auto idx_local = [&]() -> BinaryenExpressionRef {
+        const auto idx_local = [&]() -> BinaryenExpressionRef {
             return BinaryenLocalGet(mod, 0, BinaryenTypeInt32());
         };
         auto *i_as_f64 =
@@ -238,7 +236,7 @@ void emit_init_buffers(const IRModule &ir, BinaryenModuleRef mod) {
                            BinaryenLocalGet(mod, 0, BinaryenTypeInt32()),
                            BinaryenConst(mod, BinaryenLiteralInt32(1))));
 
-        auto loop_label = buf.name + "$init_loop";
+        const auto loop_label = buf.name + "$init_loop";
         auto *br = BinaryenBreak(
             mod, loop_label.c_str(),
             BinaryenBinary(mod, BinaryenLtUInt32(),
@@ -271,73 +269,57 @@ void emit_init_buffers(const IRModule &ir, BinaryenModuleRef mod) {
     BinaryenAddFunctionExport(mod, ir.init_fn.c_str(), ir.init_fn.c_str());
 }
 
-void emit_main_loop(const IRModule &ir, BinaryenModuleRef mod,
-                    double sample_rate) {
-    std::array<BinaryenType, 3> params = {
-        BinaryenTypeInt32(),
-        BinaryenTypeInt32(),
-        BinaryenTypeInt32(),
-    };
-    std::array<BinaryenType, 3> vars = {
-        BinaryenTypeInt32(),
-        BinaryenTypeInt32(),
-        BinaryenTypeFloat64(),
-    };
-    const BinaryenIndex BASE_PTR = 0;
-    const BinaryenIndex NUM_SAMPLES = 1;
-    const BinaryenIndex NUM_CHANNELS = 2;
-    const BinaryenIndex CHANNEL = 3;
-    const BinaryenIndex SAMPLE = 4;
-    const BinaryenIndex OUT_VAL = 5;
-
-    auto *compute_out =
-        BinaryenLocalSet(mod, OUT_VAL,
-                         BinaryenCall(mod, ir.main_fn.c_str(), nullptr, 0,
-                                      BinaryenTypeFloat64()));
-
+auto make_channel_loop(BinaryenModuleRef mod, BinaryenIndex base_ptr,
+                       BinaryenIndex num_samples, BinaryenIndex num_channels,
+                       BinaryenIndex sample, BinaryenIndex channel,
+                       BinaryenIndex out_val) -> BinaryenExpressionRef {
     auto *out_addr = BinaryenBinary(
         mod, BinaryenAddInt32(),
-        BinaryenLocalGet(mod, BASE_PTR, BinaryenTypeInt32()),
+        BinaryenLocalGet(mod, base_ptr, BinaryenTypeInt32()),
         BinaryenBinary(
             mod, BinaryenMulInt32(),
             BinaryenConst(mod, BinaryenLiteralInt32(4)),
             BinaryenBinary(
                 mod, BinaryenAddInt32(),
-                BinaryenLocalGet(mod, SAMPLE, BinaryenTypeInt32()),
+                BinaryenLocalGet(mod, sample, BinaryenTypeInt32()),
                 BinaryenBinary(
                     mod, BinaryenMulInt32(),
-                    BinaryenLocalGet(mod, CHANNEL, BinaryenTypeInt32()),
-                    BinaryenLocalGet(mod, NUM_SAMPLES, BinaryenTypeInt32())))));
+                    BinaryenLocalGet(mod, channel, BinaryenTypeInt32()),
+                    BinaryenLocalGet(mod, num_samples, BinaryenTypeInt32())))));
 
     auto *store_out = BinaryenStore(
         mod, 4, 0, 4, out_addr,
         BinaryenUnary(mod, BinaryenDemoteFloat64(),
-                      BinaryenLocalGet(mod, OUT_VAL, BinaryenTypeFloat64())),
+                      BinaryenLocalGet(mod, out_val, BinaryenTypeFloat64())),
         BinaryenTypeFloat32(), "memory");
 
     auto *inc_channel = BinaryenLocalSet(
-        mod, CHANNEL,
+        mod, channel,
         BinaryenBinary(mod, BinaryenAddInt32(),
-                       BinaryenLocalGet(mod, CHANNEL, BinaryenTypeInt32()),
+                       BinaryenLocalGet(mod, channel, BinaryenTypeInt32()),
                        BinaryenConst(mod, BinaryenLiteralInt32(1))));
 
     auto *br_inner = BinaryenBreak(
         mod, "inner_loop",
         BinaryenBinary(
             mod, BinaryenLtUInt32(),
-            BinaryenLocalGet(mod, CHANNEL, BinaryenTypeInt32()),
-            BinaryenLocalGet(mod, NUM_CHANNELS, BinaryenTypeInt32())),
+            BinaryenLocalGet(mod, channel, BinaryenTypeInt32()),
+            BinaryenLocalGet(mod, num_channels, BinaryenTypeInt32())),
         nullptr);
 
     std::array<BinaryenExpressionRef, 3> inner_body = {store_out, inc_channel,
                                                        br_inner};
     auto *inner_block = BinaryenBlock(mod, "inner_block", inner_body.data(),
                                       inner_body.size(), BinaryenTypeNone());
+    return BinaryenLoop(mod, "inner_loop", inner_block);
+}
 
+auto make_buffer_updates(BinaryenModuleRef mod, const IRModule &ir)
+    -> BinaryenExpressionRef {
     std::vector<BinaryenExpressionRef> buf_updates;
     for (const auto &buf : ir.buffers) {
-        auto base = ir.buffer_base(buf.name);
-        auto size_bytes = static_cast<int32_t>(buf.size_elements * 8);
+        const auto base = ir.buffer_base(buf.name);
+        const auto size_bytes = static_cast<int32_t>(buf.size_elements * 8);
 
         auto *cur_ptr =
             BinaryenGlobalGet(mod, buf.name.c_str(), BinaryenTypeInt32());
@@ -358,12 +340,30 @@ void emit_main_loop(const IRModule &ir, BinaryenModuleRef mod,
                                BinaryenConst(mod, BinaryenLiteralInt32(8))),
                 BinaryenConst(mod, BinaryenLiteralInt32(size_bytes)))));
     }
-    auto *buf_block =
-        buf_updates.empty()
-            ? BinaryenNop(mod)
-            : BinaryenBlock(mod, nullptr, buf_updates.data(),
-                            static_cast<BinaryenIndex>(buf_updates.size()),
-                            BinaryenTypeNone());
+
+    if (buf_updates.empty()) return BinaryenNop(mod);
+    return BinaryenBlock(mod, nullptr, buf_updates.data(),
+                         static_cast<BinaryenIndex>(buf_updates.size()),
+                         BinaryenTypeNone());
+}
+
+void emit_main_loop(const IRModule &ir, BinaryenModuleRef mod) {
+    std::array<BinaryenType, 3> params = {
+        BinaryenTypeInt32(),
+        BinaryenTypeInt32(),
+        BinaryenTypeInt32(),
+    };
+    std::array<BinaryenType, 3> vars = {
+        BinaryenTypeInt32(),
+        BinaryenTypeInt32(),
+        BinaryenTypeFloat64(),
+    };
+    const BinaryenIndex BASE_PTR = 0;
+    const BinaryenIndex NUM_SAMPLES = 1;
+    const BinaryenIndex NUM_CHANNELS = 2;
+    const BinaryenIndex CHANNEL = 3;
+    const BinaryenIndex SAMPLE = 4;
+    const BinaryenIndex OUT_VAL = 5;
 
     auto *advance_time = BinaryenGlobalSet(
         mod, "TIME",
@@ -387,9 +387,19 @@ void emit_main_loop(const IRModule &ir, BinaryenModuleRef mod,
                        BinaryenLocalGet(mod, NUM_SAMPLES, BinaryenTypeInt32())),
         nullptr);
 
+    auto *compute_out =
+        BinaryenLocalSet(mod, OUT_VAL,
+                         BinaryenCall(mod, ir.main_fn.c_str(), nullptr, 0,
+                                      BinaryenTypeFloat64()));
+
     std::array<BinaryenExpressionRef, 7> outer_body = {
-        init_channel, compute_out, BinaryenLoop(mod, "inner_loop", inner_block),
-        advance_time, buf_block,   inc_sample,
+        init_channel,
+        compute_out,
+        make_channel_loop(mod, BASE_PTR, NUM_SAMPLES, NUM_CHANNELS, SAMPLE,
+                          CHANNEL, OUT_VAL),
+        advance_time,
+        make_buffer_updates(mod, ir),
+        inc_sample,
         br_outer,
     };
     auto *outer_block = BinaryenBlock(mod, "outer_block", outer_body.data(),
@@ -413,14 +423,14 @@ void emit_main_loop(const IRModule &ir, BinaryenModuleRef mod,
 
 void import_math(BinaryenModuleRef main_mod, BinaryenModuleRef math_mod) {
     std::unordered_map<std::string, std::string> exported;
-    auto num_exports = BinaryenGetNumExports(math_mod);
+    const auto num_exports = BinaryenGetNumExports(math_mod);
     for (BinaryenIndex i = 0; i < num_exports; i++) {
         auto *ex = BinaryenGetExportByIndex(math_mod, i);
         if (BinaryenExportGetKind(ex) != BinaryenExternalFunction()) continue;
         exported[BinaryenExportGetValue(ex)] = BinaryenExportGetName(ex);
     }
 
-    auto num_globals = BinaryenGetNumGlobals(math_mod);
+    const auto num_globals = BinaryenGetNumGlobals(math_mod);
     for (BinaryenIndex i = 0; i < num_globals; i++) {
         auto *g = BinaryenGetGlobalByIndex(math_mod, i);
         auto *init =
@@ -430,39 +440,39 @@ void import_math(BinaryenModuleRef main_mod, BinaryenModuleRef math_mod) {
                           init);
     }
 
-    auto is_numeric = [](const std::string &s) -> bool {
-        return !s.empty() &&
-               std::ranges::all_of(
-                   s, [](unsigned char c) -> bool { return std::isdigit(c); });
-    };
-
-    auto num_fns = BinaryenGetNumFunctions(math_mod);
+    const auto num_fns = BinaryenGetNumFunctions(math_mod);
     for (BinaryenIndex i = 0; i < num_fns; i++) {
         auto *fn = BinaryenGetFunctionByIndex(math_mod, i);
-        std::string int_name = BinaryenFunctionGetName(fn);
-        bool is_exp = exported.contains(int_name);
-        if (!is_exp && !is_numeric(int_name)) continue;
-        std::string ext_name = is_exp ? exported.at(int_name) : int_name;
-        const char *out_name = ext_name.c_str();
+        const std::string int_name = BinaryenFunctionGetName(fn);
+        const auto is_exp = exported.contains(int_name);
+        const std::string ext_name = is_exp ? exported.at(int_name) : int_name;
 
-        auto num_vars = BinaryenFunctionGetNumVars(fn);
+        const auto num_vars = BinaryenFunctionGetNumVars(fn);
         std::vector<BinaryenType> var_types(num_vars);
         for (BinaryenIndex j = 0; j < num_vars; j++)
             var_types[j] = BinaryenFunctionGetVar(fn, j);
 
         auto *body =
             BinaryenExpressionCopy(BinaryenFunctionGetBody(fn), main_mod);
+        BinaryenAddFunction(
+            main_mod, int_name.c_str(), BinaryenFunctionGetParams(fn),
+            BinaryenFunctionGetResults(fn), var_types.data(), num_vars, body);
 
-        BinaryenAddFunction(main_mod, out_name, BinaryenFunctionGetParams(fn),
-                            BinaryenFunctionGetResults(fn), var_types.data(),
-                            num_vars, body);
+        if (is_exp && ext_name.starts_with("wasmwasm_")) {
+            auto *body2 =
+                BinaryenExpressionCopy(BinaryenFunctionGetBody(fn), main_mod);
+            BinaryenAddFunction(main_mod, ext_name.c_str(),
+                                BinaryenFunctionGetParams(fn),
+                                BinaryenFunctionGetResults(fn),
+                                var_types.data(), num_vars, body2);
+        }
     }
 }
 
 } // namespace
 
 auto IRModule::buffer_base(const std::string &name) const -> uint32_t {
-    uint32_t addr = 4096;
+    auto addr = buffer_memory_start;
     for (const auto &b : buffers) {
         if (b.name == name) return addr;
         addr += static_cast<uint32_t>(b.size_elements * 8);
@@ -488,9 +498,8 @@ void emit_ir(const IRModule &ir, BinaryenModuleRef mod,
                           BinaryenConst(mod, BinaryenLiteralFloat64(0.0)));
     }
 
-    for (const auto &fn : ir.functions)
-        emit_function(fn, mod, sample_rate, ir);
+    for (const auto &fn : ir.functions) emit_function(fn, mod, sample_rate, ir);
 
     emit_init_buffers(ir, mod);
-    emit_main_loop(ir, mod, sample_rate);
+    emit_main_loop(ir, mod);
 }

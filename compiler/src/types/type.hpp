@@ -2,7 +2,6 @@
 
 #include "binaryen-c.h"
 #include <memory>
-#include <sys/types.h>
 #include <variant>
 
 struct Type;

@@ -14,24 +14,25 @@ struct ParseError {
 using ParseResult = std::expected<ExprPtr, ParseError>;
 
 class Parser {
-  public:
-    explicit Parser(Tokenizer tokenizer);
-    auto parse_code() -> ParseResult;
-    auto parse_initialization() -> ParseResult;
-
-  private:
     Tokenizer tokenizer;
     Token current;
 
     void advance();
     [[nodiscard]] auto match(TokenKind kind) const -> bool;
+    [[nodiscard]] auto expect_variable(const ExprPtr &expr) const
+        -> std::expected<Token, ParseError>;
 
     auto parse_expression() -> ParseResult;
-    auto parse_application() -> ParseResult;
     auto parse_additive() -> ParseResult;
     auto parse_multiplicative() -> ParseResult;
+    auto parse_unary() -> ParseResult;
+    auto parse_application() -> ParseResult;
     auto parse_factor() -> ParseResult;
     auto parse_lambda() -> ParseResult;
     auto parse_block() -> ParseResult;
-    auto parse_buffer() -> ParseResult;
+    auto parse_buffer_ctor() -> ParseResult;
+
+  public:
+    explicit Parser(Tokenizer tokenizer);
+    auto parse_code() -> ParseResult;
 };

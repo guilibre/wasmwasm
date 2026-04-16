@@ -9,13 +9,13 @@ namespace {
 
 auto op_to_string(const Operation &op) -> std::string {
     switch (op) {
-    case Add:
+    case Operation::Add:
         return "+";
-    case Sub:
+    case Operation::Sub:
         return "-";
-    case Mul:
+    case Operation::Mul:
         return "*";
-    case Div:
+    case Operation::Div:
         return "/";
     }
     return "?";
@@ -32,12 +32,12 @@ auto ASTPrinter::print(const ExprPtr &expr, size_t indent) // NOLINT
 
 void ASTPrinter::operator()(const ExprPtr &expr) { std::cout << print(expr); }
 
-auto ASTPrinter::dispatch(const ExprPtr &expr, Assignment &asg, size_t indent)
+auto ASTPrinter::dispatch(const ExprPtr &expr, Bind &bind, size_t indent)
     -> std::string {
     std::ostringstream out;
     out << indent_str(indent);
-    out << attach_type("Assignment(" + asg.name.lexeme + ")", expr);
-    out << print(asg.value, indent + 2);
+    out << attach_type("Bind(" + bind.name.lexeme + ")", expr);
+    out << print(bind.value, indent + 2);
     return out.str();
 }
 
@@ -51,23 +51,38 @@ auto ASTPrinter::dispatch(const ExprPtr &expr, BinaryOp &op, size_t indent)
     return out.str();
 }
 
-auto ASTPrinter::dispatch(const ExprPtr &expr, Block &block, size_t indent)
+auto ASTPrinter::dispatch(const ExprPtr &expr, CodeBlock &block, size_t indent)
     -> std::string {
     std::ostringstream out;
     out << indent_str(indent) << attach_type("Block", expr);
-    for (auto &e : block.expressions)
-        out << print(e, indent + 2);
+    for (const auto &e : block.expressions) out << print(e, indent + 2);
 
     return out.str();
 }
 
-auto ASTPrinter::dispatch(const ExprPtr &expr, Buffer &buf, size_t indent)
+auto ASTPrinter::dispatch(const ExprPtr &expr, BufferCtor &ctor, size_t indent)
     -> std::string {
     std::ostringstream out;
     out << indent_str(indent);
-    out << attach_type(
-        "Buffer(" + buf.name + ", " + std::to_string(buf.size) + ")", expr);
-    out << indent_str(indent) << print(buf.init_buffer_function, indent + 2);
+    out << attach_type("BufferCtor(" + std::to_string(ctor.size) + ")", expr);
+    out << print(ctor.init_fn, indent + 2);
+    return out.str();
+}
+
+auto ASTPrinter::dispatch(const ExprPtr &expr, BufferRead &rd, size_t indent)
+    -> std::string {
+    std::ostringstream out;
+    out << indent_str(indent);
+    out << attach_type("BufferRead(@" + rd.name.lexeme + ")", expr);
+    return out.str();
+}
+
+auto ASTPrinter::dispatch(const ExprPtr &expr, BufferWrite &wr, size_t indent)
+    -> std::string {
+    std::ostringstream out;
+    out << indent_str(indent);
+    out << attach_type("BufferWrite(" + wr.target.lexeme + ")", expr);
+    out << print(wr.value, indent + 2);
     return out.str();
 }
 
@@ -116,8 +131,12 @@ auto ASTPrinter::dispatch(const ExprPtr &expr, Variable &var, size_t indent)
 
 auto ASTPrinter::tokenkind_to_string(TokenKind kind) -> std::string {
     switch (kind) {
-    case TokenKind::Arrow:
-        return ">";
+    case TokenKind::Eq:
+        return "=";
+    case TokenKind::At:
+        return "@";
+    case TokenKind::LeftArrow:
+        return "<-";
     case TokenKind::LParen:
         return "(";
     case TokenKind::RParen:
@@ -155,7 +174,7 @@ auto ASTPrinter::attach_type(const std::string &str, const ExprPtr &expr)
 }
 
 auto ASTPrinter::type_to_string(const TypePtr &type) -> std::string {
-    if (auto *base = std::get_if<TypeBase>(&type->node)) {
+    if (const auto *base = std::get_if<TypeBase>(&type->node)) {
         switch (base->kind) {
         case BaseTypeKind::Bool:
             return "bool";
@@ -170,11 +189,11 @@ auto ASTPrinter::type_to_string(const TypePtr &type) -> std::string {
         }
     }
 
-    if (auto *fun = std::get_if<TypeFun>(&type->node))
+    if (const auto *fun = std::get_if<TypeFun>(&type->node))
         return "(" + type_to_string(fun->param) + " -> " +
                type_to_string(fun->result) + ")";
 
-    if (auto *var = std::get_if<TypeVar>(&type->node))
+    if (const auto *var = std::get_if<TypeVar>(&type->node))
         return "t" + std::to_string(var->id);
 
     return "<?>";
