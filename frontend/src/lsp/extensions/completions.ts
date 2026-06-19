@@ -14,7 +14,7 @@ export const wasmwasmCompletions = autocompletion({
             const line = context.state.doc.lineAt(context.pos);
             const raw = getCompletions(
                 context.state.doc.toString(),
-                line.number, // 1-based, matches tokenizer
+                line.number,
                 context.pos - line.from,
             );
 

@@ -8,7 +8,7 @@ export const wasmwasmLinter = linter(
         const result: Diagnostic[] = [];
 
         for (const d of raw) {
-            if (d.line <= 0) continue; // skip errors without a source position
+            if (d.line <= 0) continue;
             try {
                 const line = view.state.doc.line(d.line);
                 const from = line.from + d.col;

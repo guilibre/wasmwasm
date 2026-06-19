@@ -148,6 +148,7 @@ void infer_expr(const ExprPtr &expr,
             }
 
             if constexpr (std::is_same_v<T, BufferRead>) {
+                if (node.delay) infer_expr(*node.delay, env, subst, gen);
                 auto type = lookup_env(node.name.lexeme, env);
                 if (!type)
                     throw std::runtime_error("Unbound buffer: @" +

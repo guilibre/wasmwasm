@@ -12,5 +12,5 @@ add_library(${PROJECT_NAME}_lib STATIC
 target_link_libraries(${PROJECT_NAME}_lib binaryen)
 target_include_directories(${PROJECT_NAME}_lib PUBLIC
     ${binaryen_SOURCE_DIR}/src
-    ./include
+    ./
 )

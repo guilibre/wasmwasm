@@ -1,8 +1,7 @@
 #include "parser.hpp"
 
-#include "../ast/ast.hpp"
+#include "ast/ast.hpp"
 #include "tokenizer.hpp"
-
 #include <algorithm>
 #include <expected>
 #include <utility>
@@ -157,6 +156,20 @@ auto Parser::parse_factor() -> ParseResult {
 
     if (match(TokenKind::At)) {
         advance();
+        std::optional<ExprPtr> delay;
+        if (match(TokenKind::LBracket)) {
+            advance();
+            auto d = parse_expression();
+            if (!d) return std::unexpected(d.error());
+            delay = std::move(*d);
+            if (!match(TokenKind::RBracket))
+                return std::unexpected(ParseError{
+                    .msg = "Expected ']' after delay expression",
+                    .line = current.line,
+                    .col = current.column,
+                });
+            advance();
+        }
         if (!match(TokenKind::Identifier))
             return std::unexpected(ParseError{
                 .msg = "Expected identifier after '@'",
@@ -165,7 +178,7 @@ auto Parser::parse_factor() -> ParseResult {
             });
         auto name = current;
         advance();
-        auto e = Expr::make<BufferRead>(name);
+        auto e = Expr::make<BufferRead>(name, std::move(delay));
         e->pos = {.line = name.line, .col = name.column};
         return e;
     }

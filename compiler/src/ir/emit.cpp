@@ -1,6 +1,6 @@
 #include "emit.hpp"
 
-#include "../ast/ast.hpp"
+#include "ast/ast.hpp"
 #include "binaryen-c.h"
 #include "ir.hpp"
 #include <array>
@@ -104,6 +104,8 @@ void prescan(FnCtx &ctx, const std::vector<IRInstr> &body) {
                         ctx.ensure_var(i.result, i.result_type);
                 if constexpr (std::is_same_v<T, IRBufferRead>)
                     ctx.ensure_var(i.result, IRType::Float);
+                if constexpr (std::is_same_v<T, IRBufferReadDelayed>)
+                    ctx.ensure_var(i.result, IRType::Float);
                 if constexpr (std::is_same_v<T, IRGlobalRead>)
                     ctx.ensure_var(i.result, i.type);
             },
@@ -155,6 +157,133 @@ auto emit_body(FnCtx &ctx, const std::vector<IRInstr> &body, IRType ret_type)
                         ctx.set(i.result, BinaryenLoad(ctx.mod, 8, false, base,
                                                        8, BinaryenTypeFloat64(),
                                                        ptr, "memory")));
+                }
+                if constexpr (std::is_same_v<T, IRBufferReadDelayed>) {
+                    const auto base = ctx.ir->buffer_base(i.buffer);
+                    const auto &buf = [&]() -> const IRBufferDecl & {
+                        for (const auto &b : ctx.ir->buffers)
+                            if (b.name == i.buffer) return b;
+                        throw std::runtime_error("Unknown buffer: " + i.buffer);
+                    }();
+                    const auto size_bytes =
+                        static_cast<int32_t>(buf.size_elements * 8);
+                    auto *mod = ctx.mod;
+                    const auto didx = ctx.idx.at(i.delay_ref);
+
+                    auto delay_f64 = [&]() -> BinaryenExpressionRef {
+                        return BinaryenLocalGet(mod, didx,
+                                                BinaryenTypeFloat64());
+                    };
+
+                    auto read_sample =
+                        [&](int32_t k_offset) -> BinaryenExpressionRef {
+                        auto *i_int = BinaryenUnary(
+                            mod, BinaryenTruncSFloat64ToInt32(),
+                            BinaryenUnary(mod, BinaryenFloorFloat64(),
+                                          delay_f64()));
+                        auto *k = BinaryenBinary(
+                            mod, BinaryenAddInt32(), i_int,
+                            BinaryenConst(mod, BinaryenLiteralInt32(k_offset)));
+                        auto *k_bytes = BinaryenBinary(
+                            mod, BinaryenMulInt32(), k,
+                            BinaryenConst(mod, BinaryenLiteralInt32(8)));
+                        auto *mod_k = BinaryenBinary(
+                            mod, BinaryenRemSInt32(), k_bytes,
+                            BinaryenConst(mod,
+                                          BinaryenLiteralInt32(size_bytes)));
+                        auto *sub = BinaryenBinary(
+                            mod, BinaryenAddInt32(),
+                            BinaryenGlobalGet(mod, i.buffer.c_str(),
+                                              BinaryenTypeInt32()),
+                            mod_k);
+                        auto *wrapped = BinaryenBinary(
+                            mod, BinaryenRemUInt32(),
+                            BinaryenBinary(
+                                mod, BinaryenAddInt32(), sub,
+                                BinaryenConst(
+                                    mod, BinaryenLiteralInt32(size_bytes))),
+                            BinaryenConst(mod,
+                                          BinaryenLiteralInt32(size_bytes)));
+                        return BinaryenLoad(mod, 8, false, base, 8,
+                                            BinaryenTypeFloat64(), wrapped,
+                                            "memory");
+                    };
+
+                    const auto p0_name = "$p0$" + i.result;
+                    const auto p1_name = "$p1$" + i.result;
+                    const auto p2_name = "$p2$" + i.result;
+                    const auto p3_name = "$p3$" + i.result;
+                    const auto fr_name = "$fr$" + i.result;
+                    ctx.ensure_var(p0_name, IRType::Float);
+                    ctx.ensure_var(p1_name, IRType::Float);
+                    ctx.ensure_var(p2_name, IRType::Float);
+                    ctx.ensure_var(p3_name, IRType::Float);
+                    ctx.ensure_var(fr_name, IRType::Float);
+
+                    stmts.push_back(BinaryenLocalSet(mod, ctx.idx.at(p0_name),
+                                                     read_sample(-1)));
+                    stmts.push_back(BinaryenLocalSet(mod, ctx.idx.at(p1_name),
+                                                     read_sample(0)));
+                    stmts.push_back(BinaryenLocalSet(mod, ctx.idx.at(p2_name),
+                                                     read_sample(1)));
+                    stmts.push_back(BinaryenLocalSet(mod, ctx.idx.at(p3_name),
+                                                     read_sample(2)));
+                    stmts.push_back(BinaryenLocalSet(
+                        mod, ctx.idx.at(fr_name),
+                        BinaryenBinary(mod, BinaryenSubFloat64(), delay_f64(),
+                                       BinaryenUnary(mod,
+                                                     BinaryenFloorFloat64(),
+                                                     delay_f64()))));
+
+                    auto p0 = [&]() -> BinaryenExpressionRef {
+                        return BinaryenLocalGet(mod, ctx.idx.at(p0_name),
+                                                BinaryenTypeFloat64());
+                    };
+                    auto p1 = [&]() -> BinaryenExpressionRef {
+                        return BinaryenLocalGet(mod, ctx.idx.at(p1_name),
+                                                BinaryenTypeFloat64());
+                    };
+                    auto p2 = [&]() -> BinaryenExpressionRef {
+                        return BinaryenLocalGet(mod, ctx.idx.at(p2_name),
+                                                BinaryenTypeFloat64());
+                    };
+                    auto p3 = [&]() -> BinaryenExpressionRef {
+                        return BinaryenLocalGet(mod, ctx.idx.at(p3_name),
+                                                BinaryenTypeFloat64());
+                    };
+                    auto frac = [&]() -> BinaryenExpressionRef {
+                        return BinaryenLocalGet(mod, ctx.idx.at(fr_name),
+                                                BinaryenTypeFloat64());
+                    };
+
+                    auto f64 = [&](double v) -> BinaryenExpressionRef {
+                        return BinaryenConst(mod, BinaryenLiteralFloat64(v));
+                    };
+                    auto add = [&](auto *a, auto *b) -> BinaryenExpressionRef {
+                        return BinaryenBinary(mod, BinaryenAddFloat64(), a, b);
+                    };
+                    auto mul = [&](auto *a, auto *b) -> BinaryenExpressionRef {
+                        return BinaryenBinary(mod, BinaryenMulFloat64(), a, b);
+                    };
+                    auto neg = [&](auto *a) -> BinaryenExpressionRef {
+                        return BinaryenUnary(mod, BinaryenNegFloat64(), a);
+                    };
+
+                    auto *coef_a = add(add(neg(p0()), mul(f64(3.0), p1())),
+                                       add(mul(f64(-3.0), p2()), p3()));
+                    auto *coef_b =
+                        add(add(mul(f64(2.0), p0()), mul(f64(-5.0), p1())),
+                            add(mul(f64(4.0), p2()), neg(p3())));
+                    auto *coef_c = add(neg(p0()), p2());
+                    stmts.push_back(ctx.set(
+                        i.result,
+                        mul(f64(0.5),
+                            add(mul(f64(2.0), p1()),
+                                mul(frac(),
+                                    add(coef_c,
+                                        mul(frac(),
+                                            add(coef_b,
+                                                mul(frac(), coef_a)))))))));
                 }
                 if constexpr (std::is_same_v<T, IRBufferWrite>) {
                     stmts.push_back(BinaryenGlobalSet(
@@ -490,6 +619,8 @@ void emit_ir(const IRModule &ir, BinaryenModuleRef mod,
     BinaryenAddGlobal(mod, "TIME", BinaryenTypeFloat64(), true,
                       BinaryenConst(mod, BinaryenLiteralFloat64(0.0)));
 
+    for (const auto &fn : ir.functions) emit_function(fn, mod, sample_rate, ir);
+
     for (const auto &buf : ir.buffers) {
         BinaryenAddGlobal(mod, buf.name.c_str(), BinaryenTypeInt32(), true,
                           BinaryenConst(mod, BinaryenLiteralInt32(0)));
@@ -497,8 +628,6 @@ void emit_ir(const IRModule &ir, BinaryenModuleRef mod,
                           BinaryenTypeFloat64(), true,
                           BinaryenConst(mod, BinaryenLiteralFloat64(0.0)));
     }
-
-    for (const auto &fn : ir.functions) emit_function(fn, mod, sample_rate, ir);
 
     emit_init_buffers(ir, mod);
     emit_main_loop(ir, mod);

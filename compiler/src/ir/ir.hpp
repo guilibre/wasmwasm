@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../ast/ast.hpp"
+#include "ast/ast.hpp"
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -47,6 +47,12 @@ struct IRBufferRead {
     std::string buffer;
 };
 
+struct IRBufferReadDelayed {
+    std::string result;
+    std::string buffer;
+    std::string delay_ref;
+};
+
 struct IRBufferWrite {
     std::string buffer;
     IRValue value;
@@ -64,7 +70,7 @@ struct IRReturn {
 
 using IRInstr =
     std::variant<IRBinOp, IRUnaryNeg, IRAssign, IRCall, IRBufferRead,
-                 IRBufferWrite, IRGlobalRead, IRReturn>;
+                 IRBufferReadDelayed, IRBufferWrite, IRGlobalRead, IRReturn>;
 
 struct IRParam {
     std::string name;

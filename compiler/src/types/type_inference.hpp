@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../ast/ast.hpp"
+#include "ast/ast.hpp"
 #include "type.hpp"
 
 #include <cstddef>

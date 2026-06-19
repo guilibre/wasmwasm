@@ -1,42 +1,42 @@
 class WasmProcessor extends AudioWorkletProcessor {
-  main = () => {};
-  heap = new Float32Array();
+    main = () => {};
+    heap = new Float32Array();
 
-  constructor() {
-    super();
+    constructor() {
+        super();
 
-    this.port.onmessage = async (event) => {
-      if (event.data.type !== "load-wasm") return;
+        this.port.onmessage = async (event) => {
+            if (event.data.type !== 'load-wasm') return;
 
-      const memory = new WebAssembly.Memory({ initial: 64, maximum: 64 });
-      this.heap = new Float32Array(memory.buffer);
+            const memory = new WebAssembly.Memory({ initial: 64, maximum: 64 });
+            this.heap = new Float32Array(memory.buffer);
 
-      const { instance } = await WebAssembly.instantiate(event.data.buffer, {
-        env: { memory },
-      });
-      instance.exports.init();
-      this.main = instance.exports.main;
-    };
-  }
-
-  process(_inputs, outputs) {
-    const width = outputs[0].length;
-    const height = outputs[0][0].length;
-    this.main(0, height, width);
-    for (let i = 0; i < width; ++i)
-      outputs[0][i].set(this.heap.subarray(i * height, (i + 1) * height));
-
-    if (this.port && currentFrame % 128 === 0) {
-      this.port.postMessage({
-        type: "signal",
-        data: Array.from(outputs[0][0].slice(0, 128)),
-      });
+            const { instance } = await WebAssembly.instantiate(event.data.buffer, {
+                env: { memory },
+            });
+            instance.exports.init();
+            this.main = instance.exports.main;
+        };
     }
 
-    return true;
-  }
+    process(_inputs, outputs) {
+        const width = outputs[0].length;
+        const height = outputs[0][0].length;
+        this.main(0, height, width);
+        for (let i = 0; i < width; ++i)
+            outputs[0][i].set(this.heap.subarray(i * height, (i + 1) * height));
+
+        if (this.port && currentFrame % 128 === 0) {
+            this.port.postMessage({
+                type: 'signal',
+                data: Array.from(outputs[0][0].slice(0, 128)),
+            });
+        }
+
+        return true;
+    }
 }
 
-registerProcessor("wasm-processor", WasmProcessor);
+registerProcessor('wasm-processor', WasmProcessor);
 
 export default null;

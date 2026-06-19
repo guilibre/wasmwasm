@@ -1,9 +1,9 @@
 #include "lower.hpp"
 
-#include "../ast/ast.hpp"
-#include "../builtins.hpp"
-#include "../types/type.hpp"
+#include "ast/ast.hpp"
+#include "builtins.hpp"
 #include "ir.hpp"
+#include "types/type.hpp"
 #include <algorithm>
 #include <numbers>
 #include <optional>
@@ -216,7 +216,19 @@ struct Lowerer {
                         throw std::runtime_error("@" + name +
                                                  " is not a buffer");
                     auto r = tmp();
-                    emit(IRBufferRead{.result = r, .buffer = name});
+                    if (node.delay) {
+                        auto d = lower_expr(*node.delay);
+                        if (!d)
+                            throw std::runtime_error(
+                                "delay expression is void");
+                        auto dr = tmp();
+                        emit(IRAssign{
+                            .result = dr, .value = *d, .type = IRType::Float});
+                        emit(IRBufferReadDelayed{
+                            .result = r, .buffer = name, .delay_ref = dr});
+                    } else {
+                        emit(IRBufferRead{.result = r, .buffer = name});
+                    }
                     return IRLocalRef{r};
                 }
 

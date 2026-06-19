@@ -1,10 +1,10 @@
 #ifdef __EMSCRIPTEN__
 
-#include "../src/lsp/lsp.hpp"
 #include "binaryen-c.h"
 #include "builtins.hpp"
 #include "ir/emit.hpp"
 #include "ir/lower.hpp"
+#include "lsp/lsp.hpp"
 #include "parser/parser.hpp"
 #include "parser/tokenizer.hpp"
 #include "types/type_inference.hpp"

@@ -1,4 +1,3 @@
-// tokenizer.hpp
 #pragma once
 
 #include <cstdint>
@@ -16,12 +15,14 @@ enum class TokenKind : uint8_t {
     Identifier,
     Invalid,
     LBrace,
+    LBracket,
     LeftArrow,
     LParen,
     Multiplicative,
     Number,
     Period,
     RBrace,
+    RBracket,
     RParen,
 };
 
@@ -37,8 +38,8 @@ class Tokenizer {
     std::string_view source;
     size_t start = 0;
     size_t current = 0;
-    size_t line = 1;
-    size_t column = 1;
+    size_t line = 0;
+    size_t column = 0;
 
     void skip_whitespace();
     auto advance() -> char;

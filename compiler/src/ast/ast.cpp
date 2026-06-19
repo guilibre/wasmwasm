@@ -23,8 +23,7 @@ auto op_to_string(const Operation &op) -> std::string {
 
 } // namespace
 
-auto ASTPrinter::print(const ExprPtr &expr, size_t indent) // NOLINT
-    -> std::string {
+auto ASTPrinter::print(const ExprPtr &expr, size_t indent) -> std::string {
     return std::visit(
         [&](auto &node) -> std::string { return dispatch(expr, node, indent); },
         expr->node);
@@ -162,8 +161,8 @@ auto ASTPrinter::tokenkind_to_string(TokenKind kind) -> std::string {
     }
 }
 
-auto ASTPrinter::indent_str(size_t indent) const -> std::string { // NOLINT
-    return std::string(indent, ' ');                              // NOLINT
+auto ASTPrinter::indent_str(size_t indent) const -> std::string {
+    return std::string(indent, ' '); // NOLINT
 }
 
 auto ASTPrinter::attach_type(const std::string &str, const ExprPtr &expr)

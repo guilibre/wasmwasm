@@ -18,7 +18,6 @@ function buildDecorations(
     const tokens = getTokens(src);
     const builder = new RangeSetBuilder<Decoration>();
 
-    // Sort by position to satisfy RangeSetBuilder ordering requirement
     tokens.sort((a, b) => {
         const aLine = doc.line(a.line);
         const bLine = doc.line(b.line);

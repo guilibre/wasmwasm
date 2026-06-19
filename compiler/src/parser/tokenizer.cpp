@@ -124,13 +124,17 @@ auto Tokenizer::next() -> Token {
         return make_token(TokenKind::LBrace);
     case '}':
         return make_token(TokenKind::RBrace);
+    case '[':
+        return make_token(TokenKind::LBracket);
+    case ']':
+        return make_token(TokenKind::RBracket);
     case '(':
         return make_token(TokenKind::LParen);
     case ')':
         return make_token(TokenKind::RParen);
     case '\n':
         line++;
-        column = 1;
+        column = 0;
         return make_token(TokenKind::Eol);
     default:
         return error_token("unexpected character");

@@ -3,11 +3,7 @@ import { getHover } from '../lsp';
 
 export const wasmwasmHover = hoverTooltip((view, pos) => {
     const line = view.state.doc.lineAt(pos);
-    const result = getHover(
-        view.state.doc.toString(),
-        line.number, // 1-based, matches tokenizer
-        pos - line.from,
-    );
+    const result = getHover(view.state.doc.toString(), line.number, pos - line.from);
     if (!result) return null;
 
     return {

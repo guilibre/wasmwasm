@@ -5,6 +5,11 @@ ROOT="$(git rev-parse --show-toplevel)"
 
 cd "$ROOT"
 
+if ! git diff --quiet || ! git diff --cached --quiet; then
+	git add -A
+	git commit --amend
+fi
+
 STAGED_FRONTEND=$(git ls-files | grep -E '^frontend/.*\.(ts|html|scss|css|json)$' || true)
 
 if [ -n "$STAGED_FRONTEND" ]; then

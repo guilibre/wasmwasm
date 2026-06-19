@@ -1,12 +1,11 @@
 #include "lsp.hpp"
 
-#include "../ast/ast.hpp"
-#include "../builtins.hpp"
-#include "../parser/parser.hpp"
-#include "../parser/tokenizer.hpp"
-#include "../types/type.hpp"
-#include "../types/type_inference.hpp"
-
+#include "ast/ast.hpp"
+#include "builtins.hpp"
+#include "parser/parser.hpp"
+#include "parser/tokenizer.hpp"
+#include "types/type.hpp"
+#include "types/type_inference.hpp"
 #include <algorithm>
 #include <array>
 #include <string>
@@ -122,6 +121,14 @@ auto find_node_at(const ExprPtr &expr, size_t line, size_t col)
             if constexpr (std::is_same_v<T, BufferCtor>) {
                 return find_node_at(node.init_fn, line, col);
             }
+            if constexpr (std::is_same_v<T, BufferRead>) {
+                const auto &tok = node.name;
+                if (tok.line == line && col >= tok.column &&
+                    col < tok.column + tok.lexeme.size())
+                    return expr.get();
+                if (node.delay) return find_node_at(*node.delay, line, col);
+                return nullptr;
+            }
             return nullptr;
         },
         expr->node);
@@ -168,8 +175,8 @@ struct CommentStart {
 
 auto scan_comments(const char *src) -> std::vector<CommentStart> {
     std::vector<CommentStart> out;
-    size_t line = 1;
-    size_t col = 1;
+    size_t line = 0;
+    size_t col = 0;
     for (const char *p = src; *p != 0; ++p) {
         if (*p == '#') {
             out.push_back({.line = line, .col = col});
@@ -178,7 +185,7 @@ auto scan_comments(const char *src) -> std::vector<CommentStart> {
         }
         if (*p == '\n') {
             ++line;
-            col = 1;
+            col = 0;
         } else {
             ++col;
         }
@@ -195,8 +202,8 @@ auto is_in_comment(const std::vector<CommentStart> &comments, size_t line,
 
 auto line_len_from(const char *src, size_t target_line, size_t start_col)
     -> size_t {
-    size_t line = 1;
-    size_t col = 1;
+    size_t line = 0;
+    size_t col = 0;
     size_t len = 0;
     for (const char *p = src; *p != 0; ++p) {
         if (line == target_line && col >= start_col) {
@@ -205,7 +212,7 @@ auto line_len_from(const char *src, size_t target_line, size_t start_col)
         }
         if (*p == '\n') {
             ++line;
-            col = 1;
+            col = 0;
         } else {
             ++col;
         }

@@ -84,23 +84,20 @@ OUT <- 0.2 * clip x
 ### Karplus-Strong (plucked string)
 
 ```
-x    = delay 128 {x. fract (47684873451.123783453 * sin (x/1024))}
-x_m1 = delay 1 {x. 0}
-y_m1 = delay 1 {x. 0}
-y_m2 = delay 1 {x. 0}
+x = delay 128 {x. fract (47684873451.123783453 * sin (x/1024))}
+y = delay 2 {x. 0}
 
 c = cos (1000/SAMPLE_RATE)
 r = exp (-15000/SAMPLE_RATE)
 k = 1 - r
 
-y = (c + r) * @y_m1 - c * r * @y_m2 - k * c * @x + k * @x_m1
+tmp = (c + r) * @[1]y - c * r * @y - k * c * @[1]x + k * @x
 
-x_m1 <- @x
-x    <- y
-y_m2 <- @y_m1
-y_m1 <- y
+x <- tmp
+y <- tmp
 
-OUT <- 0.2 * clip y
+#always clip so your ears don't bleed
+OUT <- 0.5 * clip tmp
 ```
 
 More examples (Chua's circuit, double pendulum) are available in `frontend/examples/`.

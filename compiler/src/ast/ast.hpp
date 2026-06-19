@@ -1,10 +1,11 @@
 #pragma once
 
-#include "../parser/tokenizer.hpp"
-#include "../types/type.hpp"
+#include "parser/tokenizer.hpp"
+#include "types/type.hpp"
 
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <variant>
 #include <vector>
@@ -25,6 +26,7 @@ struct BufferCtor {
 
 struct BufferRead {
     Token name;
+    std::optional<ExprPtr> delay;
 };
 
 struct BufferWrite {
