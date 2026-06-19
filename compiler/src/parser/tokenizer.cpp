@@ -74,6 +74,8 @@ auto Tokenizer::scan_identifier() -> Token {
         advance();
     static const std::unordered_map<std::string_view, TokenKind> keywords = {
         {"delay", TokenKind::Delay},
+        {"IN", TokenKind::In},
+        {"OUT", TokenKind::Out},
     };
     const auto lexeme = source.substr(start, current - start);
     if (auto it = keywords.find(lexeme); it != keywords.end())

@@ -3,4 +3,6 @@
 #include "ast/ast.hpp"
 #include "ir.hpp"
 
-auto lower(const ExprPtr &program) -> IRModule;
+#include <string>
+
+auto lower(const ExprPtr &program, const std::string &module_name) -> IRModule;

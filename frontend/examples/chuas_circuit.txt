@@ -31,4 +31,4 @@ in2 <- y + dt * ydot
 in3 <- z + dt * zdot
 
 #always clip so your ears don't bleed
-OUT <- 0.2 * clip (0.2 * x)
+OUT[0] <- 0.2 * clip (0.2 * x)

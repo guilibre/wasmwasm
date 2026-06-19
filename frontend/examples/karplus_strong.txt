@@ -11,4 +11,4 @@ x <- tmp
 y <- tmp
 
 #always clip so your ears don't bleed
-OUT <- 0.5 * clip tmp
+OUT[0] <- 0.5 * clip tmp

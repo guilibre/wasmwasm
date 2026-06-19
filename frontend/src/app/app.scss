@@ -1,24 +1,117 @@
 .app {
     display: flex;
     flex-direction: column;
-    height: 90vh;
+    height: 100vh;
+    background: #1a1d2e;
+    color: #cdd6f4;
+    font-family: monospace;
 
-    &__examples {
+    &__toolbar {
         display: flex;
-        flex-direction: row;
+        align-items: center;
+        gap: 0.5rem;
+        padding: 0.4rem 0.8rem;
+        background: #13151f;
+        border-bottom: 1px solid #2a2d40;
+        flex-shrink: 0;
+
+        button {
+            padding: 0.25rem 0.75rem;
+            background: #263238;
+            color: #cdd6f4;
+            border: 1px solid #37474f;
+            border-radius: 4px;
+            cursor: pointer;
+            font-family: monospace;
+            font-size: 0.85rem;
+
+            &:hover {
+                background: #37474f;
+            }
+        }
     }
 
-    canvas {
-        width: 100%;
-        height: 10rem;
+    &__brand {
+        font-weight: bold;
+        color: #89ddff;
+        margin-right: 0.5rem;
     }
 
-    &__editor {
-        display: flex;
-        flex-direction: column;
-        height: 100%;
+    &__error {
+        color: #f07178;
+        font-size: 0.8rem;
+        margin-left: 0.5rem;
+    }
+
+    &__workspace {
         flex: 1;
         min-height: 0;
+        display: flex;
+    }
+
+    &__modal-backdrop {
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.5);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 1000;
+    }
+
+    &__modal {
+        display: flex;
+        flex-direction: column;
+        width: 600px;
+        height: 420px;
+        border: 1px solid #2a2d40;
+        border-radius: 8px;
+        background: #1a1d2e;
+        box-shadow: 0 16px 48px rgba(0, 0, 0, 0.6);
+        overflow: hidden;
+    }
+
+    &__panel-name {
+        cursor: text;
+        &:hover {
+            color: #82aaff;
+        }
+    }
+
+    &__name-input {
+        background: transparent;
+        border: none;
+        border-bottom: 1px solid #82aaff;
+        color: inherit;
+        font: inherit;
+        outline: none;
+        min-width: 0;
+        flex: 1;
+    }
+
+    &__panel-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 0.4rem 0.8rem;
+        background: #13151f;
+        border-bottom: 1px solid #2a2d40;
+        font-size: 0.85rem;
+        flex-shrink: 0;
+
+        button {
+            background: none;
+            border: none;
+            color: #546e7a;
+            cursor: pointer;
+            font-size: 1.1rem;
+            line-height: 1;
+            padding: 0 0.2rem;
+
+            &:hover {
+                color: #cdd6f4;
+            }
+        }
     }
 
     &__code-wrapper {
@@ -73,12 +166,126 @@
     &__completion-label {
         color: #89ddff;
     }
-
     &__completion-detail {
         color: #546e7a;
         font-size: 0.8em;
         align-self: center;
     }
+}
+
+.ww-canvas {
+    flex: 1;
+    min-width: 0;
+    position: relative;
+
+    .react-flow__background {
+        background: #1a1d2e;
+    }
+    .react-flow__controls button {
+        background: #263238;
+        border-color: #37474f;
+        color: #cdd6f4;
+        fill: #cdd6f4;
+    }
+}
+
+.ww-node {
+    padding: 0.75rem 1.25rem;
+    border-radius: 6px;
+    border: 1px solid #37474f;
+    background: #263238;
+    min-width: 100px;
+    text-align: center;
+    font-size: 0.85rem;
+    cursor: grab;
+    position: relative;
+
+    &--block {
+        border-color: #82aaff;
+    }
+    &--system {
+        border-color: #546e7a;
+        color: #89ddff;
+    }
+    &--selected {
+        box-shadow: 0 0 0 2px #89ddff;
+    }
+
+    &__label {
+        user-select: none;
+    }
+
+    &__name-input {
+        background: transparent;
+        border: none;
+        border-bottom: 1px solid #82aaff;
+        color: inherit;
+        font: inherit;
+        text-align: center;
+        width: 100%;
+        outline: none;
+        padding: 0;
+    }
+}
+
+.ww-handle {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    border: 2px solid;
+
+    &--in {
+        background: #1a1d2e;
+        border-color: #82aaff;
+        cursor: crosshair;
+    }
+    &--out {
+        background: #82aaff;
+        border-color: #82aaff;
+        cursor: crosshair;
+    }
+}
+
+.ww-ctx-menu {
+    position: fixed;
+    z-index: 200;
+    background: #1e2732;
+    border: 1px solid #37474f;
+    border-radius: 4px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+    overflow: hidden;
+
+    button {
+        display: block;
+        width: 100%;
+        padding: 0.4rem 1rem;
+        background: none;
+        border: none;
+        color: #f07178;
+        font-family: monospace;
+        font-size: 0.85rem;
+        text-align: left;
+        cursor: pointer;
+
+        &:hover {
+            background: #263238;
+        }
+    }
+}
+
+.ww-name-input {
+    position: absolute;
+    z-index: 100;
+    padding: 0.25rem 0.5rem;
+    background: #1e2732;
+    border: 1px solid #89ddff;
+    border-radius: 4px;
+    color: #cdd6f4;
+    font-family: monospace;
+    font-size: 0.85rem;
+    outline: none;
+    width: 120px;
+    transform: translate(-50%, -50%);
 }
 
 .ww-keyword {

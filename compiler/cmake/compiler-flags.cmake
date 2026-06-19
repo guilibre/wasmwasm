@@ -1,55 +1,42 @@
-if(MSVC)
-    add_compile_options(/O2 /DNDEBUG)
-else()
-    add_compile_options(-O3 -DNDEBUG)
-endif()
+add_compile_options(
+    -DNDEBUG
+    -fdata-sections
+    -ffunction-sections
+    -fwasm-exceptions
+    -sWASM_LEGACY_EXCEPTIONS=0
+    -mbulk-memory
+    -mmutable-globals
+    -mnontrapping-fptoint
+    -msign-ext
+    -msimd128
+    -mtail-call
+    -O3
+)
+add_link_options(
+    -flto
+    -fwasm-exceptions
+    -sWASM_LEGACY_EXCEPTIONS=0
+    -msimd128
+    -Wl,--gc-sections
+)
 
 add_library(compiler_flags INTERFACE)
 
-if(MSVC)
-    target_compile_options(compiler_flags INTERFACE
-        /W4
-        /permissive-
-        /w14254
-        /w14263
-        /w14265
-        /w14287
-        /w14296
-        /w14311
-        /w14545
-        /w14546
-        /w14547
-        /w14549
-        /w14555
-        /w14619
-        /w14640
-        /w14826
-        /w14905
-        /w14906
-        /w14928
-        /we4715
-        /we4700
-    )
-else()
-    target_compile_options(compiler_flags INTERFACE
-        -Wall
-        -Wextra
-        -Wpedantic
-        -Wshadow
-        -Wnon-virtual-dtor
-        -Wcast-align
-        -Wunused
-        -Woverloaded-virtual
-        -Wconversion
-        -Wsign-conversion
-        -Wmisleading-indentation
-        -Wduplicated-cond
-        -Wduplicated-branches
-        -Wlogical-op
-        -Wnull-dereference
-        -Wdouble-promotion
-        -Wformat=2
-        -Werror=return-type
-        -Werror=uninitialized
-    )
-endif()
+target_compile_options(compiler_flags INTERFACE
+    -Wall
+    -Wcast-align
+    -Wconversion
+    -Wdouble-promotion
+    -Werror=return-type
+    -Werror=uninitialized
+    -Wextra
+    -Wformat=2
+    -Wmisleading-indentation
+    -Wnon-virtual-dtor
+    -Wnull-dereference
+    -Woverloaded-virtual
+    -Wpedantic
+    -Wshadow
+    -Wsign-conversion
+    -Wunused
+)

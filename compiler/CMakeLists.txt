@@ -7,7 +7,9 @@ endif()
 
 project(wasmwasm VERSION 0.1 LANGUAGES CXX)
 
-set(BUILD_STATIC_LIB ON)
+set(BUILD_STATIC_LIB ON CACHE BOOL "" FORCE)
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+set(BUILD_OBJECT_LIBS OFF CACHE BOOL "" FORCE)
 
 include(cmake/compiler-flags.cmake)
 
@@ -20,7 +22,20 @@ fetchcontent_declare(
 )
 set(BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(BUILD_TOOLS OFF CACHE BOOL "" FORCE)
+set(EMSCRIPTEN_ENABLE_WASM_EH ON CACHE BOOL "" FORCE)
 fetchcontent_makeavailable(binaryen)
+
+fetchcontent_declare(
+    jsoncpp
+    GIT_REPOSITORY https://github.com/open-source-parsers/jsoncpp.git
+    GIT_TAG 1.9.8
+)
+set(JSONCPP_WITH_CMAKE_PACKAGE OFF CACHE BOOL "" FORCE)
+set(JSONCPP_WITH_INSTALL OFF CACHE BOOL "" FORCE)
+set(JSONCPP_WITH_PKGCONFIG_SUPPORT OFF CACHE BOOL "" FORCE)
+set(JSONCPP_WITH_POST_BUILD_UNITTEST OFF CACHE BOOL "" FORCE)
+set(JSONCPP_WITH_TESTS OFF CACHE BOOL "" FORCE)
+fetchcontent_makeavailable(jsoncpp)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_CXX_STANDARD 26)

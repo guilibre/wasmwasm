@@ -68,9 +68,20 @@ struct IRReturn {
     std::optional<IRValue> value;
 };
 
+struct IRInputRead {
+    std::string result;
+    size_t index;
+};
+
+struct IROutputWrite {
+    size_t index{};
+    IRValue value;
+};
+
 using IRInstr =
     std::variant<IRBinOp, IRUnaryNeg, IRAssign, IRCall, IRBufferRead,
-                 IRBufferReadDelayed, IRBufferWrite, IRGlobalRead, IRReturn>;
+                 IRBufferReadDelayed, IRBufferWrite, IRGlobalRead, IRInputRead,
+                 IROutputWrite, IRReturn>;
 
 struct IRParam {
     std::string name;
@@ -93,10 +104,16 @@ struct IRBufferDecl {
 inline constexpr uint32_t buffer_memory_start = 4096;
 
 struct IRModule {
+    std::string name;
     std::vector<IRFunction> functions;
     std::vector<IRBufferDecl> buffers;
     std::string init_fn;
     std::string main_fn;
+    size_t num_inputs = 0;
+    size_t num_outputs = 0;
+    uint32_t memory_base = buffer_memory_start;
 
-    [[nodiscard]] auto buffer_base(const std::string &name) const -> uint32_t;
+    [[nodiscard]] auto buffer_base(const std::string &buf_name) const
+        -> uint32_t;
+    [[nodiscard]] auto total_buffer_bytes() const -> uint32_t;
 };

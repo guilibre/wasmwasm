@@ -182,6 +182,15 @@ void infer_expr(const ExprPtr &expr,
                                            apply_subst(subst, node.body->type));
             }
 
+            if constexpr (std::is_same_v<T, InputRead>) {
+                return Type::make<TypeBase>(BaseTypeKind::Float);
+            }
+
+            if constexpr (std::is_same_v<T, OutputWrite>) {
+                infer_expr(node.value, env, subst, gen);
+                return Type::make<TypeBase>(BaseTypeKind::Void);
+            }
+
             if constexpr (std::is_same_v<T, Literal>) {
                 return Type::make<TypeBase>(BaseTypeKind::Float);
             }

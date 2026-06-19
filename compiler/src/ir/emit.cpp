@@ -3,6 +3,7 @@
 #include "ast/ast.hpp"
 #include "binaryen-c.h"
 #include "ir.hpp"
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <stdexcept>
@@ -14,6 +15,10 @@
 #include <vector>
 
 namespace {
+
+auto pfx(const IRModule &ir, const std::string &s) -> std::string {
+    return ir.name + "$" + s;
+}
 
 auto to_btype(IRType t) -> BinaryenType {
     switch (t) {
@@ -39,6 +44,25 @@ auto to_bop(Operation op) -> BinaryenOp {
         return BinaryenDivFloat64();
     }
     std::unreachable();
+}
+
+auto to_bop_vec(Operation op) -> BinaryenOp {
+    switch (op) {
+    case Operation::Add:
+        return BinaryenAddVecF64x2();
+    case Operation::Sub:
+        return BinaryenSubVecF64x2();
+    case Operation::Mul:
+        return BinaryenMulVecF64x2();
+    case Operation::Div:
+        return BinaryenDivVecF64x2();
+    }
+    std::unreachable();
+}
+
+auto splat_f64(BinaryenModuleRef mod, double v) -> BinaryenExpressionRef {
+    return BinaryenUnary(mod, BinaryenSplatVecF64x2(),
+                         BinaryenConst(mod, BinaryenLiteralFloat64(v)));
 }
 
 struct FnCtx {
@@ -108,6 +132,8 @@ void prescan(FnCtx &ctx, const std::vector<IRInstr> &body) {
                     ctx.ensure_var(i.result, IRType::Float);
                 if constexpr (std::is_same_v<T, IRGlobalRead>)
                     ctx.ensure_var(i.result, i.type);
+                if constexpr (std::is_same_v<T, IRInputRead>)
+                    ctx.ensure_var(i.result, IRType::Float);
             },
             instr);
     }
@@ -140,8 +166,11 @@ auto emit_body(FnCtx &ctx, const std::vector<IRInstr> &body, IRType ret_type)
                     std::vector<BinaryenExpressionRef> args;
                     args.reserve(i.args.size());
                     for (const auto &a : i.args) args.push_back(ctx.get(a));
+                    const bool is_math = i.callee.starts_with("wasmwasm_");
+                    const auto callee_name =
+                        is_math ? i.callee : pfx(*ctx.ir, i.callee);
                     auto *call =
-                        BinaryenCall(ctx.mod, i.callee.c_str(), args.data(),
+                        BinaryenCall(ctx.mod, callee_name.c_str(), args.data(),
                                      static_cast<BinaryenIndex>(args.size()),
                                      to_btype(i.result_type));
                     if (i.result.empty())
@@ -149,9 +178,23 @@ auto emit_body(FnCtx &ctx, const std::vector<IRInstr> &body, IRType ret_type)
                     else
                         stmts.push_back(ctx.set(i.result, call));
                 }
+                if constexpr (std::is_same_v<T, IRInputRead>) {
+                    const auto gname =
+                        pfx(*ctx.ir, "IN$" + std::to_string(i.index));
+                    stmts.push_back(ctx.set(
+                        i.result, BinaryenGlobalGet(ctx.mod, gname.c_str(),
+                                                    BinaryenTypeFloat64())));
+                }
+                if constexpr (std::is_same_v<T, IROutputWrite>) {
+                    const auto gname =
+                        pfx(*ctx.ir, "OUT$" + std::to_string(i.index));
+                    stmts.push_back(BinaryenGlobalSet(ctx.mod, gname.c_str(),
+                                                      ctx.get(i.value)));
+                }
                 if constexpr (std::is_same_v<T, IRBufferRead>) {
                     const auto base = ctx.ir->buffer_base(i.buffer);
-                    auto *ptr = BinaryenGlobalGet(ctx.mod, i.buffer.c_str(),
+                    const auto pname = pfx(*ctx.ir, i.buffer);
+                    auto *ptr = BinaryenGlobalGet(ctx.mod, pname.c_str(),
                                                   BinaryenTypeInt32());
                     stmts.push_back(
                         ctx.set(i.result, BinaryenLoad(ctx.mod, 8, false, base,
@@ -160,6 +203,7 @@ auto emit_body(FnCtx &ctx, const std::vector<IRInstr> &body, IRType ret_type)
                 }
                 if constexpr (std::is_same_v<T, IRBufferReadDelayed>) {
                     const auto base = ctx.ir->buffer_base(i.buffer);
+                    const auto pname = pfx(*ctx.ir, i.buffer);
                     const auto &buf = [&]() -> const IRBufferDecl & {
                         for (const auto &b : ctx.ir->buffers)
                             if (b.name == i.buffer) return b;
@@ -193,7 +237,7 @@ auto emit_body(FnCtx &ctx, const std::vector<IRInstr> &body, IRType ret_type)
                                           BinaryenLiteralInt32(size_bytes)));
                         auto *sub = BinaryenBinary(
                             mod, BinaryenAddInt32(),
-                            BinaryenGlobalGet(mod, i.buffer.c_str(),
+                            BinaryenGlobalGet(mod, pname.c_str(),
                                               BinaryenTypeInt32()),
                             mod_k);
                         auto *wrapped = BinaryenBinary(
@@ -286,9 +330,9 @@ auto emit_body(FnCtx &ctx, const std::vector<IRInstr> &body, IRType ret_type)
                                                 mul(frac(), coef_a)))))))));
                 }
                 if constexpr (std::is_same_v<T, IRBufferWrite>) {
-                    stmts.push_back(BinaryenGlobalSet(
-                        ctx.mod, (i.buffer + "$future").c_str(),
-                        ctx.get(i.value)));
+                    const auto fname = pfx(*ctx.ir, i.buffer + "$future");
+                    stmts.push_back(BinaryenGlobalSet(ctx.mod, fname.c_str(),
+                                                      ctx.get(i.value)));
                 }
                 if constexpr (std::is_same_v<T, IRGlobalRead>) {
                     auto *g = BinaryenGlobalGet(ctx.mod, i.name.c_str(),
@@ -326,8 +370,9 @@ void emit_function(const IRFunction &fn, BinaryenModuleRef mod,
 
     auto *body = emit_body(ctx, fn.body, fn.return_type);
 
+    const auto wasm_name = pfx(ir, fn.name);
     BinaryenAddFunction(
-        mod, fn.name.c_str(),
+        mod, wasm_name.c_str(),
         BinaryenTypeCreate(ctx.param_types.data(),
                            static_cast<BinaryenIndex>(ctx.param_types.size())),
         to_btype(fn.return_type), ctx.var_types.data(),
@@ -349,8 +394,9 @@ void emit_init_buffers(const IRModule &ir, BinaryenModuleRef mod) {
             BinaryenUnary(mod, BinaryenConvertUInt32ToFloat64(), idx_local());
 
         std::array<BinaryenExpressionRef, 1> call_args = {i_as_f64};
+        const auto init_fn_name = pfx(ir, buf.init_fn);
         auto *init_val =
-            BinaryenCall(mod, buf.init_fn.c_str(), call_args.data(), 1,
+            BinaryenCall(mod, init_fn_name.c_str(), call_args.data(), 1,
                          BinaryenTypeFloat64());
         auto *byte_offset =
             BinaryenBinary(mod, BinaryenMulInt32(), idx_local(),
@@ -365,7 +411,7 @@ void emit_init_buffers(const IRModule &ir, BinaryenModuleRef mod) {
                            BinaryenLocalGet(mod, 0, BinaryenTypeInt32()),
                            BinaryenConst(mod, BinaryenLiteralInt32(1))));
 
-        const auto loop_label = buf.name + "$init_loop";
+        const auto loop_label = pfx(ir, buf.name + "$init_loop");
         auto *br = BinaryenBreak(
             mod, loop_label.c_str(),
             BinaryenBinary(mod, BinaryenLtUInt32(),
@@ -393,161 +439,9 @@ void emit_init_buffers(const IRModule &ir, BinaryenModuleRef mod) {
                             static_cast<BinaryenIndex>(all_loops.size()),
                             BinaryenTypeNone());
 
-    BinaryenAddFunction(mod, ir.init_fn.c_str(), BinaryenTypeCreate(nullptr, 0),
+    const auto init_name = pfx(ir, ir.init_fn);
+    BinaryenAddFunction(mod, init_name.c_str(), BinaryenTypeCreate(nullptr, 0),
                         BinaryenTypeNone(), idx_type.data(), 1, body);
-    BinaryenAddFunctionExport(mod, ir.init_fn.c_str(), ir.init_fn.c_str());
-}
-
-auto make_channel_loop(BinaryenModuleRef mod, BinaryenIndex base_ptr,
-                       BinaryenIndex num_samples, BinaryenIndex num_channels,
-                       BinaryenIndex sample, BinaryenIndex channel,
-                       BinaryenIndex out_val) -> BinaryenExpressionRef {
-    auto *out_addr = BinaryenBinary(
-        mod, BinaryenAddInt32(),
-        BinaryenLocalGet(mod, base_ptr, BinaryenTypeInt32()),
-        BinaryenBinary(
-            mod, BinaryenMulInt32(),
-            BinaryenConst(mod, BinaryenLiteralInt32(4)),
-            BinaryenBinary(
-                mod, BinaryenAddInt32(),
-                BinaryenLocalGet(mod, sample, BinaryenTypeInt32()),
-                BinaryenBinary(
-                    mod, BinaryenMulInt32(),
-                    BinaryenLocalGet(mod, channel, BinaryenTypeInt32()),
-                    BinaryenLocalGet(mod, num_samples, BinaryenTypeInt32())))));
-
-    auto *store_out = BinaryenStore(
-        mod, 4, 0, 4, out_addr,
-        BinaryenUnary(mod, BinaryenDemoteFloat64(),
-                      BinaryenLocalGet(mod, out_val, BinaryenTypeFloat64())),
-        BinaryenTypeFloat32(), "memory");
-
-    auto *inc_channel = BinaryenLocalSet(
-        mod, channel,
-        BinaryenBinary(mod, BinaryenAddInt32(),
-                       BinaryenLocalGet(mod, channel, BinaryenTypeInt32()),
-                       BinaryenConst(mod, BinaryenLiteralInt32(1))));
-
-    auto *br_inner = BinaryenBreak(
-        mod, "inner_loop",
-        BinaryenBinary(
-            mod, BinaryenLtUInt32(),
-            BinaryenLocalGet(mod, channel, BinaryenTypeInt32()),
-            BinaryenLocalGet(mod, num_channels, BinaryenTypeInt32())),
-        nullptr);
-
-    std::array<BinaryenExpressionRef, 3> inner_body = {store_out, inc_channel,
-                                                       br_inner};
-    auto *inner_block = BinaryenBlock(mod, "inner_block", inner_body.data(),
-                                      inner_body.size(), BinaryenTypeNone());
-    return BinaryenLoop(mod, "inner_loop", inner_block);
-}
-
-auto make_buffer_updates(BinaryenModuleRef mod, const IRModule &ir)
-    -> BinaryenExpressionRef {
-    std::vector<BinaryenExpressionRef> buf_updates;
-    for (const auto &buf : ir.buffers) {
-        const auto base = ir.buffer_base(buf.name);
-        const auto size_bytes = static_cast<int32_t>(buf.size_elements * 8);
-
-        auto *cur_ptr =
-            BinaryenGlobalGet(mod, buf.name.c_str(), BinaryenTypeInt32());
-        auto *future_val = BinaryenGlobalGet(
-            mod, (buf.name + "$future").c_str(), BinaryenTypeFloat64());
-
-        buf_updates.push_back(BinaryenStore(mod, 8, base, 8, cur_ptr,
-                                            future_val, BinaryenTypeFloat64(),
-                                            "memory"));
-
-        buf_updates.push_back(BinaryenGlobalSet(
-            mod, buf.name.c_str(),
-            BinaryenBinary(
-                mod, BinaryenRemUInt32(),
-                BinaryenBinary(mod, BinaryenAddInt32(),
-                               BinaryenGlobalGet(mod, buf.name.c_str(),
-                                                 BinaryenTypeInt32()),
-                               BinaryenConst(mod, BinaryenLiteralInt32(8))),
-                BinaryenConst(mod, BinaryenLiteralInt32(size_bytes)))));
-    }
-
-    if (buf_updates.empty()) return BinaryenNop(mod);
-    return BinaryenBlock(mod, nullptr, buf_updates.data(),
-                         static_cast<BinaryenIndex>(buf_updates.size()),
-                         BinaryenTypeNone());
-}
-
-void emit_main_loop(const IRModule &ir, BinaryenModuleRef mod) {
-    std::array<BinaryenType, 3> params = {
-        BinaryenTypeInt32(),
-        BinaryenTypeInt32(),
-        BinaryenTypeInt32(),
-    };
-    std::array<BinaryenType, 3> vars = {
-        BinaryenTypeInt32(),
-        BinaryenTypeInt32(),
-        BinaryenTypeFloat64(),
-    };
-    const BinaryenIndex BASE_PTR = 0;
-    const BinaryenIndex NUM_SAMPLES = 1;
-    const BinaryenIndex NUM_CHANNELS = 2;
-    const BinaryenIndex CHANNEL = 3;
-    const BinaryenIndex SAMPLE = 4;
-    const BinaryenIndex OUT_VAL = 5;
-
-    auto *advance_time = BinaryenGlobalSet(
-        mod, "TIME",
-        BinaryenBinary(mod, BinaryenAddFloat64(),
-                       BinaryenGlobalGet(mod, "TIME", BinaryenTypeFloat64()),
-                       BinaryenConst(mod, BinaryenLiteralFloat64(1.0))));
-
-    auto *init_channel = BinaryenLocalSet(
-        mod, CHANNEL, BinaryenConst(mod, BinaryenLiteralInt32(0)));
-
-    auto *inc_sample = BinaryenLocalSet(
-        mod, SAMPLE,
-        BinaryenBinary(mod, BinaryenAddInt32(),
-                       BinaryenLocalGet(mod, SAMPLE, BinaryenTypeInt32()),
-                       BinaryenConst(mod, BinaryenLiteralInt32(1))));
-
-    auto *br_outer = BinaryenBreak(
-        mod, "outer_loop",
-        BinaryenBinary(mod, BinaryenLtUInt32(),
-                       BinaryenLocalGet(mod, SAMPLE, BinaryenTypeInt32()),
-                       BinaryenLocalGet(mod, NUM_SAMPLES, BinaryenTypeInt32())),
-        nullptr);
-
-    auto *compute_out =
-        BinaryenLocalSet(mod, OUT_VAL,
-                         BinaryenCall(mod, ir.main_fn.c_str(), nullptr, 0,
-                                      BinaryenTypeFloat64()));
-
-    std::array<BinaryenExpressionRef, 7> outer_body = {
-        init_channel,
-        compute_out,
-        make_channel_loop(mod, BASE_PTR, NUM_SAMPLES, NUM_CHANNELS, SAMPLE,
-                          CHANNEL, OUT_VAL),
-        advance_time,
-        make_buffer_updates(mod, ir),
-        inc_sample,
-        br_outer,
-    };
-    auto *outer_block = BinaryenBlock(mod, "outer_block", outer_body.data(),
-                                      outer_body.size(), BinaryenTypeNone());
-
-    auto *init_sample = BinaryenLocalSet(
-        mod, SAMPLE, BinaryenConst(mod, BinaryenLiteralInt32(0)));
-
-    std::array<BinaryenExpressionRef, 2> body_stmts = {
-        init_sample,
-        BinaryenLoop(mod, "outer_loop", outer_block),
-    };
-    auto *body = BinaryenBlock(mod, nullptr, body_stmts.data(),
-                               body_stmts.size(), BinaryenTypeNone());
-
-    BinaryenAddFunction(mod, "main",
-                        BinaryenTypeCreate(params.data(), params.size()),
-                        BinaryenTypeNone(), vars.data(), vars.size(), body);
-    BinaryenAddFunctionExport(mod, "main", "main");
 }
 
 void import_math(BinaryenModuleRef main_mod, BinaryenModuleRef math_mod) {
@@ -572,63 +466,288 @@ void import_math(BinaryenModuleRef main_mod, BinaryenModuleRef math_mod) {
     const auto num_fns = BinaryenGetNumFunctions(math_mod);
     for (BinaryenIndex i = 0; i < num_fns; i++) {
         auto *fn = BinaryenGetFunctionByIndex(math_mod, i);
+
         const std::string int_name = BinaryenFunctionGetName(fn);
         const auto is_exp = exported.contains(int_name);
-        const std::string ext_name = is_exp ? exported.at(int_name) : int_name;
+        const auto &ext_name = is_exp ? exported.at(int_name) : int_name;
+
+        auto *fn_body = BinaryenFunctionGetBody(fn);
+        if (fn_body == nullptr) continue;
 
         const auto num_vars = BinaryenFunctionGetNumVars(fn);
         std::vector<BinaryenType> var_types(num_vars);
         for (BinaryenIndex j = 0; j < num_vars; j++)
             var_types[j] = BinaryenFunctionGetVar(fn, j);
 
-        auto *body =
-            BinaryenExpressionCopy(BinaryenFunctionGetBody(fn), main_mod);
+        auto *body = BinaryenExpressionCopy(fn_body, main_mod);
         BinaryenAddFunction(
-            main_mod, int_name.c_str(), BinaryenFunctionGetParams(fn),
+            main_mod, ext_name.c_str(), BinaryenFunctionGetParams(fn),
             BinaryenFunctionGetResults(fn), var_types.data(), num_vars, body);
+    }
+}
 
-        if (is_exp && ext_name.starts_with("wasmwasm_")) {
-            auto *body2 =
-                BinaryenExpressionCopy(BinaryenFunctionGetBody(fn), main_mod);
-            BinaryenAddFunction(main_mod, ext_name.c_str(),
-                                BinaryenFunctionGetParams(fn),
-                                BinaryenFunctionGetResults(fn),
-                                var_types.data(), num_vars, body2);
+struct FnCtxVec {
+    BinaryenModuleRef mod{};
+    double sample_rate{};
+    const IRModule *ir{};
+    std::unordered_map<std::string, BinaryenIndex> idx;
+    std::vector<BinaryenType> var_types;
+
+    void ensure_var(const std::string &name) {
+        if (!idx.contains(name)) {
+            idx[name] = static_cast<BinaryenIndex>(var_types.size());
+            var_types.push_back(BinaryenTypeVec128());
         }
     }
+
+    auto get(const IRValue &v) -> BinaryenExpressionRef {
+        return std::visit(
+            [&](const auto &x) -> BinaryenExpressionRef {
+                using T = std::decay_t<decltype(x)>;
+                if constexpr (std::is_same_v<T, IRLiteral>)
+                    return splat_f64(mod, x.value);
+                else
+                    return BinaryenLocalGet(mod, idx.at(x.name),
+                                            BinaryenTypeVec128());
+            },
+            v);
+    }
+
+    auto set(const std::string &name, BinaryenExpressionRef val)
+        -> BinaryenExpressionRef {
+        return BinaryenLocalSet(mod, idx.at(name), val);
+    }
+};
+
+void prescan_vec(FnCtxVec &ctx, const std::vector<IRInstr> &body) {
+    for (const auto &instr : body) {
+        std::visit(
+            [&](const auto &i) -> auto {
+                using T = std::decay_t<decltype(i)>;
+                if constexpr (std::is_same_v<T, IRBinOp>)
+                    ctx.ensure_var(i.result);
+                if constexpr (std::is_same_v<T, IRUnaryNeg>)
+                    ctx.ensure_var(i.result);
+                if constexpr (std::is_same_v<T, IRAssign>)
+                    ctx.ensure_var(i.result);
+                if constexpr (std::is_same_v<T, IRCall>)
+                    if (!i.result.empty()) ctx.ensure_var(i.result);
+                if constexpr (std::is_same_v<T, IRBufferRead>)
+                    ctx.ensure_var(i.result);
+                if constexpr (std::is_same_v<T, IRGlobalRead>)
+                    ctx.ensure_var(i.result);
+            },
+            instr);
+    }
+}
+
+auto emit_body_vec(FnCtxVec &ctx, const std::vector<IRInstr> &body)
+    -> BinaryenExpressionRef {
+    std::vector<BinaryenExpressionRef> stmts;
+
+    for (const auto &instr : body) {
+        std::visit(
+            [&](const auto &i) -> auto {
+                using T = std::decay_t<decltype(i)>;
+
+                if constexpr (std::is_same_v<T, IRBinOp>) {
+                    stmts.push_back(ctx.set(
+                        i.result,
+                        BinaryenBinary(ctx.mod, to_bop_vec(i.op),
+                                       ctx.get(i.left), ctx.get(i.right))));
+                }
+                if constexpr (std::is_same_v<T, IRUnaryNeg>) {
+                    stmts.push_back(ctx.set(
+                        i.result, BinaryenUnary(ctx.mod, BinaryenNegVecF64x2(),
+                                                ctx.get(i.operand))));
+                }
+                if constexpr (std::is_same_v<T, IRAssign>) {
+                    stmts.push_back(ctx.set(i.result, ctx.get(i.value)));
+                }
+                if constexpr (std::is_same_v<T, IRCall>) {
+                    const auto vec_callee = i.callee + "_f64x2";
+                    std::vector<BinaryenExpressionRef> args;
+                    args.reserve(i.args.size());
+                    for (const auto &a : i.args) args.push_back(ctx.get(a));
+                    const BinaryenType ret_type = i.result.empty()
+                                                      ? BinaryenTypeNone()
+                                                      : BinaryenTypeVec128();
+                    auto *call = BinaryenCall(
+                        ctx.mod, vec_callee.c_str(), args.data(),
+                        static_cast<BinaryenIndex>(args.size()), ret_type);
+                    if (i.result.empty())
+                        stmts.push_back(call);
+                    else
+                        stmts.push_back(ctx.set(i.result, call));
+                }
+                if constexpr (std::is_same_v<T, IRBufferRead>) {
+                    const auto base = ctx.ir->buffer_base(i.buffer);
+                    const auto pname = pfx(*ctx.ir, i.buffer);
+                    auto *ptr = BinaryenGlobalGet(ctx.mod, pname.c_str(),
+                                                  BinaryenTypeInt32());
+                    stmts.push_back(
+                        ctx.set(i.result, BinaryenLoad(ctx.mod, 16, false, base,
+                                                       8, BinaryenTypeVec128(),
+                                                       ptr, "memory")));
+                }
+                if constexpr (std::is_same_v<T, IROutputWrite>) {
+                    const auto gname =
+                        pfx(*ctx.ir, "OUT$" + std::to_string(i.index) + "_vec");
+                    stmts.push_back(BinaryenGlobalSet(ctx.mod, gname.c_str(),
+                                                      ctx.get(i.value)));
+                }
+                if constexpr (std::is_same_v<T, IRBufferWrite>) {
+                    const auto fname = pfx(*ctx.ir, i.buffer + "$future_vec");
+                    stmts.push_back(BinaryenGlobalSet(ctx.mod, fname.c_str(),
+                                                      ctx.get(i.value)));
+                }
+                if constexpr (std::is_same_v<T, IRGlobalRead>) {
+                    BinaryenExpressionRef expr = nullptr;
+                    if (i.name == "TIME") {
+                        auto *t0 = BinaryenBinary(
+                            ctx.mod, BinaryenDivFloat64(),
+                            BinaryenGlobalGet(ctx.mod, "TIME",
+                                              BinaryenTypeFloat64()),
+                            BinaryenConst(ctx.mod, BinaryenLiteralFloat64(
+                                                       ctx.sample_rate)));
+                        auto *t1 = BinaryenBinary(
+                            ctx.mod, BinaryenDivFloat64(),
+                            BinaryenBinary(
+                                ctx.mod, BinaryenAddFloat64(),
+                                BinaryenGlobalGet(ctx.mod, "TIME",
+                                                  BinaryenTypeFloat64()),
+                                BinaryenConst(ctx.mod,
+                                              BinaryenLiteralFloat64(1.0))),
+                            BinaryenConst(ctx.mod, BinaryenLiteralFloat64(
+                                                       ctx.sample_rate)));
+                        auto *s =
+                            BinaryenUnary(ctx.mod, BinaryenSplatVecF64x2(), t0);
+                        expr = BinaryenSIMDReplace(
+                            ctx.mod, BinaryenReplaceLaneVecF64x2(), s, 1, t1);
+                    } else if (i.name == "SAMPLE_RATE") {
+                        expr = splat_f64(ctx.mod, ctx.sample_rate);
+                    } else {
+                        auto *g = BinaryenGlobalGet(ctx.mod, i.name.c_str(),
+                                                    to_btype(i.type));
+                        expr =
+                            BinaryenUnary(ctx.mod, BinaryenSplatVecF64x2(), g);
+                    }
+                    stmts.push_back(ctx.set(i.result, expr));
+                }
+            },
+            instr);
+    }
+
+    if (stmts.empty()) return BinaryenNop(ctx.mod);
+    return BinaryenBlock(ctx.mod, nullptr, stmts.data(),
+                         static_cast<BinaryenIndex>(stmts.size()),
+                         BinaryenTypeNone());
+}
+
+void emit_function_vec(const IRFunction &fn, BinaryenModuleRef mod,
+                       double sample_rate, const IRModule &ir) {
+    FnCtxVec ctx{.mod = mod, .sample_rate = sample_rate, .ir = &ir};
+    prescan_vec(ctx, fn.body);
+    auto *body = emit_body_vec(ctx, fn.body);
+    const auto wasm_name = pfx(ir, fn.name + "_vec");
+    BinaryenAddFunction(mod, wasm_name.c_str(), BinaryenTypeCreate(nullptr, 0),
+                        BinaryenTypeNone(), ctx.var_types.data(),
+                        static_cast<BinaryenIndex>(ctx.var_types.size()), body);
+}
+
+auto is_main_vec_eligible(const IRModule &ir) -> bool {
+    if (!std::ranges::all_of(ir.buffers, [](const IRBufferDecl &b) -> bool {
+            return b.size_elements >= 2;
+        }))
+        return false;
+    for (const auto &fn : ir.functions) {
+        if (fn.name != ir.main_fn) continue;
+        for (const auto &instr : fn.body) {
+            if (std::holds_alternative<IRBufferReadDelayed>(instr))
+                return false;
+            if (std::holds_alternative<IRInputRead>(instr)) return false;
+            if (const auto *call = std::get_if<IRCall>(&instr))
+                if (!call->callee.starts_with("wasmwasm_")) return false;
+        }
+        return true;
+    }
+    return false;
 }
 
 } // namespace
 
-auto IRModule::buffer_base(const std::string &name) const -> uint32_t {
-    auto addr = buffer_memory_start;
+auto IRModule::buffer_base(const std::string &buf_name) const -> uint32_t {
+    auto addr = memory_base;
     for (const auto &b : buffers) {
-        if (b.name == name) return addr;
+        if (b.name == buf_name) return addr;
         addr += static_cast<uint32_t>(b.size_elements * 8);
     }
-    throw std::runtime_error("Unknown buffer: " + name);
+    throw std::runtime_error("Unknown buffer: " + buf_name);
+}
+
+auto IRModule::total_buffer_bytes() const -> uint32_t {
+    uint32_t total = 0;
+    for (const auto &b : buffers)
+        total += static_cast<uint32_t>(b.size_elements * 8);
+    return total;
 }
 
 void emit_ir(const IRModule &ir, BinaryenModuleRef mod,
              BinaryenModuleRef math_module, double sample_rate) {
     BinaryenModuleSetFeatures(mod, BinaryenFeatureAll());
-    BinaryenAddMemoryImport(mod, "memory", "env", "memory", 0);
+    if (!BinaryenHasMemory(mod))
+        BinaryenAddMemoryImport(mod, "memory", "env", "memory", 0);
 
-    import_math(mod, math_module);
+    if (BinaryenGetFunction(mod, "wasmwasm_sin") == nullptr)
+        import_math(mod, math_module);
 
-    BinaryenAddGlobal(mod, "TIME", BinaryenTypeFloat64(), true,
-                      BinaryenConst(mod, BinaryenLiteralFloat64(0.0)));
+    if (BinaryenGetGlobal(mod, "TIME") == nullptr)
+        BinaryenAddGlobal(mod, "TIME", BinaryenTypeFloat64(), true,
+                          BinaryenConst(mod, BinaryenLiteralFloat64(0.0)));
 
     for (const auto &fn : ir.functions) emit_function(fn, mod, sample_rate, ir);
 
     for (const auto &buf : ir.buffers) {
-        BinaryenAddGlobal(mod, buf.name.c_str(), BinaryenTypeInt32(), true,
+        const auto bname = pfx(ir, buf.name);
+        const auto fname = pfx(ir, buf.name + "$future");
+        BinaryenAddGlobal(mod, bname.c_str(), BinaryenTypeInt32(), true,
                           BinaryenConst(mod, BinaryenLiteralInt32(0)));
-        BinaryenAddGlobal(mod, (buf.name + "$future").c_str(),
-                          BinaryenTypeFloat64(), true,
+        BinaryenAddGlobal(mod, fname.c_str(), BinaryenTypeFloat64(), true,
                           BinaryenConst(mod, BinaryenLiteralFloat64(0.0)));
     }
 
+    for (size_t i = 0; i < ir.num_inputs; ++i) {
+        const auto iname = pfx(ir, "IN$" + std::to_string(i));
+        BinaryenAddGlobal(mod, iname.c_str(), BinaryenTypeFloat64(), true,
+                          BinaryenConst(mod, BinaryenLiteralFloat64(0.0)));
+    }
+    for (size_t i = 0; i < ir.num_outputs; ++i) {
+        const auto oname = pfx(ir, "OUT$" + std::to_string(i));
+        BinaryenAddGlobal(mod, oname.c_str(), BinaryenTypeFloat64(), true,
+                          BinaryenConst(mod, BinaryenLiteralFloat64(0.0)));
+    }
+
+    if (is_main_vec_eligible(ir)) {
+        std::array<uint8_t, 16> zeros = {};
+        for (const auto &buf : ir.buffers) {
+            const auto fname = pfx(ir, buf.name + "$future_vec");
+            BinaryenAddGlobal(
+                mod, fname.c_str(), BinaryenTypeVec128(), true,
+                BinaryenConst(mod, BinaryenLiteralVec128(zeros.data())));
+        }
+        for (size_t i = 0; i < ir.num_outputs; ++i) {
+            const auto oname = pfx(ir, "OUT$" + std::to_string(i) + "_vec");
+            BinaryenAddGlobal(
+                mod, oname.c_str(), BinaryenTypeVec128(), true,
+                BinaryenConst(mod, BinaryenLiteralVec128(zeros.data())));
+        }
+        for (const auto &fn : ir.functions) {
+            if (fn.name == ir.main_fn) {
+                emit_function_vec(fn, mod, sample_rate, ir);
+                break;
+            }
+        }
+    }
+
     emit_init_buffers(ir, mod);
-    emit_main_loop(ir, mod);
 }

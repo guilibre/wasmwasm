@@ -315,7 +315,7 @@ auto lsp_tokens(const std::string &src) -> std::string {
     return json;
 }
 
-auto lsp_completions(const std::string &src, int /*line*/, int /*col*/)
+auto lsp_completions(const std::string &src, size_t /*line*/, size_t /*col*/)
     -> std::string {
     struct BuiltinItem {
         const char *label;
@@ -373,7 +373,7 @@ auto lsp_completions(const std::string &src, int /*line*/, int /*col*/)
     return json;
 }
 
-auto lsp_hover(const std::string &src, int line, int col) -> std::string {
+auto lsp_hover(const std::string &src, size_t line, size_t col) -> std::string {
     const Tokenizer main_tok(src);
     Parser main_parser(main_tok);
     const auto main_result = main_parser.parse_code();
@@ -386,10 +386,7 @@ auto lsp_hover(const std::string &src, int line, int col) -> std::string {
         infer_expr(*main_result, env, subst, gen);
     } catch (...) { return "null"; }
 
-    const auto uline = static_cast<size_t>(line);
-    const auto ucol = static_cast<size_t>(col);
-
-    const auto *hit = find_node_at(*main_result, uline, ucol);
+    const auto *hit = find_node_at(*main_result, line, col);
     if ((hit == nullptr) || !hit->type) return "null";
 
     const auto type_str = type_to_string(hit->type);

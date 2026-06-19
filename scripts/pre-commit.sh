@@ -6,7 +6,7 @@ ROOT="$(git rev-parse --show-toplevel)"
 cd "$ROOT"
 
 # STAGED_CPP=$(git ls-files | grep -E '\.(cpp|hpp|h|c)$' || true)
-STAGED_CPP=$(git diff --cached --name-only | { grep -E '\.(cpp|hpp|h|c)$' || true; })
+STAGED_CPP=$(git diff --cached --name-only --diff-filter=ACMR | { grep -E '\.(cpp|hpp|h|c)$' || true; })
 
 if [ -n "$STAGED_CPP" ]; then
 	while IFS= read -r file; do
@@ -24,7 +24,7 @@ if [ -n "$STAGED_CPP" ]; then
 fi
 
 # STAGED_FRONTEND=$(git ls-files | grep -E '^frontend/.*\.(ts|html|scss|css|json)$' || true)
-STAGED_FRONTEND=$(git diff --cached --name-only | { grep -E '^frontend/.*\.(ts|html|scss|css|json)$' || true; })
+STAGED_FRONTEND=$(git diff --cached --name-only --diff-filter=ACMR | { grep -E '^frontend/.*\.(tsx|ts|html|scss|css|json)$' || true; })
 
 if [ -n "$STAGED_FRONTEND" ]; then
 	FRONTEND_DIR="$ROOT/frontend"

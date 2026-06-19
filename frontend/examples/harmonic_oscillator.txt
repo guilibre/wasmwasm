@@ -19,4 +19,4 @@ xb <- x
 yb <- y
 
 #always clip so your ears don't bleed
-OUT <- 0.2 * clip x
+OUT[0] <- 0.2 * clip x

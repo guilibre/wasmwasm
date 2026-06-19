@@ -13,7 +13,6 @@ auto make_builtin_env()
         {"PI", float_type},
         {"TIME", float_type},
         {"SAMPLE_RATE", float_type},
-        {"OUT", float_type},
         {"cos", float_to_float},
         {"sin", float_to_float},
         {"sign", float_to_float},

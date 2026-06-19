@@ -37,7 +37,7 @@ auto ir_type_of(const TypePtr &t) -> IRType {
 struct FnInfo {
     std::vector<std::string> free_vars;
     IRType return_type{IRType::Void};
-    int arity{0};
+    size_t arity{0};
 };
 
 struct Lowerer {
@@ -48,13 +48,13 @@ struct Lowerer {
     std::unordered_set<std::string> bufs;
     std::unordered_map<std::string, IRType> locals;
 
-    int tmp_n = 0;
+    size_t tmp_n = 0;
 
     auto tmp() -> std::string { return "$t" + std::to_string(tmp_n++); }
     void emit(IRInstr i) const { cur->emplace_back(std::move(i)); }
     void define(const std::string &name, IRType type) { locals[name] = type; }
 
-    auto is_special(const std::string &name) const -> bool {
+    [[nodiscard]] auto is_special(const std::string &name) const -> bool {
         return std::ranges::contains(language_globals, name) ||
                std::ranges::contains(math_builtins, name) ||
                fns.contains(name) || bufs.contains(name);
@@ -128,6 +128,9 @@ struct Lowerer {
                 if constexpr (std::is_same_v<T, BufferRead>) return {};
                 if constexpr (std::is_same_v<T, BufferWrite>)
                     return free_vars_of(node.value, bound);
+                if constexpr (std::is_same_v<T, InputRead>) return {};
+                if constexpr (std::is_same_v<T, OutputWrite>)
+                    return free_vars_of(node.value, bound);
 
                 return {};
             },
@@ -155,7 +158,7 @@ struct Lowerer {
         fns[name] = FnInfo{
             .free_vars = fv_vec,
             .return_type = ret_type,
-            .arity = static_cast<int>(params.size()),
+            .arity = params.size(),
         };
 
         IRFunction fn;
@@ -237,18 +240,23 @@ struct Lowerer {
                     const auto val = lower_expr(node.value);
                     if (!val)
                         throw std::runtime_error("assigning void to buffer");
-                    if (target == "OUT") {
-                        emit(IRAssign{
-                            .result = "OUT",
-                            .value = *val,
-                            .type = IRType::Float,
-                        });
-                    } else {
-                        if (!bufs.contains(target))
-                            throw std::runtime_error(target +
-                                                     " is not a buffer");
-                        emit(IRBufferWrite{.buffer = target, .value = *val});
-                    }
+                    if (!bufs.contains(target))
+                        throw std::runtime_error(target + " is not a buffer");
+                    emit(IRBufferWrite{.buffer = target, .value = *val});
+                    return std::nullopt;
+                }
+
+                if constexpr (std::is_same_v<T, InputRead>) {
+                    auto r = tmp();
+                    emit(IRInputRead{.result = r, .index = node.index});
+                    return IRLocalRef{r};
+                }
+
+                if constexpr (std::is_same_v<T, OutputWrite>) {
+                    const auto val = lower_expr(node.value);
+                    if (!val)
+                        throw std::runtime_error("assigning void to OUT[n]");
+                    emit(IROutputWrite{.index = node.index, .value = *val});
                     return std::nullopt;
                 }
 
@@ -395,33 +403,37 @@ struct Lowerer {
     void lower_main(const ExprPtr &main_ast) {
         IRFunction fn;
         fn.name = "main$body";
-        fn.return_type = IRType::Float;
+        fn.return_type = IRType::Void;
 
         auto *saved_cur = cur;
         cur = &fn.body;
 
-        define("OUT", IRType::Float);
-        emit(IRAssign{
-            .result = "OUT",
-            .value = IRLiteral{0.0},
-            .type = IRType::Float,
-        });
-
         lower_expr(main_ast);
-
-        emit(IRReturn{IRLocalRef{"OUT"}});
 
         cur = saved_cur;
         mod.functions.emplace_back(std::move(fn));
         mod.main_fn = "main$body";
     }
+
+    void compute_arity() {
+        for (const auto &fn : mod.functions) {
+            for (const auto &instr : fn.body) {
+                if (const auto *ir = std::get_if<IRInputRead>(&instr))
+                    mod.num_inputs = std::max(mod.num_inputs, ir->index + 1);
+                if (const auto *ow = std::get_if<IROutputWrite>(&instr))
+                    mod.num_outputs = std::max(mod.num_outputs, ow->index + 1);
+            }
+        }
+    }
 };
 
 } // namespace
 
-auto lower(const ExprPtr &program) -> IRModule {
+auto lower(const ExprPtr &program, const std::string &module_name) -> IRModule {
     Lowerer l;
+    l.mod.name = module_name;
     l.mod.init_fn = "init";
     l.lower_main(program);
+    l.compute_arity();
     return std::move(l.mod);
 }

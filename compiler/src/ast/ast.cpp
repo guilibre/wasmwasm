@@ -128,6 +128,21 @@ auto ASTPrinter::dispatch(const ExprPtr &expr, Variable &var, size_t indent)
     return out.str();
 }
 
+auto ASTPrinter::dispatch(const ExprPtr &expr, InputRead &ir, size_t indent)
+    -> std::string {
+    return indent_str(indent) +
+           attach_type("IN[" + std::to_string(ir.index) + "]", expr);
+}
+
+auto ASTPrinter::dispatch(const ExprPtr &expr, OutputWrite &ow, size_t indent)
+    -> std::string {
+    std::ostringstream out;
+    out << indent_str(indent)
+        << attach_type("OUT[" + std::to_string(ow.index) + "]", expr);
+    out << print(ow.value, indent + 2);
+    return out.str();
+}
+
 auto ASTPrinter::tokenkind_to_string(TokenKind kind) -> std::string {
     switch (kind) {
     case TokenKind::Eq:

@@ -8,8 +8,8 @@
 #include <variant>
 #include <vector>
 
-static constexpr int buffer_size_min = 1;
-static constexpr int buffer_size_max = 1024;
+static constexpr size_t buffer_size_min = 1;
+static constexpr size_t buffer_size_max = 1024;
 
 Parser::Parser(Tokenizer tokenizer)
     : tokenizer(tokenizer), current(this->tokenizer.next()) {}
@@ -47,6 +47,42 @@ auto Parser::parse_code() -> ParseResult {
 }
 
 auto Parser::parse_expression() -> ParseResult {
+    if (match(TokenKind::Out)) {
+        advance();
+        if (!match(TokenKind::LBracket))
+            return std::unexpected(ParseError{
+                .msg = "Expected '[' after OUT",
+                .line = current.line,
+                .col = current.column,
+            });
+        advance();
+        if (!match(TokenKind::Number))
+            return std::unexpected(ParseError{
+                .msg = "Expected integer index in OUT[n]",
+                .line = current.line,
+                .col = current.column,
+            });
+        const size_t index = std::stoul(current.lexeme);
+        advance();
+        if (!match(TokenKind::RBracket))
+            return std::unexpected(ParseError{
+                .msg = "Expected ']' after OUT index",
+                .line = current.line,
+                .col = current.column,
+            });
+        advance();
+        if (!match(TokenKind::LeftArrow))
+            return std::unexpected(ParseError{
+                .msg = "Expected '<-' after OUT[n]",
+                .line = current.line,
+                .col = current.column,
+            });
+        advance();
+        auto rhs = parse_additive();
+        if (!rhs) return rhs;
+        return Expr::make<OutputWrite>(index, std::move(*rhs));
+    }
+
     auto expr = parse_additive();
     if (!expr) return std::unexpected(expr.error());
 
@@ -153,6 +189,33 @@ auto Parser::parse_application() -> ParseResult {
 
 auto Parser::parse_factor() -> ParseResult {
     const auto tok = current;
+
+    if (match(TokenKind::In)) {
+        advance();
+        if (!match(TokenKind::LBracket))
+            return std::unexpected(ParseError{
+                .msg = "Expected '[' after IN",
+                .line = current.line,
+                .col = current.column,
+            });
+        advance();
+        if (!match(TokenKind::Number))
+            return std::unexpected(ParseError{
+                .msg = "Expected integer index in IN[n]",
+                .line = current.line,
+                .col = current.column,
+            });
+        const size_t index = std::stoul(current.lexeme);
+        advance();
+        if (!match(TokenKind::RBracket))
+            return std::unexpected(ParseError{
+                .msg = "Expected ']' after IN index",
+                .line = current.line,
+                .col = current.column,
+            });
+        advance();
+        return Expr::make<InputRead>(index);
+    }
 
     if (match(TokenKind::At)) {
         advance();
@@ -290,7 +353,7 @@ auto Parser::parse_buffer_ctor() -> ParseResult {
             .col = current.column,
         });
     const auto size = static_cast<size_t>(std::clamp(
-        std::stoi(current.lexeme), buffer_size_min, buffer_size_max));
+        std::stoul(current.lexeme), buffer_size_min, buffer_size_max));
     advance();
 
     if (!match(TokenKind::LBrace))

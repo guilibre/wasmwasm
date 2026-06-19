@@ -74,6 +74,15 @@ struct Variable {
     Token name;
 };
 
+struct InputRead {
+    size_t index;
+};
+
+struct OutputWrite {
+    size_t index;
+    ExprPtr value;
+};
+
 struct SourcePos {
     size_t line = 0;
     size_t col = 0;
@@ -83,7 +92,8 @@ struct Expr {
 
     using ExprNode =
         std::variant<Bind, CodeBlock, BinaryOp, BufferCtor, BufferRead,
-                     BufferWrite, Call, Lambda, Literal, UnaryOp, Variable>;
+                     BufferWrite, Call, InputRead, Lambda, Literal, OutputWrite,
+                     UnaryOp, Variable>;
 
     ExprNode node;
     TypePtr type;
@@ -123,6 +133,10 @@ class ASTPrinter {
     auto dispatch(const ExprPtr &expr, UnaryOp &op, size_t indent)
         -> std::string;
     auto dispatch(const ExprPtr &expr, Variable &var, size_t indent)
+        -> std::string;
+    auto dispatch(const ExprPtr &expr, InputRead &ir, size_t indent)
+        -> std::string;
+    auto dispatch(const ExprPtr &expr, OutputWrite &ow, size_t indent)
         -> std::string;
 
     static auto tokenkind_to_string(TokenKind kind) -> std::string;
