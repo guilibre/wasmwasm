@@ -65,7 +65,7 @@ struct IRGlobalRead {
     IRType type;
 };
 
-struct IRIfBody; // forward — defined after IRInstr to break circular dependency
+struct IRIfBody;
 
 struct IRIf {
     IRValue condition;

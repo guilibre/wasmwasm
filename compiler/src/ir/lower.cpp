@@ -274,13 +274,16 @@ struct Lowerer {
                     const auto val = lower_expr(node.expr);
                     if (!val) throw std::runtime_error("unary op on void");
                     if (node.op == Operation::Not) {
-                        // !a = 1 - clip(a)
                         auto ca = tmp();
                         emit(
                             IRCall{ca, "wasmwasm_clip", {*val}, IRType::Float});
                         auto r = tmp();
-                        emit(IRBinOp{r, Operation::Sub, IRLiteral{1.0},
-                                     IRLocalRef{ca}});
+                        emit(IRBinOp{
+                            .result = r,
+                            .op = Operation::Sub,
+                            .left = IRLiteral{1.0},
+                            .right = IRLocalRef{ca},
+                        });
                         return IRLocalRef{r};
                     }
                     auto r = tmp();
@@ -293,31 +296,45 @@ struct Lowerer {
                     const auto r = lower_expr(node.right);
                     if (!l || !r) throw std::runtime_error("binary op on void");
                     if (node.op == Operation::And) {
-                        // a & b = clip(a) * clip(b)
                         auto ca = tmp();
                         emit(IRCall{ca, "wasmwasm_clip", {*l}, IRType::Float});
                         auto cb = tmp();
                         emit(IRCall{cb, "wasmwasm_clip", {*r}, IRType::Float});
                         auto res = tmp();
-                        emit(IRBinOp{res, Operation::Mul, IRLocalRef{ca},
-                                     IRLocalRef{cb}});
+                        emit(IRBinOp{
+                            .result = res,
+                            .op = Operation::Mul,
+                            .left = IRLocalRef{ca},
+                            .right = IRLocalRef{cb},
+                        });
                         return IRLocalRef{res};
                     }
                     if (node.op == Operation::Or) {
-                        // a | b = clip(a)*(1-clip(b)) + clip(b)
                         auto ca = tmp();
                         emit(IRCall{ca, "wasmwasm_clip", {*l}, IRType::Float});
                         auto cb = tmp();
                         emit(IRCall{cb, "wasmwasm_clip", {*r}, IRType::Float});
                         auto one_minus_cb = tmp();
-                        emit(IRBinOp{one_minus_cb, Operation::Sub,
-                                     IRLiteral{1.0}, IRLocalRef{cb}});
+                        emit(IRBinOp{
+                            .result = one_minus_cb,
+                            .op = Operation::Sub,
+                            .left = IRLiteral{1.0},
+                            .right = IRLocalRef{cb},
+                        });
                         auto prod = tmp();
-                        emit(IRBinOp{prod, Operation::Mul, IRLocalRef{ca},
-                                     IRLocalRef{one_minus_cb}});
+                        emit(IRBinOp{
+                            .result = prod,
+                            .op = Operation::Mul,
+                            .left = IRLocalRef{ca},
+                            .right = IRLocalRef{one_minus_cb},
+                        });
                         auto res = tmp();
-                        emit(IRBinOp{res, Operation::Add, IRLocalRef{prod},
-                                     IRLocalRef{cb}});
+                        emit(IRBinOp{
+                            .result = res,
+                            .op = Operation::Add,
+                            .left = IRLocalRef{prod},
+                            .right = IRLocalRef{cb},
+                        });
                         return IRLocalRef{res};
                     }
                     auto res = tmp();
@@ -443,7 +460,8 @@ struct Lowerer {
                     if (!cond)
                         throw std::runtime_error(
                             "conditional condition is void");
-                    std::vector<IRInstr> then_instrs, else_instrs;
+                    std::vector<IRInstr> then_instrs;
+                    std::vector<IRInstr> else_instrs;
                     auto *saved = cur;
                     cur = &then_instrs;
                     lower_expr(node.then_branch);

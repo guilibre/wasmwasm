@@ -8,9 +8,9 @@ import type {
     Edge,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { BlockNode } from './BlockNode';
-import { CaptureNode } from './CaptureNode';
-import { DacNode } from './DacNode';
+import { BlockNode } from './block_node';
+import { CaptureNode } from './capture_node';
+import { DacNode } from './dac_node';
 import type { usePatchStore } from './use_patch_store';
 
 const NODE_TYPES = {

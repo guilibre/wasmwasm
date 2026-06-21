@@ -3,7 +3,8 @@ import { ReactFlowProvider } from '@xyflow/react';
 import workletUrl from '../audio/processor.worklet.js?url';
 import WasmWasm from '../audio/compiler';
 import Editor, { type EditorHandle } from './editor';
-import { PatchEditor } from '../patch/PatchEditor';
+import { Sidebar } from './sidebar';
+import { PatchEditor } from '../patch/patch_editor';
 import { usePatchStore } from '../patch/use_patch_store';
 import { patch_to_json } from '../patch/patch_to_json';
 import { patch_to_hash, hash_to_patch } from '../patch/share';
@@ -13,6 +14,9 @@ export default function App() {
     const audioContextRef = useRef<AudioContext | null>(null);
     const workletNodeRef = useRef<AudioWorkletNode | null>(null);
     const micSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
+    const analyser_l_ref = useRef<AnalyserNode | null>(null);
+    const analyser_r_ref = useRef<AnalyserNode | null>(null);
+    const [analysers, set_analysers] = useState<{ l: AnalyserNode; r: AnalyserNode } | null>(null);
     const [is_playing, set_is_playing] = useState(false);
     const [error, set_error] = useState<string | null>(null);
     const import_ref = useRef<HTMLInputElement>(null);
@@ -111,10 +115,29 @@ export default function App() {
                 numberOfOutputs: 1,
                 outputChannelCount: [2],
             });
+
+            const splitter = context.createChannelSplitter(2);
+            const al = context.createAnalyser();
+            const ar = context.createAnalyser();
+            al.fftSize = 2048;
+            ar.fftSize = 2048;
+            al.smoothingTimeConstant = 0.75;
+            ar.smoothingTimeConstant = 0.75;
+            node.connect(splitter);
+            splitter.connect(al, 0);
+            splitter.connect(ar, 1);
             node.connect(context.destination);
+
+            analyser_l_ref.current = al;
+            analyser_r_ref.current = ar;
+            set_analysers({ l: al, r: ar });
+
             audioContextRef.current = context;
             workletNodeRef.current = node;
         }
+
+        if (analyser_l_ref.current && analyser_r_ref.current)
+            set_analysers({ l: analyser_l_ref.current, r: analyser_r_ref.current });
 
         let wasm: Uint8Array;
         try {
@@ -142,6 +165,7 @@ export default function App() {
         }
         await audioContextRef.current?.suspend();
         set_is_playing(false);
+        set_analysers(null);
     };
 
     return (
@@ -170,6 +194,7 @@ export default function App() {
                 <ReactFlowProvider>
                     <PatchEditor store={store} />
                 </ReactFlowProvider>
+                <Sidebar analyser_l={analysers?.l ?? null} analyser_r={analysers?.r ?? null} />
             </div>
 
             {selected_block && (

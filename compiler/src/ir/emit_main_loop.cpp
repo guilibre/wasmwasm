@@ -14,70 +14,6 @@ auto pfx(const IRModule &ir, const std::string &s) -> std::string {
     return ir.name + "$" + s;
 }
 
-auto make_buffer_updates_for(BinaryenModuleRef mod, const IRModule &ir)
-    -> BinaryenExpressionRef {
-    std::vector<BinaryenExpressionRef> updates;
-    for (const auto &buf : ir.buffers) {
-        const auto base = ir.buffer_base(buf.name);
-        const auto size_bytes = static_cast<int32_t>(buf.size_elements * 8);
-        const auto bname = pfx(ir, buf.name);
-        const auto fname = pfx(ir, buf.name + "$future");
-
-        auto *cur_ptr =
-            BinaryenGlobalGet(mod, bname.c_str(), BinaryenTypeInt32());
-        auto *future_val =
-            BinaryenGlobalGet(mod, fname.c_str(), BinaryenTypeFloat64());
-
-        updates.push_back(BinaryenStore(mod, 8, base, 8, cur_ptr, future_val,
-                                        BinaryenTypeFloat64(), "memory"));
-        updates.push_back(BinaryenGlobalSet(
-            mod, bname.c_str(),
-            BinaryenBinary(
-                mod, BinaryenRemUInt32(),
-                BinaryenBinary(
-                    mod, BinaryenAddInt32(),
-                    BinaryenGlobalGet(mod, bname.c_str(), BinaryenTypeInt32()),
-                    BinaryenConst(mod, BinaryenLiteralInt32(8))),
-                BinaryenConst(mod, BinaryenLiteralInt32(size_bytes)))));
-    }
-    if (updates.empty()) return BinaryenNop(mod);
-    return BinaryenBlock(mod, nullptr, updates.data(),
-                         static_cast<BinaryenIndex>(updates.size()),
-                         BinaryenTypeNone());
-}
-
-auto make_buffer_updates_for_vec(BinaryenModuleRef mod, const IRModule &ir)
-    -> BinaryenExpressionRef {
-    std::vector<BinaryenExpressionRef> updates;
-    for (const auto &buf : ir.buffers) {
-        const auto base = ir.buffer_base(buf.name);
-        const auto size_bytes = static_cast<int32_t>(buf.size_elements * 8);
-        const auto bname = pfx(ir, buf.name);
-        const auto fname = pfx(ir, buf.name + "$future_vec");
-
-        auto *cur_ptr =
-            BinaryenGlobalGet(mod, bname.c_str(), BinaryenTypeInt32());
-        auto *future_val =
-            BinaryenGlobalGet(mod, fname.c_str(), BinaryenTypeVec128());
-
-        updates.push_back(BinaryenStore(mod, 16, base, 8, cur_ptr, future_val,
-                                        BinaryenTypeVec128(), "memory"));
-        updates.push_back(BinaryenGlobalSet(
-            mod, bname.c_str(),
-            BinaryenBinary(
-                mod, BinaryenRemUInt32(),
-                BinaryenBinary(
-                    mod, BinaryenAddInt32(),
-                    BinaryenGlobalGet(mod, bname.c_str(), BinaryenTypeInt32()),
-                    BinaryenConst(mod, BinaryenLiteralInt32(16))),
-                BinaryenConst(mod, BinaryenLiteralInt32(size_bytes)))));
-    }
-    if (updates.empty()) return BinaryenNop(mod);
-    return BinaryenBlock(mod, nullptr, updates.data(),
-                         static_cast<BinaryenIndex>(updates.size()),
-                         BinaryenTypeNone());
-}
-
 auto resolve_source(BinaryenModuleRef mod, const std::string &src,
                     BinaryenIndex in_base, BinaryenIndex sample)
     -> BinaryenExpressionRef {
@@ -246,12 +182,6 @@ void emit_main_loop(const RoutingGraph &graph, BinaryenModuleRef mod) {
                 BinaryenGlobalGet(mod, "TIME", BinaryenTypeFloat64()),
                 BinaryenConst(mod, BinaryenLiteralFloat64(1.0)))));
 
-        for (const auto &route : graph.modules) {
-            auto *upd = make_buffer_updates_for(mod, route.ir);
-            if (BinaryenExpressionGetId(upd) != BinaryenNopId())
-                stmts.push_back(upd);
-        }
-
         stmts.push_back(BinaryenLocalSet(
             mod, SAMPLE,
             BinaryenBinary(mod, BinaryenAddInt32(),
@@ -318,12 +248,6 @@ void emit_main_loop(const RoutingGraph &graph, BinaryenModuleRef mod) {
                 mod, BinaryenAddFloat64(),
                 BinaryenGlobalGet(mod, "TIME", BinaryenTypeFloat64()),
                 BinaryenConst(mod, BinaryenLiteralFloat64(2.0)))));
-
-        for (const auto &route : graph.modules) {
-            auto *upd = make_buffer_updates_for_vec(mod, route.ir);
-            if (BinaryenExpressionGetId(upd) != BinaryenNopId())
-                stmts.push_back(upd);
-        }
 
         stmts.push_back(BinaryenLocalSet(
             mod, SAMPLE,
