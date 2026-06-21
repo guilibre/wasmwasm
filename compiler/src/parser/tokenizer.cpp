@@ -129,6 +129,8 @@ auto Tokenizer::next() -> Token {
         return make_token(TokenKind::Colon);
     case '=':
         return make_token(TokenKind::Eq);
+    case '^':
+        return make_token(TokenKind::Caret);
     case '@':
         return make_token(TokenKind::At);
     case ',':

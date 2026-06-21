@@ -83,7 +83,7 @@ auto compile_single_module(const std::string &src, BinaryenModuleRef math_mod,
                            BinaryenModuleRef main_mod) -> IRModule {
     const Tokenizer tok(src);
     Parser parser(tok);
-    auto result = parser.parse_code();
+    const auto result = parser.parse_code();
     if (!result) throw std::runtime_error("parse error: " + result.error().msg);
 
     auto env = make_builtin_env();
@@ -143,7 +143,7 @@ auto run(const char *math_wasm_path) -> int {
             std::cout << "parse OK\n";
 
             std::vector<IRModule> compiled;
-            uint32_t next_mem = buffer_memory_start;
+            auto next_mem = buffer_memory_start;
             for (const auto &[name, code] : patch.module_sources) {
                 const Tokenizer tok(code);
                 Parser parser(tok);

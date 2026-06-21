@@ -15,8 +15,9 @@
 
 namespace {
 
-std::function<void(const ExprPtr &)> make_monomorphize(
-    const std::function<TypePtr(const TypePtr &)> &monomorphize_fun_type) {
+auto make_monomorphize(
+    const std::function<TypePtr(const TypePtr &)> &monomorphize_fun_type)
+    -> std::function<void(const ExprPtr &)> {
     std::function<void(const ExprPtr &)> monomorphize =
         [&](const auto &expr) -> auto {
         std::visit(
@@ -60,9 +61,9 @@ auto compile_module(const std::string &name, const std::string &src,
                     BinaryenModuleRef math_module, double sample_rate,
                     BinaryenModuleRef main_module, uint32_t memory_base)
     -> IRModule {
-    Tokenizer tok(src);
+    const Tokenizer tok(src);
     Parser parser(tok);
-    auto ast = parser.parse_code();
+    const auto ast = parser.parse_code();
     if (!ast)
         throw std::runtime_error("[" + name +
                                  "] parse error: " + ast.error().msg);
@@ -95,9 +96,9 @@ auto compile_module(const std::string &name, const std::string &src,
     return ir;
 }
 
-std::vector<char> compile_to_binary(float sample_rate,
-                                    const std::string &patch_json,
-                                    char *math_bin, size_t math_bin_size) {
+auto compile_to_binary(float sample_rate, const std::string &patch_json,
+                       char *math_bin, size_t math_bin_size)
+    -> std::vector<char> {
     auto *math_module = BinaryenModuleReadWithFeatures(math_bin, math_bin_size,
                                                        BinaryenFeatureAll());
     if (math_module == nullptr)
@@ -112,7 +113,7 @@ std::vector<char> compile_to_binary(float sample_rate,
         throw std::runtime_error("unable to create binaryen module");
 
     std::vector<IRModule> compiled;
-    uint32_t next_mem = buffer_memory_start;
+    auto next_mem = buffer_memory_start;
     for (const auto &[name, src] : patch.module_sources) {
         auto ir = compile_module(name, src, math_module,
                                  static_cast<double>(sample_rate), main_module,
@@ -121,7 +122,7 @@ std::vector<char> compile_to_binary(float sample_rate,
         compiled.push_back(std::move(ir));
     }
 
-    auto graph = build_routing_graph(std::move(patch), std::move(compiled));
+    auto graph = build_routing_graph(patch, std::move(compiled));
     emit_main_loop(graph, main_module);
 
     if (!BinaryenModuleValidate(main_module))
@@ -145,7 +146,7 @@ std::vector<char> compile_to_binary(float sample_rate,
 
 auto run_compiler_js(float sample_rate, const std::string &patch_json,
                      const emscripten::val &math_bin) -> emscripten::val {
-    std::vector<uint8_t> math_data =
+    auto math_data =
         emscripten::convertJSArrayToNumberVector<uint8_t>(math_bin);
 
     try {

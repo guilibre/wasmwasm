@@ -346,6 +346,12 @@ struct Lowerer {
                         });
                         return IRLocalRef{res};
                     }
+                    if (node.op == Operation::Pow) {
+                        auto res = tmp();
+                        emit(IRCall{
+                            res, "wasmwasm_pow", {*l, *r}, IRType::Float});
+                        return IRLocalRef{res};
+                    }
                     auto res = tmp();
                     emit(IRBinOp{res, node.op, *l, *r});
                     return IRLocalRef{res};

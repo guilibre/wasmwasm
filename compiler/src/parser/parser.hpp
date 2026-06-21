@@ -28,6 +28,7 @@ class Parser {
     auto parse_comparison() -> ParseResult;
     auto parse_additive() -> ParseResult;
     auto parse_multiplicative() -> ParseResult;
+    auto parse_power() -> ParseResult;
     auto parse_unary() -> ParseResult;
     auto parse_application() -> ParseResult;
     auto parse_factor() -> ParseResult;

@@ -27,6 +27,8 @@ auto op_to_string(const Operation &op) -> std::string {
         return "|";
     case Operation::Not:
         return "!";
+    case Operation::Pow:
+        return "^";
     }
     return "?";
 }

@@ -218,7 +218,7 @@ auto Parser::parse_additive() -> ParseResult {
 }
 
 auto Parser::parse_multiplicative() -> ParseResult {
-    auto left = parse_unary();
+    auto left = parse_power();
     if (!left) return left;
     while (match(TokenKind::Multiplicative)) {
         Operation op{};
@@ -237,6 +237,19 @@ auto Parser::parse_multiplicative() -> ParseResult {
         auto right = parse_unary();
         if (!right) return right;
         left = Expr::make<BinaryOp>(op, std::move(*left), std::move(*right));
+    }
+    return left;
+}
+
+auto Parser::parse_power() -> ParseResult {
+    auto left = parse_unary();
+    if (!left) return left;
+    if (match(TokenKind::Caret)) {
+        advance();
+        auto right = parse_power();
+        if (!right) return right;
+        left = Expr::make<BinaryOp>(Operation::Pow, std::move(*left),
+                                    std::move(*right));
     }
     return left;
 }

@@ -265,8 +265,9 @@ auto lsp_diagnostics(const std::string &src) -> std::string {
 
 auto lsp_tokens(const std::string &src) -> std::string {
     static const std::unordered_set<std::string> builtins{
-        "sin", "cos",         "sign", "fract",   "clip",     "exp",
-        "PI",  "SAMPLE_RATE", "OUT",  "uniform", "gaussian",
+        "sin",  "cos",         "sign",  "fract",   "clip",     "exp",
+        "PI",   "SAMPLE_RATE", "OUT",   "uniform", "gaussian", "floor",
+        "ceil", "sqrt",        "round", "log",
     };
 
     const auto comments = scan_comments(src.c_str());
@@ -325,6 +326,7 @@ auto lsp_tokens(const std::string &src) -> std::string {
         case TokenKind::Bang:
         case TokenKind::Question:
         case TokenKind::Colon:
+        case TokenKind::Caret:
             emit(t.line, t.column, len, "operator");
             break;
         default:
@@ -343,7 +345,7 @@ auto lsp_completions(const std::string &src, size_t /*line*/, size_t /*col*/)
         const char *detail;
         const char *kind;
     };
-    static const std::array<BuiltinItem, 13> builtins = {{
+    static const std::array<BuiltinItem, 18> builtins = {{
         {.label = "sin", .detail = "Float -> Float", .kind = "function"},
         {.label = "cos", .detail = "Float -> Float", .kind = "function"},
         {.label = "sign", .detail = "Float -> Float", .kind = "function"},
@@ -356,6 +358,11 @@ auto lsp_completions(const std::string &src, size_t /*line*/, size_t /*col*/)
         {.label = "gaussian",
          .detail = "Float -> Float -> Float",
          .kind = "function"},
+        {.label = "floor", .detail = "Float -> Float", .kind = "function"},
+        {.label = "ceil", .detail = "Float -> Float", .kind = "function"},
+        {.label = "sqrt", .detail = "Float -> Float", .kind = "function"},
+        {.label = "round", .detail = "Float -> Float", .kind = "function"},
+        {.label = "log", .detail = "Float -> Float", .kind = "function"},
         {.label = "PI", .detail = "Float", .kind = "constant"},
         {.label = "SAMPLE_RATE", .detail = "Float", .kind = "constant"},
         {.label = "OUT", .detail = "Float", .kind = "constant"},

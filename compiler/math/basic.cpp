@@ -12,35 +12,35 @@ namespace {
 
 } // namespace
 
-constexpr double HALF_PI = std::numbers::pi / 2.0;
-constexpr double TWO_PI = std::numbers::pi * 2.0;
-constexpr double INV_TWO_PI = 1.0 / TWO_PI;
+constexpr auto HALF_PI = std::numbers::pi / 2.0;
+constexpr auto TWO_PI = std::numbers::pi * 2.0;
+constexpr auto INV_TWO_PI = 1.0 / TWO_PI;
 
-constexpr double SIN_C1 = 0.9999999999999999999825;
-constexpr double SIN_C3 = -0.16666666666666664625997;
-constexpr double SIN_C5 = 0.0083333333333333331646;
-constexpr double SIN_C7 = -0.00019841269841269461664;
+constexpr auto SIN_C1 = 0.9999999999999999999825;
+constexpr auto SIN_C3 = -0.16666666666666664625997;
+constexpr auto SIN_C5 = 0.0083333333333333331646;
+constexpr auto SIN_C7 = -0.00019841269841269461664;
 
-constexpr double COS_C0 = 1.0;
-constexpr double COS_C2 = -0.4999999999999999444888;
-constexpr double COS_C4 = 0.0416666666666665519596;
-constexpr double COS_C6 = -0.0013888888888888530298;
-constexpr double COS_C8 = 0.000024801587301571904;
+constexpr auto COS_C0 = 1.0;
+constexpr auto COS_C2 = -0.4999999999999999444888;
+constexpr auto COS_C4 = 0.0416666666666665519596;
+constexpr auto COS_C6 = -0.0013888888888888530298;
+constexpr auto COS_C8 = 0.000024801587301571904;
 
 extern "C" {
 auto wasmwasm_sin(double x) -> double {
-    const double q = fast_round(x * INV_TWO_PI);
+    const auto q = fast_round(x * INV_TWO_PI);
     x -= q * TWO_PI;
 
-    const double x_abs = std::abs(x);
-    const double x_reduced = HALF_PI - std::abs(x_abs - HALF_PI);
+    const auto x_abs = std::abs(x);
+    const auto x_reduced = HALF_PI - std::abs(x_abs - HALF_PI);
 
-    const double x2 = x_reduced * x_reduced;
-    const double poly =
+    const auto x2 = x_reduced * x_reduced;
+    const auto poly =
         x_reduced *
         (SIN_C1 + (x2 * (SIN_C3 + (x2 * (SIN_C5 + (x2 * SIN_C7))))));
 
-    const double sign = 1.0 - (2.0 * static_cast<double>(x < 0.0));
+    const auto sign = 1.0 - (2.0 * static_cast<double>(x < 0.0));
     return sign * poly;
 }
 
@@ -79,18 +79,18 @@ auto wasmwasm_sin_f64x2(v128_t x) -> v128_t {
 }
 
 auto wasmwasm_cos(double x) -> double {
-    const double q = fast_round(x * INV_TWO_PI);
+    const auto q = fast_round(x * INV_TWO_PI);
     x -= q * TWO_PI;
 
-    const double x_abs = std::abs(x);
-    const double x_reduced = HALF_PI - std::abs(x_abs - HALF_PI);
+    const auto x_abs = std::abs(x);
+    const auto x_reduced = HALF_PI - std::abs(x_abs - HALF_PI);
 
-    const double x2 = x_reduced * x_reduced;
-    const double poly =
+    const auto x2 = x_reduced * x_reduced;
+    const auto poly =
         COS_C0 +
         (x2 * (COS_C2 + (x2 * (COS_C4 + (x2 * (COS_C6 + (x2 * COS_C8)))))));
 
-    const double sign = 1.0 - (2.0 * static_cast<double>(x_abs >= HALF_PI));
+    const auto sign = 1.0 - (2.0 * static_cast<double>(x_abs >= HALF_PI));
     return sign * poly;
 }
 
@@ -196,7 +196,7 @@ auto wasmwasm_uniform_f64x2(v128_t lower, v128_t upper) -> v128_t {
 }
 
 auto wasmwasm_gaussian(double mean, double std) -> double {
-    const double u = next_u01() + next_u01() + next_u01() + next_u01();
+    const auto u = next_u01() + next_u01() + next_u01() + next_u01();
     return mean + (std * (u - 2.0) * std::numbers::sqrt3);
 }
 
@@ -205,5 +205,55 @@ auto wasmwasm_gaussian_f64x2(v128_t mean, v128_t std) -> v128_t {
                                              wasm_f64x2_extract_lane(std, 0)),
                            wasmwasm_gaussian(wasm_f64x2_extract_lane(mean, 1),
                                              wasm_f64x2_extract_lane(std, 1)));
+}
+
+auto wasmwasm_floor(double x) -> double { return __builtin_floor(x); }
+
+auto wasmwasm_floor_f64x2(v128_t x) -> v128_t { return wasm_f64x2_floor(x); }
+
+auto wasmwasm_ceil(double x) -> double { return __builtin_ceil(x); }
+
+auto wasmwasm_ceil_f64x2(v128_t x) -> v128_t { return wasm_f64x2_ceil(x); }
+
+auto wasmwasm_sqrt(double x) -> double { return __builtin_sqrt(x); }
+
+auto wasmwasm_sqrt_f64x2(v128_t x) -> v128_t { return wasm_f64x2_sqrt(x); }
+
+auto wasmwasm_round(double x) -> double { return fast_round(x); }
+
+auto wasmwasm_round_f64x2(v128_t x) -> v128_t {
+    return wasm_f64x2_make(fast_round(wasm_f64x2_extract_lane(x, 0)),
+                           fast_round(wasm_f64x2_extract_lane(x, 1)));
+}
+
+auto wasmwasm_log(double x) -> double {
+    const auto bits_in = std::bit_cast<unsigned long long>(x);
+    const auto e = static_cast<int>((bits_in >> 52) & 0x7FF) - 1023;
+    const auto m = std::bit_cast<double>((bits_in & 0x000FFFFFFFFFFFFFULL) |
+                                         (1023ULL << 52));
+    const auto t = (m - 1.0) / (m + 1.0);
+    const auto t2 = t * t;
+    const auto p = 1.0 / 9.0;
+    const auto p7 = (1.0 / 7.0) + (t2 * p);
+    const auto p5 = (1.0 / 5.0) + (t2 * p7);
+    const auto p3 = (1.0 / 3.0) + (t2 * p5);
+    const auto log_m = 2.0 * t * (1.0 + (t2 * p3));
+    return log_m + (static_cast<double>(e) * std::numbers::ln2);
+}
+
+auto wasmwasm_log_f64x2(v128_t x) -> v128_t {
+    return wasm_f64x2_make(wasmwasm_log(wasm_f64x2_extract_lane(x, 0)),
+                           wasmwasm_log(wasm_f64x2_extract_lane(x, 1)));
+}
+
+auto wasmwasm_pow(double base, double exp) -> double {
+    return wasmwasm_exp(exp * wasmwasm_log(base));
+}
+
+auto wasmwasm_pow_f64x2(v128_t base, v128_t exp) -> v128_t {
+    return wasm_f64x2_make(wasmwasm_pow(wasm_f64x2_extract_lane(base, 0),
+                                        wasm_f64x2_extract_lane(exp, 0)),
+                           wasmwasm_pow(wasm_f64x2_extract_lane(base, 1),
+                                        wasm_f64x2_extract_lane(exp, 1)));
 }
 }

@@ -44,6 +44,7 @@ enum class Operation : uint8_t {
     And,
     Or,
     Not,
+    Pow,
 };
 
 struct BinaryOp {

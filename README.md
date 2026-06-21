@@ -52,26 +52,34 @@ x = delay N {i. init_expr}
 
 ### Operators
 
-| Category    | Operators            |
-| ----------- | -------------------- |
-| Arithmetic  | `+`  `-`  `*`  `/`   |
-| Comparison  | `<`  `>`             |
-| Logical     | `&`  `\|`  `!`       |
-| Conditional | `cond ? then : else` |
-| Unary       | `-x`                 |
+| Category        | Operators            |
+| --------------- | -------------------- |
+| Arithmetic      | `+`  `-`  `*`  `/`   |
+| Exponentiation  | `x ^ y`              |
+| Comparison      | `<`  `>`             |
+| Logical         | `&`  `\|`  `!`       |
+| Conditional     | `cond ? then : else` |
+| Unary           | `-x`                 |
+
+`^` is right-associative and has higher precedence than `*` and `/`: `2 * x^3` means `2 * (x^3)`.
 
 ### Built-in functions
 
-| Function       | Description                |
-| -------------- | -------------------------- |
-| `sin x`        | Sine                       |
-| `cos x`        | Cosine                     |
-| `exp x`        | Exponential                |
-| `sign x`       | Sign (±1)                  |
-| `fract x`      | Fractional part            |
-| `clip x`       | Clamp to `[-1, 1]`         |
-| `uniform x y`  | Uniform random in [x, y]   |
-| `gaussian x y` | Gaussian random (μ=x, σ=y) |
+| Function       | Description                     |
+| -------------- | ------------------------------- |
+| `sin x`        | Sine                            |
+| `cos x`        | Cosine                          |
+| `exp x`        | Exponential (eˣ)                |
+| `log x`        | Natural logarithm               |
+| `sqrt x`       | Square root                     |
+| `floor x`      | Round down to nearest integer   |
+| `ceil x`       | Round up to nearest integer     |
+| `round x`      | Round to nearest integer        |
+| `sign x`       | Sign (±1)                       |
+| `fract x`      | Fractional part                 |
+| `clip x`       | Clamp to `[-1, 1]`              |
+| `uniform x y`  | Uniform random in [x, y]        |
+| `gaussian x y` | Gaussian random (μ=x, σ=y)      |
 
 ### `static`
 

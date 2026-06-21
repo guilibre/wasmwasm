@@ -22,6 +22,11 @@ auto make_builtin_env()
         {"exp", float_to_float},
         {"uniform", float_to_float_to_float},
         {"gaussian", float_to_float_to_float},
+        {"floor", float_to_float},
+        {"ceil", float_to_float},
+        {"sqrt", float_to_float},
+        {"round", float_to_float},
+        {"log", float_to_float},
         {"buffer",
          Type::make<TypeFun>(
              float_type,
