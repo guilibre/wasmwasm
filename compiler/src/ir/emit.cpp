@@ -149,10 +149,21 @@ auto emit_body(FnCtx &ctx, const std::vector<IRInstr> &body, IRType ret_type)
                 using T = std::decay_t<decltype(i)>;
 
                 if constexpr (std::is_same_v<T, IRBinOp>) {
-                    stmts.push_back(
-                        ctx.set(i.result, BinaryenBinary(ctx.mod, to_bop(i.op),
-                                                         ctx.get(i.left),
-                                                         ctx.get(i.right))));
+                    if (i.op == Operation::Lt || i.op == Operation::Gt) {
+                        const auto cmp_op = i.op == Operation::Lt
+                                                ? BinaryenLtFloat64()
+                                                : BinaryenGtFloat64();
+                        auto *cmp = BinaryenBinary(
+                            ctx.mod, cmp_op, ctx.get(i.left), ctx.get(i.right));
+                        auto *as_f64 = BinaryenUnary(
+                            ctx.mod, BinaryenConvertUInt32ToFloat64(), cmp);
+                        stmts.push_back(ctx.set(i.result, as_f64));
+                    } else {
+                        stmts.push_back(ctx.set(
+                            i.result,
+                            BinaryenBinary(ctx.mod, to_bop(i.op),
+                                           ctx.get(i.left), ctx.get(i.right))));
+                    }
                 }
                 if constexpr (std::is_same_v<T, IRUnaryNeg>) {
                     stmts.push_back(ctx.set(
@@ -551,10 +562,23 @@ auto emit_body_vec(FnCtxVec &ctx, const std::vector<IRInstr> &body)
                 using T = std::decay_t<decltype(i)>;
 
                 if constexpr (std::is_same_v<T, IRBinOp>) {
-                    stmts.push_back(ctx.set(
-                        i.result,
-                        BinaryenBinary(ctx.mod, to_bop_vec(i.op),
-                                       ctx.get(i.left), ctx.get(i.right))));
+                    if (i.op == Operation::Lt || i.op == Operation::Gt) {
+                        const auto vec_op = i.op == Operation::Lt
+                                                ? BinaryenLtVecF64x2()
+                                                : BinaryenGtVecF64x2();
+                        auto *mask = BinaryenBinary(
+                            ctx.mod, vec_op, ctx.get(i.left), ctx.get(i.right));
+                        auto *v = BinaryenSIMDTernary(
+                            ctx.mod, BinaryenBitselectVec128(),
+                            splat_f64(ctx.mod, 1.0), splat_f64(ctx.mod, 0.0),
+                            mask);
+                        stmts.push_back(ctx.set(i.result, v));
+                    } else {
+                        stmts.push_back(ctx.set(
+                            i.result,
+                            BinaryenBinary(ctx.mod, to_bop_vec(i.op),
+                                           ctx.get(i.left), ctx.get(i.right))));
+                    }
                 }
                 if constexpr (std::is_same_v<T, IRUnaryNeg>) {
                     stmts.push_back(ctx.set(

@@ -78,12 +78,12 @@ auto Parser::parse_expression() -> ParseResult {
                 .col = current.column,
             });
         advance();
-        auto rhs = parse_additive();
+        auto rhs = parse_comparison();
         if (!rhs) return rhs;
         return Expr::make<OutputWrite>(index, std::move(*rhs));
     }
 
-    auto expr = parse_additive();
+    auto expr = parse_comparison();
     if (!expr) return std::unexpected(expr.error());
 
     if (match(TokenKind::Eq)) {
@@ -109,12 +109,25 @@ auto Parser::parse_expression() -> ParseResult {
                 .col = current.column,
             });
         advance();
-        auto rhs = parse_additive();
+        auto rhs = parse_comparison();
         if (!rhs) return rhs;
         return Expr::make<BufferWrite>(*target, std::move(*rhs));
     }
 
     return expr;
+}
+
+auto Parser::parse_comparison() -> ParseResult {
+    auto left = parse_additive();
+    if (!left) return left;
+    if (match(TokenKind::Comparison)) {
+        Operation op = current.lexeme == "<" ? Operation::Lt : Operation::Gt;
+        advance();
+        auto right = parse_additive();
+        if (!right) return right;
+        return Expr::make<BinaryOp>(op, std::move(*left), std::move(*right));
+    }
+    return left;
 }
 
 auto Parser::parse_additive() -> ParseResult {

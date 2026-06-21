@@ -23,6 +23,7 @@ class Parser {
         -> std::expected<Token, ParseError>;
 
     auto parse_expression() -> ParseResult;
+    auto parse_comparison() -> ParseResult;
     auto parse_additive() -> ParseResult;
     auto parse_multiplicative() -> ParseResult;
     auto parse_unary() -> ParseResult;

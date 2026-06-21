@@ -39,6 +39,8 @@ enum class Operation : uint8_t {
     Sub,
     Mul,
     Div,
+    Lt,
+    Gt,
 };
 
 struct BinaryOp {

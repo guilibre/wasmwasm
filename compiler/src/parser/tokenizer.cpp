@@ -113,7 +113,9 @@ auto Tokenizer::next() -> Token {
         return make_token(TokenKind::Multiplicative);
     case '<':
         if (match('-')) return make_token(TokenKind::LeftArrow);
-        return error_token("unexpected character '<' (did you mean '<-'?)");
+        return make_token(TokenKind::Comparison);
+    case '>':
+        return make_token(TokenKind::Comparison);
     case '=':
         return make_token(TokenKind::Eq);
     case '@':
