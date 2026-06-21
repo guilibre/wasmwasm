@@ -86,6 +86,21 @@ auto Parser::parse_expression() -> ParseResult {
     auto expr = parse_logical_or();
     if (!expr) return std::unexpected(expr.error());
 
+    if (match(TokenKind::Question)) {
+        advance();
+        auto then_b = parse_expression();
+        if (!then_b) return then_b;
+        std::optional<ExprPtr> else_b;
+        if (match(TokenKind::Colon)) {
+            advance();
+            auto eb = parse_expression();
+            if (!eb) return eb;
+            else_b = std::move(*eb);
+        }
+        return Expr::make<Conditional>(std::move(*expr), std::move(*then_b),
+                                       std::move(else_b));
+    }
+
     if (match(TokenKind::Eq)) {
         auto name = expect_variable(*expr);
         if (!name)

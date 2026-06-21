@@ -2,6 +2,7 @@
 
 #include "ast/ast.hpp"
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <string>
 #include <variant>
@@ -64,6 +65,13 @@ struct IRGlobalRead {
     IRType type;
 };
 
+struct IRIfBody; // forward — defined after IRInstr to break circular dependency
+
+struct IRIf {
+    IRValue condition;
+    std::shared_ptr<IRIfBody> body;
+};
+
 struct IRReturn {
     std::optional<IRValue> value;
 };
@@ -80,8 +88,13 @@ struct IROutputWrite {
 
 using IRInstr =
     std::variant<IRBinOp, IRUnaryNeg, IRAssign, IRCall, IRBufferRead,
-                 IRBufferReadDelayed, IRBufferWrite, IRGlobalRead, IRInputRead,
-                 IROutputWrite, IRReturn>;
+                 IRBufferReadDelayed, IRBufferWrite, IRGlobalRead, IRIf,
+                 IRInputRead, IROutputWrite, IRReturn>;
+
+struct IRIfBody {
+    std::vector<IRInstr> then_body;
+    std::vector<IRInstr> else_body;
+};
 
 struct IRParam {
     std::string name;

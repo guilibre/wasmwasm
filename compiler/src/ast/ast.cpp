@@ -17,6 +17,16 @@ auto op_to_string(const Operation &op) -> std::string {
         return "*";
     case Operation::Div:
         return "/";
+    case Operation::Lt:
+        return "<";
+    case Operation::Gt:
+        return ">";
+    case Operation::And:
+        return "&";
+    case Operation::Or:
+        return "|";
+    case Operation::Not:
+        return "!";
     }
     return "?";
 }
@@ -91,6 +101,16 @@ auto ASTPrinter::dispatch(const ExprPtr &expr, Call &call, size_t indent)
     out << indent_str(indent) << attach_type("Call", expr);
     out << print(call.callee, indent + 2);
     out << print(call.argument, indent + 2);
+    return out.str();
+}
+
+auto ASTPrinter::dispatch(const ExprPtr &expr, Conditional &cond, size_t indent)
+    -> std::string {
+    std::ostringstream out;
+    out << indent_str(indent) << attach_type("Conditional", expr);
+    out << print(cond.condition, indent + 2);
+    out << print(cond.then_branch, indent + 2);
+    if (cond.else_branch) out << print(*cond.else_branch, indent + 2);
     return out.str();
 }
 

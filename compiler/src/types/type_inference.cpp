@@ -18,8 +18,8 @@ auto lookup_env(
     const std::vector<std::unordered_map<std::string, TypePtr>> &env)
     -> std::optional<TypePtr> {
     for (int i = static_cast<int>(env.size()) - 1; i >= 0; --i) {
-        auto it = env[i].find(name);
-        if (it != env[i].end()) return it->second;
+        auto it = env[static_cast<size_t>(i)].find(name);
+        if (it != env[static_cast<size_t>(i)].end()) return it->second;
     }
     return std::nullopt;
 }
@@ -188,6 +188,14 @@ void infer_expr(const ExprPtr &expr,
 
             if constexpr (std::is_same_v<T, OutputWrite>) {
                 infer_expr(node.value, env, subst, gen);
+                return Type::make<TypeBase>(BaseTypeKind::Void);
+            }
+
+            if constexpr (std::is_same_v<T, Conditional>) {
+                infer_expr(node.condition, env, subst, gen);
+                infer_expr(node.then_branch, env, subst, gen);
+                if (node.else_branch)
+                    infer_expr(*node.else_branch, env, subst, gen);
                 return Type::make<TypeBase>(BaseTypeKind::Void);
             }
 

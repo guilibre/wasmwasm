@@ -129,6 +129,15 @@ auto find_node_at(const ExprPtr &expr, size_t line, size_t col)
                 if (node.delay) return find_node_at(*node.delay, line, col);
                 return nullptr;
             }
+            if constexpr (std::is_same_v<T, Conditional>) {
+                const auto *hit = find_node_at(node.condition, line, col);
+                if (hit) return hit;
+                hit = find_node_at(node.then_branch, line, col);
+                if (hit) return hit;
+                if (node.else_branch)
+                    return find_node_at(*node.else_branch, line, col);
+                return nullptr;
+            }
             return nullptr;
         },
         expr->node);
@@ -163,6 +172,12 @@ void collect_user_defs(const ExprPtr &expr, std::vector<std::string> &defs) {
             }
             if constexpr (std::is_same_v<T, UnaryOp>) {
                 collect_user_defs(node.expr, defs);
+            }
+            if constexpr (std::is_same_v<T, Conditional>) {
+                collect_user_defs(node.condition, defs);
+                collect_user_defs(node.then_branch, defs);
+                if (node.else_branch)
+                    collect_user_defs(*node.else_branch, defs);
             }
         },
         expr->node);
@@ -250,8 +265,8 @@ auto lsp_diagnostics(const std::string &src) -> std::string {
 
 auto lsp_tokens(const std::string &src) -> std::string {
     static const std::unordered_set<std::string> builtins{
-        "sin", "cos", "sign", "fract",       "clip",
-        "exp", "PI",  "TIME", "SAMPLE_RATE", "OUT",
+        "sin", "cos",  "sign",        "fract", "clip",    "exp",
+        "PI",  "TIME", "SAMPLE_RATE", "OUT",   "uniform", "gaussian",
     };
 
     const auto comments = scan_comments(src.c_str());
@@ -304,6 +319,12 @@ auto lsp_tokens(const std::string &src) -> std::string {
         case TokenKind::At:
         case TokenKind::LeftArrow:
         case TokenKind::Period:
+        case TokenKind::Comparison:
+        case TokenKind::Ampersand:
+        case TokenKind::Pipe:
+        case TokenKind::Bang:
+        case TokenKind::Question:
+        case TokenKind::Colon:
             emit(t.line, t.column, len, "operator");
             break;
         default:
@@ -322,13 +343,19 @@ auto lsp_completions(const std::string &src, size_t /*line*/, size_t /*col*/)
         const char *detail;
         const char *kind;
     };
-    static const std::array<BuiltinItem, 11> builtins = {{
+    static const std::array<BuiltinItem, 13> builtins = {{
         {.label = "sin", .detail = "Float -> Float", .kind = "function"},
         {.label = "cos", .detail = "Float -> Float", .kind = "function"},
         {.label = "sign", .detail = "Float -> Float", .kind = "function"},
         {.label = "fract", .detail = "Float -> Float", .kind = "function"},
         {.label = "clip", .detail = "Float -> Float", .kind = "function"},
         {.label = "exp", .detail = "Float -> Float", .kind = "function"},
+        {.label = "uniform",
+         .detail = "Float -> Float -> Float",
+         .kind = "function"},
+        {.label = "gaussian",
+         .detail = "Float -> Float -> Float",
+         .kind = "function"},
         {.label = "PI", .detail = "Float", .kind = "constant"},
         {.label = "TIME", .detail = "Float", .kind = "constant"},
         {.label = "SAMPLE_RATE", .detail = "Float", .kind = "constant"},

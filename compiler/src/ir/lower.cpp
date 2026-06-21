@@ -125,6 +125,16 @@ struct Lowerer {
                 }
                 if constexpr (std::is_same_v<T, Bind>)
                     return free_vars_of(node.value, bound);
+                if constexpr (std::is_same_v<T, Conditional>) {
+                    auto fv = free_vars_of(node.condition, bound);
+                    const auto ft = free_vars_of(node.then_branch, bound);
+                    fv.insert(ft.begin(), ft.end());
+                    if (node.else_branch) {
+                        const auto fe = free_vars_of(*node.else_branch, bound);
+                        fv.insert(fe.begin(), fe.end());
+                    }
+                    return fv;
+                }
                 if constexpr (std::is_same_v<T, BufferRead>) return {};
                 if constexpr (std::is_same_v<T, BufferWrite>)
                     return free_vars_of(node.value, bound);
@@ -264,8 +274,13 @@ struct Lowerer {
                     const auto val = lower_expr(node.expr);
                     if (!val) throw std::runtime_error("unary op on void");
                     if (node.op == Operation::Not) {
+                        // !a = 1 - clip(a)
+                        auto ca = tmp();
+                        emit(
+                            IRCall{ca, "wasmwasm_clip", {*val}, IRType::Float});
                         auto r = tmp();
-                        emit(IRBinOp{r, Operation::Sub, IRLiteral{1.0}, *val});
+                        emit(IRBinOp{r, Operation::Sub, IRLiteral{1.0},
+                                     IRLocalRef{ca}});
                         return IRLocalRef{r};
                     }
                     auto r = tmp();
@@ -278,22 +293,31 @@ struct Lowerer {
                     const auto r = lower_expr(node.right);
                     if (!l || !r) throw std::runtime_error("binary op on void");
                     if (node.op == Operation::And) {
+                        // a & b = clip(a) * clip(b)
+                        auto ca = tmp();
+                        emit(IRCall{ca, "wasmwasm_clip", {*l}, IRType::Float});
+                        auto cb = tmp();
+                        emit(IRCall{cb, "wasmwasm_clip", {*r}, IRType::Float});
                         auto res = tmp();
-                        emit(IRBinOp{res, Operation::Mul, *l, *r});
+                        emit(IRBinOp{res, Operation::Mul, IRLocalRef{ca},
+                                     IRLocalRef{cb}});
                         return IRLocalRef{res};
                     }
                     if (node.op == Operation::Or) {
-                        auto t1 = tmp();
-                        emit(IRBinOp{t1, Operation::Mul, *l, *r});
-                        auto t2 = tmp();
-                        emit(IRBinOp{t2, Operation::Add, *l, *r});
+                        // a | b = clip(a)*(1-clip(b)) + clip(b)
+                        auto ca = tmp();
+                        emit(IRCall{ca, "wasmwasm_clip", {*l}, IRType::Float});
+                        auto cb = tmp();
+                        emit(IRCall{cb, "wasmwasm_clip", {*r}, IRType::Float});
+                        auto one_minus_cb = tmp();
+                        emit(IRBinOp{one_minus_cb, Operation::Sub,
+                                     IRLiteral{1.0}, IRLocalRef{cb}});
+                        auto prod = tmp();
+                        emit(IRBinOp{prod, Operation::Mul, IRLocalRef{ca},
+                                     IRLocalRef{one_minus_cb}});
                         auto res = tmp();
-                        emit(IRBinOp{
-                            .result = res,
-                            .op = Operation::Sub,
-                            .left = IRLocalRef{t2},
-                            .right = IRLocalRef{t1},
-                        });
+                        emit(IRBinOp{res, Operation::Add, IRLocalRef{prod},
+                                     IRLocalRef{cb}});
                         return IRLocalRef{res};
                     }
                     auto res = tmp();
@@ -414,6 +438,24 @@ struct Lowerer {
                     throw std::runtime_error("Dynamic dispatch not supported");
                 }
 
+                if constexpr (std::is_same_v<T, Conditional>) {
+                    const auto cond = lower_expr(node.condition);
+                    if (!cond)
+                        throw std::runtime_error(
+                            "conditional condition is void");
+                    std::vector<IRInstr> then_instrs, else_instrs;
+                    auto *saved = cur;
+                    cur = &then_instrs;
+                    lower_expr(node.then_branch);
+                    cur = &else_instrs;
+                    if (node.else_branch) lower_expr(*node.else_branch);
+                    cur = saved;
+                    emit(IRIf{*cond, std::make_shared<IRIfBody>(
+                                         std::move(then_instrs),
+                                         std::move(else_instrs))});
+                    return std::nullopt;
+                }
+
                 if constexpr (std::is_same_v<T, BufferCtor>)
                     throw std::runtime_error(
                         "delay(...) must appear as the rhs of a bind (name = "
@@ -439,15 +481,21 @@ struct Lowerer {
         mod.main_fn = "main$body";
     }
 
-    void compute_arity() {
-        for (const auto &fn : mod.functions) {
-            for (const auto &instr : fn.body) {
-                if (const auto *ir = std::get_if<IRInputRead>(&instr))
-                    mod.num_inputs = std::max(mod.num_inputs, ir->index + 1);
-                if (const auto *ow = std::get_if<IROutputWrite>(&instr))
-                    mod.num_outputs = std::max(mod.num_outputs, ow->index + 1);
+    void scan_arity(const std::vector<IRInstr> &body) {
+        for (const auto &instr : body) {
+            if (const auto *ir = std::get_if<IRInputRead>(&instr))
+                mod.num_inputs = std::max(mod.num_inputs, ir->index + 1);
+            if (const auto *ow = std::get_if<IROutputWrite>(&instr))
+                mod.num_outputs = std::max(mod.num_outputs, ow->index + 1);
+            if (const auto *iif = std::get_if<IRIf>(&instr)) {
+                scan_arity(iif->body->then_body);
+                scan_arity(iif->body->else_body);
             }
         }
+    }
+
+    void compute_arity() {
+        for (const auto &fn : mod.functions) scan_arity(fn.body);
     }
 };
 

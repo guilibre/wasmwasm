@@ -28,8 +28,9 @@ auto to_btype(IRType t) -> BinaryenType {
         return BinaryenTypeInt32();
     case IRType::Void:
         return BinaryenTypeNone();
+    default:
+        std::unreachable();
     }
-    std::unreachable();
 }
 
 auto to_bop(Operation op) -> BinaryenOp {
@@ -42,8 +43,9 @@ auto to_bop(Operation op) -> BinaryenOp {
         return BinaryenMulFloat64();
     case Operation::Div:
         return BinaryenDivFloat64();
+    default:
+        std::unreachable();
     }
-    std::unreachable();
 }
 
 auto to_bop_vec(Operation op) -> BinaryenOp {
@@ -56,8 +58,9 @@ auto to_bop_vec(Operation op) -> BinaryenOp {
         return BinaryenMulVecF64x2();
     case Operation::Div:
         return BinaryenDivVecF64x2();
+    default:
+        std::unreachable();
     }
-    std::unreachable();
 }
 
 auto splat_f64(BinaryenModuleRef mod, double v) -> BinaryenExpressionRef {
@@ -134,13 +137,30 @@ void prescan(FnCtx &ctx, const std::vector<IRInstr> &body) {
                     ctx.ensure_var(i.result, i.type);
                 if constexpr (std::is_same_v<T, IRInputRead>)
                     ctx.ensure_var(i.result, IRType::Float);
+                if constexpr (std::is_same_v<T, IRIf>) {
+                    prescan(ctx, i.body->then_body);
+                    prescan(ctx, i.body->else_body);
+                }
             },
             instr);
     }
 }
 
+// Forward declaration — emit_stmts is mutually recursive with IRIf handling
+auto emit_stmts(FnCtx &ctx, const std::vector<IRInstr> &body)
+    -> std::vector<BinaryenExpressionRef>;
+
 auto emit_body(FnCtx &ctx, const std::vector<IRInstr> &body, IRType ret_type)
     -> BinaryenExpressionRef {
+    auto stmts = emit_stmts(ctx, body);
+    if (stmts.empty()) return BinaryenNop(ctx.mod);
+    return BinaryenBlock(ctx.mod, nullptr, stmts.data(),
+                         static_cast<BinaryenIndex>(stmts.size()),
+                         to_btype(ret_type));
+}
+
+auto emit_stmts(FnCtx &ctx, const std::vector<IRInstr> &body)
+    -> std::vector<BinaryenExpressionRef> {
     std::vector<BinaryenExpressionRef> stmts;
 
     for (const auto &instr : body) {
@@ -360,6 +380,32 @@ auto emit_body(FnCtx &ctx, const std::vector<IRInstr> &body, IRType ret_type)
 
                     stmts.push_back(ctx.set(i.result, expr));
                 }
+                if constexpr (std::is_same_v<T, IRIf>) {
+                    std::array<BinaryenExpressionRef, 2> args = {
+                        BinaryenConst(ctx.mod, BinaryenLiteralFloat64(0.0)),
+                        BinaryenConst(ctx.mod, BinaryenLiteralFloat64(1.0)),
+                    };
+                    auto *rng =
+                        BinaryenCall(ctx.mod, "wasmwasm_uniform", args.data(),
+                                     2, BinaryenTypeFloat64());
+                    auto *taken = BinaryenBinary(ctx.mod, BinaryenLtFloat64(),
+                                                 rng, ctx.get(i.condition));
+                    auto then_s = emit_stmts(ctx, i.body->then_body);
+                    auto *then_block =
+                        BinaryenBlock(ctx.mod, nullptr, then_s.data(),
+                                      static_cast<BinaryenIndex>(then_s.size()),
+                                      BinaryenTypeNone());
+                    BinaryenExpressionRef else_block = nullptr;
+                    if (!i.body->else_body.empty()) {
+                        auto else_s = emit_stmts(ctx, i.body->else_body);
+                        else_block = BinaryenBlock(
+                            ctx.mod, nullptr, else_s.data(),
+                            static_cast<BinaryenIndex>(else_s.size()),
+                            BinaryenTypeNone());
+                    }
+                    stmts.push_back(
+                        BinaryenIf(ctx.mod, taken, then_block, else_block));
+                }
                 if constexpr (std::is_same_v<T, IRReturn>) {
                     if (i.value) stmts.push_back(ctx.get(*i.value));
                 }
@@ -367,15 +413,19 @@ auto emit_body(FnCtx &ctx, const std::vector<IRInstr> &body, IRType ret_type)
             instr);
     }
 
-    if (stmts.empty()) return BinaryenNop(ctx.mod);
-    return BinaryenBlock(ctx.mod, nullptr, stmts.data(),
-                         static_cast<BinaryenIndex>(stmts.size()),
-                         to_btype(ret_type));
+    return stmts;
 }
 
 void emit_function(const IRFunction &fn, BinaryenModuleRef mod,
                    double sample_rate, const IRModule &ir) {
-    FnCtx ctx{.mod = mod, .sample_rate = sample_rate, .ir = &ir};
+    FnCtx ctx{
+        .mod = mod,
+        .sample_rate = sample_rate,
+        .ir = &ir,
+        .idx = {},
+        .param_types = {},
+        .var_types = {},
+    };
     for (const auto &p : fn.params) ctx.add_param(p.name, p.type);
     prescan(ctx, fn.body);
 
@@ -670,7 +720,13 @@ auto emit_body_vec(FnCtxVec &ctx, const std::vector<IRInstr> &body)
 
 void emit_function_vec(const IRFunction &fn, BinaryenModuleRef mod,
                        double sample_rate, const IRModule &ir) {
-    FnCtxVec ctx{.mod = mod, .sample_rate = sample_rate, .ir = &ir};
+    FnCtxVec ctx{
+        .mod = mod,
+        .sample_rate = sample_rate,
+        .ir = &ir,
+        .idx = {},
+        .var_types = {},
+    };
     prescan_vec(ctx, fn.body);
     auto *body = emit_body_vec(ctx, fn.body);
     const auto wasm_name = pfx(ir, fn.name + "_vec");
@@ -690,6 +746,7 @@ auto is_main_vec_eligible(const IRModule &ir) -> bool {
             if (std::holds_alternative<IRBufferReadDelayed>(instr))
                 return false;
             if (std::holds_alternative<IRInputRead>(instr)) return false;
+            if (std::holds_alternative<IRIf>(instr)) return false;
             if (const auto *call = std::get_if<IRCall>(&instr))
                 if (!call->callee.starts_with("wasmwasm_")) return false;
         }

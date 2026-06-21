@@ -122,6 +122,10 @@ auto Tokenizer::next() -> Token {
         return make_token(TokenKind::Pipe);
     case '!':
         return make_token(TokenKind::Bang);
+    case '?':
+        return make_token(TokenKind::Question);
+    case ':':
+        return make_token(TokenKind::Colon);
     case '=':
         return make_token(TokenKind::Eq);
     case '@':
