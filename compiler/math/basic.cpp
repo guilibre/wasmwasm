@@ -5,9 +5,11 @@
 #include <wasm_simd128.h>
 
 namespace {
+
 [[clang::always_inline]] auto fast_round(double x) -> double {
     return __builtin_trunc(x + (x >= 0.0 ? 0.5 : -0.5));
 }
+
 } // namespace
 
 constexpr double HALF_PI = std::numbers::pi / 2.0;
@@ -162,5 +164,46 @@ auto wasmwasm_exp(double x) -> double {
 auto wasmwasm_exp_f64x2(v128_t x) -> v128_t {
     return wasm_f64x2_make(wasmwasm_exp(wasm_f64x2_extract_lane(x, 0)),
                            wasmwasm_exp(wasm_f64x2_extract_lane(x, 1)));
+}
+
+namespace {
+
+[[clang::always_inline]] auto next_u01() -> double {
+    static double random_state = 0.0;
+    unsigned long long s = 0;
+    __builtin_memcpy(&s, &random_state, 8);
+    s += 0x9e3779b97f4a7c15ULL;
+    __builtin_memcpy(&random_state, &s, 8);
+    s ^= s >> 30;
+    s *= 0xbf58476d1ce4e5b9ULL;
+    s ^= s >> 27;
+    s *= 0x94d049bb133111ebULL;
+    s ^= s >> 31;
+    return std::bit_cast<double>((s >> 12) | 0x3FF0000000000000ULL) - 1.0;
+}
+
+} // namespace
+
+auto wasmwasm_uniform(double lower, double upper) -> double {
+    return lower + (next_u01() * (upper - lower));
+}
+
+auto wasmwasm_uniform_f64x2(v128_t lower, v128_t upper) -> v128_t {
+    return wasm_f64x2_make(wasmwasm_uniform(wasm_f64x2_extract_lane(lower, 0),
+                                            wasm_f64x2_extract_lane(upper, 0)),
+                           wasmwasm_uniform(wasm_f64x2_extract_lane(lower, 1),
+                                            wasm_f64x2_extract_lane(upper, 1)));
+}
+
+auto wasmwasm_gaussian(double mean, double std) -> double {
+    const double u = next_u01() + next_u01() + next_u01() + next_u01();
+    return mean + (std * (u - 2.0) * std::numbers::sqrt3);
+}
+
+auto wasmwasm_gaussian_f64x2(v128_t mean, v128_t std) -> v128_t {
+    return wasm_f64x2_make(wasmwasm_gaussian(wasm_f64x2_extract_lane(mean, 0),
+                                             wasm_f64x2_extract_lane(std, 0)),
+                           wasmwasm_gaussian(wasm_f64x2_extract_lane(mean, 1),
+                                             wasm_f64x2_extract_lane(std, 1)));
 }
 }

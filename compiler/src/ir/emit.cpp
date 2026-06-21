@@ -698,8 +698,10 @@ void emit_ir(const IRModule &ir, BinaryenModuleRef mod,
     if (!BinaryenHasMemory(mod))
         BinaryenAddMemoryImport(mod, "memory", "env", "memory", 0);
 
-    if (BinaryenGetFunction(mod, "wasmwasm_sin") == nullptr)
+    if (BinaryenGetFunction(mod, "wasmwasm_sin") == nullptr) {
+        BinaryenAddMemoryImport(mod, "0", "env", "memory", 0);
         import_math(mod, math_module);
+    }
 
     if (BinaryenGetGlobal(mod, "TIME") == nullptr)
         BinaryenAddGlobal(mod, "TIME", BinaryenTypeFloat64(), true,

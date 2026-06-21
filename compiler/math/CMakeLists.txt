@@ -23,6 +23,10 @@ add_custom_command(
     -Wl,--export=wasmwasm_fract_f64x2
     -Wl,--export=wasmwasm_clip_f64x2
     -Wl,--export=wasmwasm_exp_f64x2
+    -Wl,--export=wasmwasm_uniform
+    -Wl,--export=wasmwasm_uniform_f64x2
+    -Wl,--export=wasmwasm_gaussian
+    -Wl,--export=wasmwasm_gaussian_f64x2
     -Wl,--lto-O3
     -Wl,--gc-sections
     -isystem ${WASM_SYSROOT}/include/c++/v1

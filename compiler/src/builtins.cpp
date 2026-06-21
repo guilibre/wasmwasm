@@ -9,6 +9,8 @@ auto make_builtin_env()
     const auto void_type = Type::make<TypeBase>(BaseTypeKind::Void);
     const auto int_to_float = Type::make<TypeFun>(int_type, float_type);
     const auto float_to_float = Type::make<TypeFun>(float_type, float_type);
+    const auto float_to_float_to_float =
+        Type::make<TypeFun>(float_type, float_to_float);
     return {{
         {"PI", float_type},
         {"TIME", float_type},
@@ -19,6 +21,8 @@ auto make_builtin_env()
         {"fract", float_to_float},
         {"clip", float_to_float},
         {"exp", float_to_float},
+        {"uniform", float_to_float_to_float},
+        {"gaussian", float_to_float_to_float},
         {"buffer",
          Type::make<TypeFun>(
              float_type,
