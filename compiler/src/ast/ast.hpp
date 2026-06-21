@@ -41,6 +41,9 @@ enum class Operation : uint8_t {
     Div,
     Lt,
     Gt,
+    And,
+    Or,
+    Not,
 };
 
 struct BinaryOp {

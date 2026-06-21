@@ -6,9 +6,12 @@
 
 enum class TokenKind : uint8_t {
     Additive,
+    Ampersand,
     At,
+    Bang,
     Comma,
     Comparison,
+    Pipe,
     Delay,
     Eof,
     Eol,

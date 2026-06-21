@@ -116,6 +116,12 @@ auto Tokenizer::next() -> Token {
         return make_token(TokenKind::Comparison);
     case '>':
         return make_token(TokenKind::Comparison);
+    case '&':
+        return make_token(TokenKind::Ampersand);
+    case '|':
+        return make_token(TokenKind::Pipe);
+    case '!':
+        return make_token(TokenKind::Bang);
     case '=':
         return make_token(TokenKind::Eq);
     case '@':

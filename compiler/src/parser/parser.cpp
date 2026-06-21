@@ -78,12 +78,12 @@ auto Parser::parse_expression() -> ParseResult {
                 .col = current.column,
             });
         advance();
-        auto rhs = parse_comparison();
+        auto rhs = parse_logical_or();
         if (!rhs) return rhs;
         return Expr::make<OutputWrite>(index, std::move(*rhs));
     }
 
-    auto expr = parse_comparison();
+    auto expr = parse_logical_or();
     if (!expr) return std::unexpected(expr.error());
 
     if (match(TokenKind::Eq)) {
@@ -109,12 +109,38 @@ auto Parser::parse_expression() -> ParseResult {
                 .col = current.column,
             });
         advance();
-        auto rhs = parse_comparison();
+        auto rhs = parse_logical_or();
         if (!rhs) return rhs;
         return Expr::make<BufferWrite>(*target, std::move(*rhs));
     }
 
     return expr;
+}
+
+auto Parser::parse_logical_or() -> ParseResult {
+    auto left = parse_logical_and();
+    if (!left) return left;
+    while (match(TokenKind::Pipe)) {
+        advance();
+        auto right = parse_logical_and();
+        if (!right) return right;
+        left = Expr::make<BinaryOp>(Operation::Or, std::move(*left),
+                                    std::move(*right));
+    }
+    return left;
+}
+
+auto Parser::parse_logical_and() -> ParseResult {
+    auto left = parse_comparison();
+    if (!left) return left;
+    while (match(TokenKind::Ampersand)) {
+        advance();
+        auto right = parse_comparison();
+        if (!right) return right;
+        left = Expr::make<BinaryOp>(Operation::And, std::move(*left),
+                                    std::move(*right));
+    }
+    return left;
 }
 
 auto Parser::parse_comparison() -> ParseResult {
@@ -184,6 +210,12 @@ auto Parser::parse_unary() -> ParseResult {
         auto operand = parse_application();
         if (!operand) return operand;
         return Expr::make<UnaryOp>(Operation::Sub, std::move(*operand));
+    }
+    if (match(TokenKind::Bang)) {
+        advance();
+        auto operand = parse_application();
+        if (!operand) return operand;
+        return Expr::make<UnaryOp>(Operation::Not, std::move(*operand));
     }
     return parse_application();
 }

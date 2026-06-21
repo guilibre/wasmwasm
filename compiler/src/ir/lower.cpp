@@ -263,6 +263,11 @@ struct Lowerer {
                 if constexpr (std::is_same_v<T, UnaryOp>) {
                     const auto val = lower_expr(node.expr);
                     if (!val) throw std::runtime_error("unary op on void");
+                    if (node.op == Operation::Not) {
+                        auto r = tmp();
+                        emit(IRBinOp{r, Operation::Sub, IRLiteral{1.0}, *val});
+                        return IRLocalRef{r};
+                    }
                     auto r = tmp();
                     emit(IRUnaryNeg{r, *val});
                     return IRLocalRef{r};
@@ -272,6 +277,25 @@ struct Lowerer {
                     const auto l = lower_expr(node.left);
                     const auto r = lower_expr(node.right);
                     if (!l || !r) throw std::runtime_error("binary op on void");
+                    if (node.op == Operation::And) {
+                        auto res = tmp();
+                        emit(IRBinOp{res, Operation::Mul, *l, *r});
+                        return IRLocalRef{res};
+                    }
+                    if (node.op == Operation::Or) {
+                        auto t1 = tmp();
+                        emit(IRBinOp{t1, Operation::Mul, *l, *r});
+                        auto t2 = tmp();
+                        emit(IRBinOp{t2, Operation::Add, *l, *r});
+                        auto res = tmp();
+                        emit(IRBinOp{
+                            .result = res,
+                            .op = Operation::Sub,
+                            .left = IRLocalRef{t2},
+                            .right = IRLocalRef{t1},
+                        });
+                        return IRLocalRef{res};
+                    }
                     auto res = tmp();
                     emit(IRBinOp{res, node.op, *l, *r});
                     return IRLocalRef{res};
