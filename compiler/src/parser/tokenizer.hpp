@@ -32,6 +32,7 @@ enum class TokenKind : uint8_t {
     RBrace,
     RBracket,
     RParen,
+    Static,
 };
 
 struct Token {

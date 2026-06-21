@@ -265,8 +265,8 @@ auto lsp_diagnostics(const std::string &src) -> std::string {
 
 auto lsp_tokens(const std::string &src) -> std::string {
     static const std::unordered_set<std::string> builtins{
-        "sin", "cos",  "sign",        "fract", "clip",    "exp",
-        "PI",  "TIME", "SAMPLE_RATE", "OUT",   "uniform", "gaussian",
+        "sin", "cos",         "sign", "fract",   "clip",     "exp",
+        "PI",  "SAMPLE_RATE", "OUT",  "uniform", "gaussian",
     };
 
     const auto comments = scan_comments(src.c_str());
@@ -357,7 +357,6 @@ auto lsp_completions(const std::string &src, size_t /*line*/, size_t /*col*/)
          .detail = "Float -> Float -> Float",
          .kind = "function"},
         {.label = "PI", .detail = "Float", .kind = "constant"},
-        {.label = "TIME", .detail = "Float", .kind = "constant"},
         {.label = "SAMPLE_RATE", .detail = "Float", .kind = "constant"},
         {.label = "OUT", .detail = "Float", .kind = "constant"},
         {.label = "delay",

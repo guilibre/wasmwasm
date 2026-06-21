@@ -47,6 +47,28 @@ auto Parser::parse_code() -> ParseResult {
 }
 
 auto Parser::parse_expression() -> ParseResult {
+    if (match(TokenKind::Static)) {
+        advance();
+        if (!match(TokenKind::Identifier))
+            return std::unexpected(ParseError{
+                .msg = "Expected identifier after 'static'",
+                .line = current.line,
+                .col = current.column,
+            });
+        auto name = current;
+        advance();
+        if (!match(TokenKind::Eq))
+            return std::unexpected(ParseError{
+                .msg = "Expected '=' after static variable name",
+                .line = current.line,
+                .col = current.column,
+            });
+        advance();
+        auto init = parse_expression();
+        if (!init) return init;
+        return Expr::make<StaticBind>(name, std::move(*init));
+    }
+
     if (match(TokenKind::Out)) {
         advance();
         if (!match(TokenKind::LBracket))
@@ -162,7 +184,7 @@ auto Parser::parse_comparison() -> ParseResult {
     auto left = parse_additive();
     if (!left) return left;
     if (match(TokenKind::Comparison)) {
-        Operation op = current.lexeme == "<" ? Operation::Lt : Operation::Gt;
+        const auto op = current.lexeme == "<" ? Operation::Lt : Operation::Gt;
         advance();
         auto right = parse_additive();
         if (!right) return right;

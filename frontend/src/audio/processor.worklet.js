@@ -2,6 +2,7 @@ class WasmProcessor extends AudioWorkletProcessor {
     main = () => {};
     heap = null;
     has_capture = false;
+    _vizCounter = 0;
 
     constructor() {
         super();
@@ -53,11 +54,11 @@ class WasmProcessor extends AudioWorkletProcessor {
             }
         }
 
-        if (this.port && currentFrame % 128 === 0) {
-            this.port.postMessage({
-                type: 'signal',
-                data: Array.from(out_l.slice(0, 128)),
-            });
+        if (this.port && ++this._vizCounter >= 16) {
+            this._vizCounter = 0;
+            const buf = new Float32Array(num_samples);
+            buf.set(out_l);
+            this.port.postMessage({ type: 'signal', data: buf }, [buf.buffer]);
         }
 
         return true;

@@ -76,6 +76,7 @@ auto Tokenizer::scan_identifier() -> Token {
         {"delay", TokenKind::Delay},
         {"IN", TokenKind::In},
         {"OUT", TokenKind::Out},
+        {"static", TokenKind::Static},
     };
     const auto lexeme = source.substr(start, current - start);
     if (auto it = keywords.find(lexeme); it != keywords.end())

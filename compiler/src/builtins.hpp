@@ -12,8 +12,7 @@ inline constexpr std::array<std::string_view, 8> math_builtins = {
     "sin", "cos", "sign", "fract", "clip", "exp", "uniform", "gaussian",
 };
 
-inline constexpr std::array<std::string_view, 4> language_globals = {
-    "TIME",
+inline constexpr std::array<std::string_view, 3> language_globals = {
     "PI",
     "SAMPLE_RATE",
     "OUT",

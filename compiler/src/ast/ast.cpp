@@ -154,6 +154,15 @@ auto ASTPrinter::dispatch(const ExprPtr &expr, InputRead &ir, size_t indent)
            attach_type("IN[" + std::to_string(ir.index) + "]", expr);
 }
 
+auto ASTPrinter::dispatch(const ExprPtr &expr, StaticBind &sb, size_t indent)
+    -> std::string {
+    std::ostringstream out;
+    out << indent_str(indent)
+        << attach_type("StaticBind(" + sb.name.lexeme + ")", expr);
+    out << print(sb.init, indent + 2);
+    return out.str();
+}
+
 auto ASTPrinter::dispatch(const ExprPtr &expr, OutputWrite &ow, size_t indent)
     -> std::string {
     std::ostringstream out;

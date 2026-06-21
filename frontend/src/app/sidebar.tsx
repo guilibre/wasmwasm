@@ -3,13 +3,14 @@ import { useRef, useEffect, useState, useCallback } from 'react';
 interface Props {
     analyser_l: AnalyserNode | null;
     analyser_r: AnalyserNode | null;
+    on_close: () => void;
 }
 
 const MIN_WIDTH = 180;
 const MAX_WIDTH = 600;
 const DEFAULT_WIDTH = 260;
 
-export function Sidebar({ analyser_l, analyser_r }: Props) {
+export function Sidebar({ analyser_l, analyser_r, on_close }: Props) {
     const waveform_ref = useRef<HTMLCanvasElement>(null);
     const spectro_ref = useRef<HTMLCanvasElement>(null);
     const raf_ref = useRef<number>(0);
@@ -46,8 +47,14 @@ export function Sidebar({ analyser_l, analyser_r }: Props) {
         const sc = spectro_ref.current;
         if (!wc || !sc) return;
 
+        if (!analyser_l || !analyser_r) {
+            return;
+        }
+
         wc.width = wc.offsetWidth;
+        wc.height = wc.offsetHeight;
         sc.width = sc.offsetWidth;
+        sc.height = sc.offsetHeight;
 
         const wctx = wc.getContext('2d')!;
         const sctx = sc.getContext('2d')!;
@@ -58,12 +65,6 @@ export function Sidebar({ analyser_l, analyser_r }: Props) {
         const bctx = buf.getContext('2d')!;
         bctx.fillStyle = '#0d0f1a';
         bctx.fillRect(0, 0, buf.width, buf.height);
-
-        if (!analyser_l || !analyser_r) {
-            draw_silence(wctx, wc.width, wc.height);
-            sctx.drawImage(buf, 0, 0);
-            return;
-        }
 
         const fft_size = analyser_l.fftSize;
         const bin_count = analyser_l.frequencyBinCount;
@@ -136,7 +137,8 @@ export function Sidebar({ analyser_l, analyser_r }: Props) {
             for (let y = 0; y < SH; y++) {
                 const is_top = y < half_h;
                 const local_y = is_top ? y : y - half_h;
-                const bin = ((1 - local_y / half_h) * (bin_count - 1)) | 0;
+                const norm = 1 - local_y / half_h;
+                const bin = Math.min(bin_count - 1, Math.pow(bin_count, norm) | 0);
                 const db = is_top ? freq_l[bin] : freq_r[bin];
                 const t = Math.max(0, Math.min(1, (db + 96) / 96));
                 const [r, g, b] = hsl_to_rgb((240 - t * 200) / 360, 0.8, t * 0.5);
@@ -163,37 +165,22 @@ export function Sidebar({ analyser_l, analyser_r }: Props) {
     return (
         <div className="app__sidebar" style={{ width }}>
             <div className="app__sidebar-handle" onMouseDown={on_handle_mousedown} />
+            <div className="app__sidebar-header">
+                <button className="app__sidebar-close" onClick={on_close}>
+                    ×
+                </button>
+            </div>
             <span className="app__sidebar-label">waveform</span>
             <canvas
                 ref={waveform_ref}
                 className="app__sidebar-canvas"
-                height={96}
+                style={{ flex: 3 }}
                 onWheel={on_waveform_wheel}
             />
             <span className="app__sidebar-label">spectrum</span>
-            <canvas ref={spectro_ref} className="app__sidebar-canvas" height={180} />
+            <canvas ref={spectro_ref} className="app__sidebar-canvas" style={{ flex: 7 }} />
         </div>
     );
-}
-
-function draw_silence(ctx: CanvasRenderingContext2D, w: number, h: number) {
-    ctx.fillStyle = '#0d0f1a';
-    ctx.fillRect(0, 0, w, h);
-    const half = h >> 1;
-    ctx.strokeStyle = '#2a2d3e';
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(0, half >> 1);
-    ctx.lineTo(w, half >> 1);
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.moveTo(0, half + (half >> 1));
-    ctx.lineTo(w, half + (half >> 1));
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.moveTo(0, half);
-    ctx.lineTo(w, half);
-    ctx.stroke();
 }
 
 function hsl_to_rgb(h: number, s: number, l: number): [number, number, number] {

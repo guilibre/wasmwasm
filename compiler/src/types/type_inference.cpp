@@ -191,6 +191,16 @@ void infer_expr(const ExprPtr &expr,
                 return Type::make<TypeBase>(BaseTypeKind::Void);
             }
 
+            if constexpr (std::is_same_v<T, StaticBind>) {
+                infer_expr(node.init, env, subst, gen);
+                auto existing = lookup_env(node.name.lexeme, env);
+                if (!existing)
+                    env.back().emplace(node.name.lexeme, node.init->type);
+                else
+                    unify(*existing, node.init->type, subst);
+                return Type::make<TypeBase>(BaseTypeKind::Void);
+            }
+
             if constexpr (std::is_same_v<T, Conditional>) {
                 infer_expr(node.condition, env, subst, gen);
                 infer_expr(node.then_branch, env, subst, gen);

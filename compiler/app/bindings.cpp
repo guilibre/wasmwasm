@@ -23,6 +23,8 @@ std::function<void(const ExprPtr &)> make_monomorphize(
             [&](const auto &node) -> auto {
                 using T = std::decay_t<decltype(node)>;
                 if constexpr (std::is_same_v<T, Bind>) monomorphize(node.value);
+                if constexpr (std::is_same_v<T, StaticBind>)
+                    monomorphize(node.init);
                 if constexpr (std::is_same_v<T, BufferWrite>)
                     monomorphize(node.value);
                 if constexpr (std::is_same_v<T, BufferCtor>)

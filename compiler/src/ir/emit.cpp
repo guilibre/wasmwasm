@@ -141,6 +141,8 @@ void prescan(FnCtx &ctx, const std::vector<IRInstr> &body) {
                     prescan(ctx, i.body->then_body);
                     prescan(ctx, i.body->else_body);
                 }
+                if constexpr (std::is_same_v<T, IRStaticRead>)
+                    ctx.ensure_var(i.result, IRType::Float);
             },
             instr);
     }
@@ -390,12 +392,7 @@ auto emit_stmts(FnCtx &ctx, const std::vector<IRInstr> &body)
                     auto *g = BinaryenGlobalGet(ctx.mod, i.name.c_str(),
                                                 to_btype(i.type));
                     BinaryenExpressionRef expr = g;
-                    if (i.name == "TIME")
-                        expr = BinaryenBinary(
-                            ctx.mod, BinaryenDivFloat64(), g,
-                            BinaryenConst(ctx.mod, BinaryenLiteralFloat64(
-                                                       ctx.sample_rate)));
-                    else if (i.name == "SAMPLE_RATE")
+                    if (i.name == "SAMPLE_RATE")
                         expr = BinaryenConst(
                             ctx.mod, BinaryenLiteralFloat64(ctx.sample_rate));
 
@@ -426,6 +423,17 @@ auto emit_stmts(FnCtx &ctx, const std::vector<IRInstr> &body)
                     }
                     stmts.push_back(
                         BinaryenIf(ctx.mod, taken, then_block, else_block));
+                }
+                if constexpr (std::is_same_v<T, IRStaticRead>) {
+                    const auto gname = pfx(*ctx.ir, i.name);
+                    stmts.push_back(ctx.set(
+                        i.result, BinaryenGlobalGet(ctx.mod, gname.c_str(),
+                                                    BinaryenTypeFloat64())));
+                }
+                if constexpr (std::is_same_v<T, IRStaticWrite>) {
+                    const auto gname = pfx(*ctx.ir, i.name);
+                    stmts.push_back(BinaryenGlobalSet(ctx.mod, gname.c_str(),
+                                                      ctx.get(i.value)));
                 }
                 if constexpr (std::is_same_v<T, IRReturn>) {
                     if (i.value) stmts.push_back(ctx.get(*i.value));
@@ -720,28 +728,7 @@ auto emit_body_vec(FnCtxVec &ctx, const std::vector<IRInstr> &body)
                 }
                 if constexpr (std::is_same_v<T, IRGlobalRead>) {
                     BinaryenExpressionRef expr = nullptr;
-                    if (i.name == "TIME") {
-                        auto *t0 = BinaryenBinary(
-                            ctx.mod, BinaryenDivFloat64(),
-                            BinaryenGlobalGet(ctx.mod, "TIME",
-                                              BinaryenTypeFloat64()),
-                            BinaryenConst(ctx.mod, BinaryenLiteralFloat64(
-                                                       ctx.sample_rate)));
-                        auto *t1 = BinaryenBinary(
-                            ctx.mod, BinaryenDivFloat64(),
-                            BinaryenBinary(
-                                ctx.mod, BinaryenAddFloat64(),
-                                BinaryenGlobalGet(ctx.mod, "TIME",
-                                                  BinaryenTypeFloat64()),
-                                BinaryenConst(ctx.mod,
-                                              BinaryenLiteralFloat64(1.0))),
-                            BinaryenConst(ctx.mod, BinaryenLiteralFloat64(
-                                                       ctx.sample_rate)));
-                        auto *s =
-                            BinaryenUnary(ctx.mod, BinaryenSplatVecF64x2(), t0);
-                        expr = BinaryenSIMDReplace(
-                            ctx.mod, BinaryenReplaceLaneVecF64x2(), s, 1, t1);
-                    } else if (i.name == "SAMPLE_RATE") {
+                    if (i.name == "SAMPLE_RATE") {
                         expr = splat_f64(ctx.mod, ctx.sample_rate);
                     } else {
                         auto *g = BinaryenGlobalGet(ctx.mod, i.name.c_str(),
@@ -779,6 +766,7 @@ void emit_function_vec(const IRFunction &fn, BinaryenModuleRef mod,
 }
 
 auto is_main_vec_eligible(const IRModule &ir) -> bool {
+    if (!ir.static_vars.empty()) return false;
     if (!std::ranges::all_of(ir.buffers, [](const IRBufferDecl &b) -> bool {
             return b.size_elements >= 2;
         }))
@@ -827,16 +815,18 @@ void emit_ir(const IRModule &ir, BinaryenModuleRef mod,
         import_math(mod, math_module);
     }
 
-    if (BinaryenGetGlobal(mod, "TIME") == nullptr)
-        BinaryenAddGlobal(mod, "TIME", BinaryenTypeFloat64(), true,
-                          BinaryenConst(mod, BinaryenLiteralFloat64(0.0)));
-
     for (const auto &fn : ir.functions) emit_function(fn, mod, sample_rate, ir);
 
     for (const auto &buf : ir.buffers) {
         const auto bname = pfx(ir, buf.name);
         BinaryenAddGlobal(mod, bname.c_str(), BinaryenTypeInt32(), true,
                           BinaryenConst(mod, BinaryenLiteralInt32(0)));
+    }
+
+    for (const auto &sv : ir.static_vars) {
+        const auto gname = pfx(ir, sv.name);
+        BinaryenAddGlobal(mod, gname.c_str(), to_btype(sv.type), true,
+                          BinaryenConst(mod, BinaryenLiteralFloat64(0.0)));
     }
 
     for (size_t i = 0; i < ir.num_inputs; ++i) {

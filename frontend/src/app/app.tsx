@@ -16,8 +16,10 @@ export default function App() {
     const micSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
     const analyser_l_ref = useRef<AnalyserNode | null>(null);
     const analyser_r_ref = useRef<AnalyserNode | null>(null);
+    const splitter_ref = useRef<ChannelSplitterNode | null>(null);
     const [analysers, set_analysers] = useState<{ l: AnalyserNode; r: AnalyserNode } | null>(null);
     const [is_playing, set_is_playing] = useState(false);
+    const [sidebar_visible, set_sidebar_visible] = useState(true);
     const [error, set_error] = useState<string | null>(null);
     const import_ref = useRef<HTMLInputElement>(null);
     const editor_ref = useRef<EditorHandle>(null);
@@ -108,7 +110,8 @@ export default function App() {
         const json = patch_to_json(store.nodes, store.edges);
 
         if (!audioContextRef.current) {
-            const context = new AudioContext();
+            const context = new AudioContext({ latencyHint: 'interactive' });
+            console.log('audio latency:', context.baseLatency, context.outputLatency);
             await context.audioWorklet.addModule(workletUrl);
             const node = new AudioWorkletNode(context, 'wasm-processor', {
                 numberOfInputs: 1,
@@ -119,8 +122,8 @@ export default function App() {
             const splitter = context.createChannelSplitter(2);
             const al = context.createAnalyser();
             const ar = context.createAnalyser();
-            al.fftSize = 2048;
-            ar.fftSize = 2048;
+            al.fftSize = 4096;
+            ar.fftSize = 4096;
             al.smoothingTimeConstant = 0.75;
             ar.smoothingTimeConstant = 0.75;
             node.connect(splitter);
@@ -130,13 +133,14 @@ export default function App() {
 
             analyser_l_ref.current = al;
             analyser_r_ref.current = ar;
+            splitter_ref.current = splitter;
             set_analysers({ l: al, r: ar });
 
             audioContextRef.current = context;
             workletNodeRef.current = node;
         }
 
-        if (analyser_l_ref.current && analyser_r_ref.current)
+        if (sidebar_visible && analyser_l_ref.current && analyser_r_ref.current)
             set_analysers({ l: analyser_l_ref.current, r: analyser_r_ref.current });
 
         let wasm: Uint8Array;
@@ -156,6 +160,24 @@ export default function App() {
         await context.resume();
         set_is_playing(true);
     };
+
+    const toggle_sidebar = useCallback(() => {
+        const al = analyser_l_ref.current;
+        const ar = analyser_r_ref.current;
+        const splitter = splitter_ref.current;
+        if (sidebar_visible) {
+            al?.disconnect();
+            ar?.disconnect();
+            set_analysers(null);
+        } else {
+            if (is_playing && splitter && al && ar) {
+                splitter.connect(al, 0);
+                splitter.connect(ar, 1);
+                set_analysers({ l: al, r: ar });
+            }
+        }
+        set_sidebar_visible((v) => !v);
+    }, [sidebar_visible, is_playing]);
 
     const stop = async () => {
         if (micSourceRef.current) {
@@ -194,7 +216,17 @@ export default function App() {
                 <ReactFlowProvider>
                     <PatchEditor store={store} />
                 </ReactFlowProvider>
-                <Sidebar analyser_l={analysers?.l ?? null} analyser_r={analysers?.r ?? null} />
+                {sidebar_visible ? (
+                    <Sidebar
+                        analyser_l={analysers?.l ?? null}
+                        analyser_r={analysers?.r ?? null}
+                        on_close={toggle_sidebar}
+                    />
+                ) : (
+                    <button className="app__sidebar-open" onClick={toggle_sidebar}>
+                        ‹
+                    </button>
+                )}
             </div>
 
             {selected_block && (

@@ -8,120 +8,97 @@ A functional audio synthesis language that compiles to WebAssembly in the browse
 
 wasmwasm is a small compiled language designed for audio synthesis. Programs describe how to compute a single audio sample per frame. The compiler (written in C++, built with Emscripten) runs entirely in the browser — source code is compiled on-the-fly to a WebAssembly module, which is then executed inside a Web Audio `AudioWorkletProcessor`.
 
-**Pipeline:**
-
 ```
 source code → tokenizer → parser → AST → type inference → Binaryen IR → .wasm → AudioWorklet
 ```
 
 ## Language
 
-Programs consist of expressions and assignments. The special variable `OUT` is the audio output (expected in the range `[-1, 1]`). `TIME` and `PI` are built-in constants.
+Programs consist of expressions and variable bindings. Lines beginning with `#` are comments.
 
-### Basic synthesis
+### Variables
 
 ```
-OUT <- 0.2 * sin (TIME * 440 * 2 * PI)
+freq = 440
+OUT[0] <- 0.2 * sin (TIME * freq * 2 * PI)
 ```
+
+`OUT[i]` is the audio output for channel `i` (expected range `[-1, 1]`). `TIME`, `PI`, and `SAMPLE_RATE` are built-in constants.
 
 ### Functions (lambdas)
 
+Functions are defined with `{params. body}` and applied by juxtaposition. Multiple parameters are curried.
+
 ```
 osc = {amp freq. amp * sin (TIME * freq * 2 * PI)}
-OUT <- 0.2 * osc 1.0 440
+OUT[0] <- osc 0.2 440
 ```
 
-### Buffers (persistent state between frames)
+### Buffers (persistent state)
 
-Buffers hold values that persist across audio frames — essential for filters, delays, and oscillators with feedback.
+Buffers hold values that persist across audio frames — essential for filters, delays, and feedback oscillators.
 
 ```
-x = delay 1 {i. 0.0}
+x = delay N {i. init_expr}
 ```
 
-This declares a buffer named `x` of size 1, initialized to `0.0`. Read from it with `@x`; write to it with `x <- value`.
+`N` is the buffer size (1–1024). The lambda initializes each element by index.
+
+| Syntax         | Meaning                                   |
+| -------------- | ----------------------------------------- |
+| `@buf`         | Read from previous frame (delay 1)        |
+| `@[n]buf`      | Read with delay offset `n`                |
+| `buf <- value` | Write to buffer (takes effect next frame) |
+
+### Operators
+
+| Category    | Operators            |
+| ----------- | -------------------- |
+| Arithmetic  | `+`  `-`  `*`  `/`   |
+| Comparison  | `<`  `>`             |
+| Logical     | `&`  `\|`  `!`       |
+| Conditional | `cond ? then : else` |
+| Unary       | `-x`                 |
 
 ### Built-in functions
 
-| Function  | Description        |
-| --------- | ------------------ |
-| `sin x`   | Sine               |
-| `cos x`   | Cosine             |
-| `sign x`  | Sign (±1)          |
-| `fract x` | Fractional part    |
-| `clip x`  | Clamp to `[-1, 1]` |
+| Function       | Description                |
+| -------------- | -------------------------- |
+| `sin x`        | Sine                       |
+| `cos x`        | Cosine                     |
+| `exp x`        | Exponential                |
+| `sign x`       | Sign (±1)                  |
+| `fract x`      | Fractional part            |
+| `clip x`       | Clamp to `[-1, 1]`         |
+| `uniform x y`  | Uniform random in [x, y]   |
+| `gaussian x y` | Gaussian random (μ=x, σ=y) |
 
-### Comments
+### `static`
 
-```
-# this is a comment
-```
-
-## Examples
-
-### Harmonic oscillator
+A `static` binding is initialized once at startup and persists across frames without requiring an explicit buffer.
 
 ```
-xb = delay 1 {x. 0.0}
-yb = delay 1 {y. 0.5}
-
-k = 1
-h = 0.1
-
-x = @xb
-y = @yb
-
-y = y - k * x * h/2
-x = x +     y * h
-y = y - k * x * h/2
-
-xb <- x
-yb <- y
-
-OUT <- 0.2 * clip x
+static phase = 0.0
 ```
-
-### Karplus-Strong (plucked string)
-
-```
-x = delay 128 {x. fract (47684873451.123783453 * sin (x/1024))}
-y = delay 2 {x. 0}
-
-c = cos (1000/SAMPLE_RATE)
-r = exp (-15000/SAMPLE_RATE)
-k = 1 - r
-
-tmp = (c + r) * @[1]y - c * r * @y - k * c * @[1]x + k * @x
-
-x <- tmp
-y <- tmp
-
-#always clip so your ears don't bleed
-OUT <- 0.5 * clip tmp
-```
-
-More examples (Chua's circuit, double pendulum) are available in `frontend/examples/`.
 
 ## Building
 
-**Requirements:** Emscripten, CMake, Node.js
+**Requirements:** Emscripten, CMake 3.14+, Node.js
 
 ```bash
-sh build.sh
-cd frontend
-npm install
-npm run dev
+# Linux / Mac
+./build.sh
+
+# Windows
+./build.ps1
 ```
 
-`build.sh` compiles the C++ compiler to WebAssembly and copies the output into the frontend source tree. The dev server is then available at `http://localhost:5173`.
+The build scripts compile the C++ compiler to WebAssembly and copy the output into the frontend source tree.
 
-### Windows
-
-```powershell
-./build.ps1
+```bash
 cd frontend
 npm install
-npm run dev
+npm run dev   # http://localhost:5173
 ```
 
 ## Project structure
@@ -132,13 +109,14 @@ compiler/         C++ compiler source
     parser/       tokenizer and parser
     ast/          AST nodes
     types/        type inference (Hindley-Milner)
+    ir/           intermediate representation
     code_gen/     Binaryen-based WebAssembly emitter
   math/           math intrinsics compiled separately (sin, cos, etc.)
-  app/            CLI entry point (for local testing)
-frontend/          Vite + React frontend
+  app/            Emscripten bindings
+frontend/         Vite + React frontend
   src/
-    audio/        AudioWorklet processor and compiler glue
-    app/          UI (editor + oscilloscope)
+    app/          editor, oscilloscope, spectrogram
+    patch/        visual node-based routing editor
   examples/       example programs
 ```
 

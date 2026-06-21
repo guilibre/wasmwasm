@@ -1,9 +1,18 @@
+param(
+    [Parameter(Position=0)]
+    [int]$Jobs = 0
+)
+
 $ErrorActionPreference = "Stop"
 
 try {
     Set-Location -Path "compiler"
     emcmake cmake -S . -B build -DBUILD_DEBUGGER=OFF
-    cmake --build build
+    if ($Jobs -gt 0) {
+        cmake --build build -- "-j$Jobs"
+    } else {
+        cmake --build build
+    }
     Set-Location -Path "..\frontend"
     if (!(Test-Path "public")) { New-Item -ItemType Directory -Path "public" | Out-Null }
     Copy-Item "..\compiler\build\math\math.wasm" "public\"

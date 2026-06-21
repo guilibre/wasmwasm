@@ -13,7 +13,6 @@ auto make_builtin_env()
         Type::make<TypeFun>(float_type, float_to_float);
     return {{
         {"PI", float_type},
-        {"TIME", float_type},
         {"SAMPLE_RATE", float_type},
         {"cos", float_to_float},
         {"sin", float_to_float},

@@ -1,0 +1,10 @@
+CompileFlags:
+  Remove:
+    - -sWASM_LEGACY_EXCEPTIONS=0
+    - -mbulk-memory
+    - -mmutable-globals
+    - -mnontrapping-fptoint
+    - -msign-ext
+    - -msimd128
+    - -mtail-call
+    - -fwasm-exceptions

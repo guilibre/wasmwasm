@@ -46,7 +46,9 @@ struct Lowerer {
 
     std::unordered_map<std::string, FnInfo> fns;
     std::unordered_set<std::string> bufs;
+    std::unordered_set<std::string> statics;
     std::unordered_map<std::string, IRType> locals;
+    std::vector<IRInstr> static_init_body;
 
     size_t tmp_n = 0;
 
@@ -141,6 +143,7 @@ struct Lowerer {
                 if constexpr (std::is_same_v<T, InputRead>) return {};
                 if constexpr (std::is_same_v<T, OutputWrite>)
                     return free_vars_of(node.value, bound);
+                if constexpr (std::is_same_v<T, StaticBind>) return {};
 
                 return {};
             },
@@ -212,8 +215,14 @@ struct Lowerer {
 
                     if (name == "PI") return IRLiteral{std::numbers::pi};
 
-                    if (name == "TIME" || name == "SAMPLE_RATE")
+                    if (name == "SAMPLE_RATE")
                         return emit_global_read(name, IRType::Float);
+
+                    if (statics.contains(name)) {
+                        auto r = tmp();
+                        emit(IRStaticRead{r, name});
+                        return IRLocalRef{r};
+                    }
 
                     if (fns.contains(name))
                         throw std::runtime_error("Function '" + name +
@@ -379,6 +388,12 @@ struct Lowerer {
                         return std::nullopt;
                     }
 
+                    if (statics.contains(name)) {
+                        const auto val = lower_expr(node.value);
+                        if (val) emit(IRStaticWrite{name, *val});
+                        return std::nullopt;
+                    }
+
                     const auto val = lower_expr(node.value);
                     if (!val) return std::nullopt;
                     const auto type = ir_type_of(node.value->type);
@@ -388,6 +403,20 @@ struct Lowerer {
                         .value = *val,
                         .type = type,
                     });
+                    return std::nullopt;
+                }
+
+                if constexpr (std::is_same_v<T, StaticBind>) {
+                    const auto &name = node.name.lexeme;
+                    statics.insert(name);
+                    mod.static_vars.push_back({name, IRType::Float});
+                    auto *saved = cur;
+                    cur = &static_init_body;
+                    const auto val = lower_expr(node.init);
+                    cur = saved;
+                    if (val)
+                        static_init_body.emplace_back(
+                            IRStaticWrite{name, *val});
                     return std::nullopt;
                 }
 
@@ -497,6 +526,15 @@ struct Lowerer {
         cur = saved_cur;
         mod.functions.emplace_back(std::move(fn));
         mod.main_fn = "main$body";
+
+        if (!static_init_body.empty()) {
+            IRFunction sfn;
+            sfn.name = "static_init";
+            sfn.return_type = IRType::Void;
+            sfn.body = std::move(static_init_body);
+            mod.functions.push_back(std::move(sfn));
+            mod.static_init_fn = "static_init";
+        }
     }
 
     void scan_arity(const std::vector<IRInstr> &body) {

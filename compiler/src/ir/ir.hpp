@@ -72,6 +72,16 @@ struct IRIf {
     std::shared_ptr<IRIfBody> body;
 };
 
+struct IRStaticRead {
+    std::string result;
+    std::string name;
+};
+
+struct IRStaticWrite {
+    std::string name;
+    IRValue value;
+};
+
 struct IRReturn {
     std::optional<IRValue> value;
 };
@@ -86,10 +96,10 @@ struct IROutputWrite {
     IRValue value;
 };
 
-using IRInstr =
-    std::variant<IRBinOp, IRUnaryNeg, IRAssign, IRCall, IRBufferRead,
-                 IRBufferReadDelayed, IRBufferWrite, IRGlobalRead, IRIf,
-                 IRInputRead, IROutputWrite, IRReturn>;
+using IRInstr = std::variant<IRBinOp, IRUnaryNeg, IRAssign, IRCall,
+                             IRBufferRead, IRBufferReadDelayed, IRBufferWrite,
+                             IRGlobalRead, IRIf, IRInputRead, IROutputWrite,
+                             IRStaticRead, IRStaticWrite, IRReturn>;
 
 struct IRIfBody {
     std::vector<IRInstr> then_body;
@@ -116,12 +126,19 @@ struct IRBufferDecl {
 
 inline constexpr uint32_t buffer_memory_start = 4096;
 
+struct IRStaticVar {
+    std::string name;
+    IRType type;
+};
+
 struct IRModule {
     std::string name;
     std::vector<IRFunction> functions;
     std::vector<IRBufferDecl> buffers;
+    std::vector<IRStaticVar> static_vars;
     std::string init_fn;
     std::string main_fn;
+    std::string static_init_fn;
     size_t num_inputs = 0;
     size_t num_outputs = 0;
     uint32_t memory_base = buffer_memory_start;

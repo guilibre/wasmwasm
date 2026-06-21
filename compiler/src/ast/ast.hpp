@@ -85,6 +85,11 @@ struct Conditional {
     std::optional<ExprPtr> else_branch;
 };
 
+struct StaticBind {
+    Token name;
+    ExprPtr init;
+};
+
 struct InputRead {
     size_t index;
 };
@@ -104,7 +109,7 @@ struct Expr {
     using ExprNode =
         std::variant<Bind, CodeBlock, BinaryOp, BufferCtor, BufferRead,
                      BufferWrite, Call, Conditional, InputRead, Lambda, Literal,
-                     OutputWrite, UnaryOp, Variable>;
+                     OutputWrite, StaticBind, UnaryOp, Variable>;
 
     ExprNode node;
     TypePtr type;
@@ -150,6 +155,8 @@ class ASTPrinter {
     auto dispatch(const ExprPtr &expr, InputRead &ir, size_t indent)
         -> std::string;
     auto dispatch(const ExprPtr &expr, OutputWrite &ow, size_t indent)
+        -> std::string;
+    auto dispatch(const ExprPtr &expr, StaticBind &sb, size_t indent)
         -> std::string;
 
     static auto tokenkind_to_string(TokenKind kind) -> std::string;
