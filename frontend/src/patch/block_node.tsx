@@ -4,7 +4,7 @@ import type { NodeProps } from '@xyflow/react';
 import type { BlockData } from './use_patch_store';
 
 export function BlockNode({ id, data, selected }: NodeProps) {
-    const { name, num_inputs, num_outputs } = data as unknown as BlockData;
+    const { name, num_inputs, num_outputs, params } = data as unknown as BlockData;
     const updateNodeInternals = useUpdateNodeInternals();
     useEffect(() => {
         updateNodeInternals(id);
@@ -22,6 +22,15 @@ export function BlockNode({ id, data, selected }: NodeProps) {
                     className="ww-handle ww-handle--in"
                 />
             ))}
+            {params && params.length > 0 && (
+                <div className="ww-node__params">
+                    {params.map((p) => (
+                        <span key={p} className="ww-node__param">
+                            {p}
+                        </span>
+                    ))}
+                </div>
+            )}
             <div className="ww-node__label">{name}</div>
             {Array.from({ length: num_outputs }, (_, i) => (
                 <Handle

@@ -201,6 +201,12 @@ void infer_expr(const ExprPtr &expr,
                 return Type::make<TypeBase>(BaseTypeKind::Void);
             }
 
+            if constexpr (std::is_same_v<T, ParamBind>) {
+                auto float_type = Type::make<TypeBase>(BaseTypeKind::Float);
+                env.back().emplace(node.name.lexeme, float_type);
+                return Type::make<TypeBase>(BaseTypeKind::Void);
+            }
+
             if constexpr (std::is_same_v<T, Conditional>) {
                 infer_expr(node.condition, env, subst, gen);
                 infer_expr(node.then_branch, env, subst, gen);

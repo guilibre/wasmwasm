@@ -73,10 +73,9 @@ auto Tokenizer::scan_identifier() -> Token {
     while ((std::isalnum(peek_current()) != 0) || peek_current() == '_')
         advance();
     static const std::unordered_map<std::string_view, TokenKind> keywords = {
-        {"delay", TokenKind::Delay},
-        {"IN", TokenKind::In},
-        {"OUT", TokenKind::Out},
-        {"static", TokenKind::Static},
+        {"delay", TokenKind::Delay}, {"IN", TokenKind::In},
+        {"OUT", TokenKind::Out},     {"static", TokenKind::Static},
+        {"param", TokenKind::Param},
     };
     const auto lexeme = source.substr(start, current - start);
     if (auto it = keywords.find(lexeme); it != keywords.end())

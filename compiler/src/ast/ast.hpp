@@ -91,6 +91,11 @@ struct StaticBind {
     ExprPtr init;
 };
 
+struct ParamBind {
+    Token name;
+    ExprPtr default_val;
+};
+
 struct InputRead {
     size_t index;
 };
@@ -110,7 +115,7 @@ struct Expr {
     using ExprNode =
         std::variant<Bind, CodeBlock, BinaryOp, BufferCtor, BufferRead,
                      BufferWrite, Call, Conditional, InputRead, Lambda, Literal,
-                     OutputWrite, StaticBind, UnaryOp, Variable>;
+                     OutputWrite, ParamBind, StaticBind, UnaryOp, Variable>;
 
     ExprNode node;
     TypePtr type;
@@ -156,6 +161,8 @@ class ASTPrinter {
     auto dispatch(const ExprPtr &expr, InputRead &ir, size_t indent)
         -> std::string;
     auto dispatch(const ExprPtr &expr, OutputWrite &ow, size_t indent)
+        -> std::string;
+    auto dispatch(const ExprPtr &expr, ParamBind &pb, size_t indent)
         -> std::string;
     auto dispatch(const ExprPtr &expr, StaticBind &sb, size_t indent)
         -> std::string;

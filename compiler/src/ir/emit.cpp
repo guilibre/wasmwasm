@@ -143,6 +143,8 @@ void prescan(FnCtx &ctx, const std::vector<IRInstr> &body) {
                 }
                 if constexpr (std::is_same_v<T, IRStaticRead>)
                     ctx.ensure_var(i.result, IRType::Float);
+                if constexpr (std::is_same_v<T, IRParamRead>)
+                    ctx.ensure_var(i.result, IRType::Float);
             },
             instr);
     }
@@ -435,6 +437,12 @@ auto emit_stmts(FnCtx &ctx, const std::vector<IRInstr> &body)
                     stmts.push_back(BinaryenGlobalSet(ctx.mod, gname.c_str(),
                                                       ctx.get(i.value)));
                 }
+                if constexpr (std::is_same_v<T, IRParamRead>) {
+                    const auto gname = pfx(*ctx.ir, "param$" + i.name);
+                    stmts.push_back(ctx.set(
+                        i.result, BinaryenGlobalGet(ctx.mod, gname.c_str(),
+                                                    BinaryenTypeFloat64())));
+                }
                 if constexpr (std::is_same_v<T, IRReturn>) {
                     if (i.value) stmts.push_back(ctx.get(*i.value));
                 }
@@ -626,6 +634,8 @@ void prescan_vec(FnCtxVec &ctx, const std::vector<IRInstr> &body) {
                     ctx.ensure_var(i.result);
                 if constexpr (std::is_same_v<T, IRGlobalRead>)
                     ctx.ensure_var(i.result);
+                if constexpr (std::is_same_v<T, IRParamRead>)
+                    ctx.ensure_var(i.result);
             },
             instr);
     }
@@ -738,6 +748,14 @@ auto emit_body_vec(FnCtxVec &ctx, const std::vector<IRInstr> &body)
                     }
                     stmts.push_back(ctx.set(i.result, expr));
                 }
+                if constexpr (std::is_same_v<T, IRParamRead>) {
+                    const auto gname = pfx(*ctx.ir, "param$" + i.name);
+                    auto *g = BinaryenGlobalGet(ctx.mod, gname.c_str(),
+                                                BinaryenTypeFloat64());
+                    stmts.push_back(ctx.set(
+                        i.result,
+                        BinaryenUnary(ctx.mod, BinaryenSplatVecF64x2(), g)));
+                }
             },
             instr);
     }
@@ -827,6 +845,13 @@ void emit_ir(const IRModule &ir, BinaryenModuleRef mod,
         const auto gname = pfx(ir, sv.name);
         BinaryenAddGlobal(mod, gname.c_str(), to_btype(sv.type), true,
                           BinaryenConst(mod, BinaryenLiteralFloat64(0.0)));
+    }
+
+    for (const auto &[pname, pdefault] : ir.params) {
+        const auto gname = pfx(ir, "param$" + pname);
+        BinaryenAddGlobal(mod, gname.c_str(), BinaryenTypeFloat64(), true,
+                          BinaryenConst(mod, BinaryenLiteralFloat64(pdefault)));
+        BinaryenAddGlobalExport(mod, gname.c_str(), gname.c_str());
     }
 
     for (size_t i = 0; i < ir.num_inputs; ++i) {

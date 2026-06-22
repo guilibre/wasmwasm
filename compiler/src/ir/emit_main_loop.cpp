@@ -15,31 +15,33 @@ auto pfx(const IRModule &ir, const std::string &s) -> std::string {
 }
 
 auto resolve_source(BinaryenModuleRef mod, const std::string &src,
-                    BinaryenIndex in_base, BinaryenIndex sample)
-    -> BinaryenExpressionRef {
+                    BinaryenIndex in_base, BinaryenIndex sample,
+                    BinaryenIndex num_samples) -> BinaryenExpressionRef {
     if (src == "capture_l") {
         auto *addr = BinaryenBinary(
             mod, BinaryenAddInt32(),
             BinaryenLocalGet(mod, in_base, BinaryenTypeInt32()),
             BinaryenBinary(mod, BinaryenMulInt32(),
                            BinaryenLocalGet(mod, sample, BinaryenTypeInt32()),
-                           BinaryenConst(mod, BinaryenLiteralInt32(8))));
+                           BinaryenConst(mod, BinaryenLiteralInt32(4))));
         return BinaryenUnary(mod, BinaryenPromoteFloat32(),
                              BinaryenLoad(mod, 4, false, 0, 4,
                                           BinaryenTypeFloat32(), addr,
                                           "memory"));
     }
     if (src == "capture_r") {
-        auto *addr = BinaryenBinary(
+        auto *r_base = BinaryenBinary(
             mod, BinaryenAddInt32(),
             BinaryenLocalGet(mod, in_base, BinaryenTypeInt32()),
             BinaryenBinary(
-                mod, BinaryenAddInt32(),
-                BinaryenBinary(
-                    mod, BinaryenMulInt32(),
-                    BinaryenLocalGet(mod, sample, BinaryenTypeInt32()),
-                    BinaryenConst(mod, BinaryenLiteralInt32(8))),
+                mod, BinaryenMulInt32(),
+                BinaryenLocalGet(mod, num_samples, BinaryenTypeInt32()),
                 BinaryenConst(mod, BinaryenLiteralInt32(4))));
+        auto *addr = BinaryenBinary(
+            mod, BinaryenAddInt32(), r_base,
+            BinaryenBinary(mod, BinaryenMulInt32(),
+                           BinaryenLocalGet(mod, sample, BinaryenTypeInt32()),
+                           BinaryenConst(mod, BinaryenLiteralInt32(4))));
         return BinaryenUnary(mod, BinaryenPromoteFloat32(),
                              BinaryenLoad(mod, 4, false, 0, 4,
                                           BinaryenTypeFloat32(), addr,
@@ -57,24 +59,28 @@ auto resolve_source(BinaryenModuleRef mod, const std::string &src,
 
 auto resolve_source_vec_lane(BinaryenModuleRef mod, const std::string &src,
                              int lane, BinaryenIndex in_base,
-                             BinaryenIndex sample) -> BinaryenExpressionRef {
+                             BinaryenIndex sample, BinaryenIndex num_samples)
+    -> BinaryenExpressionRef {
     if (src == "capture_l" || src == "capture_r") {
         auto *sample_n =
             BinaryenBinary(mod, BinaryenAddInt32(),
                            BinaryenLocalGet(mod, sample, BinaryenTypeInt32()),
                            BinaryenConst(mod, BinaryenLiteralInt32(lane)));
-        auto *base_offset =
+        auto *sample_offset =
             BinaryenBinary(mod, BinaryenMulInt32(), sample_n,
-                           BinaryenConst(mod, BinaryenLiteralInt32(8)));
-        const int32_t ch_offset = (src == "capture_r") ? 4 : 0;
-        auto *addr = BinaryenBinary(
-            mod, BinaryenAddInt32(),
-            BinaryenLocalGet(mod, in_base, BinaryenTypeInt32()),
-            ch_offset == 0
-                ? base_offset
-                : BinaryenBinary(
-                      mod, BinaryenAddInt32(), base_offset,
-                      BinaryenConst(mod, BinaryenLiteralInt32(ch_offset))));
+                           BinaryenConst(mod, BinaryenLiteralInt32(4)));
+        BinaryenExpressionRef ch_base =
+            BinaryenLocalGet(mod, in_base, BinaryenTypeInt32());
+        if (src == "capture_r") {
+            ch_base = BinaryenBinary(
+                mod, BinaryenAddInt32(), ch_base,
+                BinaryenBinary(
+                    mod, BinaryenMulInt32(),
+                    BinaryenLocalGet(mod, num_samples, BinaryenTypeInt32()),
+                    BinaryenConst(mod, BinaryenLiteralInt32(4))));
+        }
+        auto *addr =
+            BinaryenBinary(mod, BinaryenAddInt32(), ch_base, sample_offset);
         return BinaryenUnary(mod, BinaryenPromoteFloat32(),
                              BinaryenLoad(mod, 4, false, 0, 4,
                                           BinaryenTypeFloat32(), addr,
@@ -141,8 +147,8 @@ void emit_main_loop(const RoutingGraph &graph, BinaryenModuleRef mod) {
         for (const auto &route : graph.modules) {
             for (size_t i = 0; i < route.inputs.size(); ++i) {
                 const auto gname = pfx(route.ir, "IN$" + std::to_string(i));
-                auto *val =
-                    resolve_source(mod, route.inputs[i], IN_BASE, SAMPLE);
+                auto *val = resolve_source(mod, route.inputs[i], IN_BASE,
+                                           SAMPLE, NUM_SAMPLES);
                 stmts.push_back(BinaryenGlobalSet(mod, gname.c_str(), val));
             }
             const auto fn_name = pfx(route.ir, route.ir.main_fn);
@@ -151,30 +157,43 @@ void emit_main_loop(const RoutingGraph &graph, BinaryenModuleRef mod) {
         }
 
         auto dac_f32 = [&](const std::string &src) -> BinaryenExpressionRef {
-            return BinaryenUnary(mod, BinaryenDemoteFloat64(),
-                                 resolve_source(mod, src, IN_BASE, SAMPLE));
+            return BinaryenUnary(
+                mod, BinaryenDemoteFloat64(),
+                resolve_source(mod, src, IN_BASE, SAMPLE, NUM_SAMPLES));
         };
 
-        auto out_addr = [&](BinaryenIndex sample_local,
-                            int32_t ch_offset) -> BinaryenExpressionRef {
+        auto out_addr_l =
+            [&](BinaryenIndex sample_local) -> BinaryenExpressionRef {
             return BinaryenBinary(
                 mod, BinaryenAddInt32(),
+                BinaryenLocalGet(mod, OUT_BASE, BinaryenTypeInt32()),
                 BinaryenBinary(
-                    mod, BinaryenAddInt32(),
-                    BinaryenLocalGet(mod, OUT_BASE, BinaryenTypeInt32()),
-                    BinaryenBinary(
-                        mod, BinaryenMulInt32(),
-                        BinaryenLocalGet(mod, sample_local,
-                                         BinaryenTypeInt32()),
-                        BinaryenConst(mod, BinaryenLiteralInt32(8)))),
-                BinaryenConst(mod, BinaryenLiteralInt32(ch_offset)));
+                    mod, BinaryenMulInt32(),
+                    BinaryenLocalGet(mod, sample_local, BinaryenTypeInt32()),
+                    BinaryenConst(mod, BinaryenLiteralInt32(4))));
         };
-        auto *out_addr_l = out_addr(SAMPLE, 0);
-        auto *out_addr_r = out_addr(SAMPLE, 4);
-        stmts.push_back(BinaryenStore(mod, 4, 0, 4, out_addr_l,
+        auto out_addr_r =
+            [&](BinaryenIndex sample_local) -> BinaryenExpressionRef {
+            auto *r_base = BinaryenBinary(
+                mod, BinaryenAddInt32(),
+                BinaryenLocalGet(mod, OUT_BASE, BinaryenTypeInt32()),
+                BinaryenBinary(
+                    mod, BinaryenMulInt32(),
+                    BinaryenLocalGet(mod, NUM_SAMPLES, BinaryenTypeInt32()),
+                    BinaryenConst(mod, BinaryenLiteralInt32(4))));
+            return BinaryenBinary(
+                mod, BinaryenAddInt32(), r_base,
+                BinaryenBinary(
+                    mod, BinaryenMulInt32(),
+                    BinaryenLocalGet(mod, sample_local, BinaryenTypeInt32()),
+                    BinaryenConst(mod, BinaryenLiteralInt32(4))));
+        };
+        auto *addr_l = out_addr_l(SAMPLE);
+        auto *addr_r = out_addr_r(SAMPLE);
+        stmts.push_back(BinaryenStore(mod, 4, 0, 4, addr_l,
                                       dac_f32(graph.dac_l_source),
                                       BinaryenTypeFloat32(), "memory"));
-        stmts.push_back(BinaryenStore(mod, 4, 0, 4, out_addr_r,
+        stmts.push_back(BinaryenStore(mod, 4, 0, 4, addr_r,
                                       dac_f32(graph.dac_r_source),
                                       BinaryenTypeFloat32(), "memory"));
 
@@ -198,13 +217,13 @@ void emit_main_loop(const RoutingGraph &graph, BinaryenModuleRef mod) {
 
         auto lane_f32 = [&](const std::string &src,
                             int lane) -> BinaryenExpressionRef {
-            return BinaryenUnary(
-                mod, BinaryenDemoteFloat64(),
-                resolve_source_vec_lane(mod, src, lane, IN_BASE, SAMPLE));
+            return BinaryenUnary(mod, BinaryenDemoteFloat64(),
+                                 resolve_source_vec_lane(mod, src, lane,
+                                                         IN_BASE, SAMPLE,
+                                                         NUM_SAMPLES));
         };
 
-        auto out_addr_vec = [&](int lane,
-                                int32_t ch_offset) -> BinaryenExpressionRef {
+        auto out_addr_vec_l = [&](int lane) -> BinaryenExpressionRef {
             auto *sample_n =
                 lane == 0
                     ? BinaryenLocalGet(mod, SAMPLE, BinaryenTypeInt32())
@@ -214,24 +233,40 @@ void emit_main_loop(const RoutingGraph &graph, BinaryenModuleRef mod) {
                           BinaryenConst(mod, BinaryenLiteralInt32(lane)));
             return BinaryenBinary(
                 mod, BinaryenAddInt32(),
-                BinaryenBinary(
-                    mod, BinaryenAddInt32(),
-                    BinaryenLocalGet(mod, OUT_BASE, BinaryenTypeInt32()),
-                    BinaryenBinary(
-                        mod, BinaryenMulInt32(), sample_n,
-                        BinaryenConst(mod, BinaryenLiteralInt32(8)))),
-                BinaryenConst(mod, BinaryenLiteralInt32(ch_offset)));
+                BinaryenLocalGet(mod, OUT_BASE, BinaryenTypeInt32()),
+                BinaryenBinary(mod, BinaryenMulInt32(), sample_n,
+                               BinaryenConst(mod, BinaryenLiteralInt32(4))));
         };
-        stmts.push_back(BinaryenStore(mod, 4, 0, 4, out_addr_vec(0, 0),
+        auto out_addr_vec_r = [&](int lane) -> BinaryenExpressionRef {
+            auto *sample_n =
+                lane == 0
+                    ? BinaryenLocalGet(mod, SAMPLE, BinaryenTypeInt32())
+                    : BinaryenBinary(
+                          mod, BinaryenAddInt32(),
+                          BinaryenLocalGet(mod, SAMPLE, BinaryenTypeInt32()),
+                          BinaryenConst(mod, BinaryenLiteralInt32(lane)));
+            auto *r_base = BinaryenBinary(
+                mod, BinaryenAddInt32(),
+                BinaryenLocalGet(mod, OUT_BASE, BinaryenTypeInt32()),
+                BinaryenBinary(
+                    mod, BinaryenMulInt32(),
+                    BinaryenLocalGet(mod, NUM_SAMPLES, BinaryenTypeInt32()),
+                    BinaryenConst(mod, BinaryenLiteralInt32(4))));
+            return BinaryenBinary(
+                mod, BinaryenAddInt32(), r_base,
+                BinaryenBinary(mod, BinaryenMulInt32(), sample_n,
+                               BinaryenConst(mod, BinaryenLiteralInt32(4))));
+        };
+        stmts.push_back(BinaryenStore(mod, 4, 0, 4, out_addr_vec_l(0),
                                       lane_f32(graph.dac_l_source, 0),
                                       BinaryenTypeFloat32(), "memory"));
-        stmts.push_back(BinaryenStore(mod, 4, 0, 4, out_addr_vec(0, 4),
+        stmts.push_back(BinaryenStore(mod, 4, 0, 4, out_addr_vec_r(0),
                                       lane_f32(graph.dac_r_source, 0),
                                       BinaryenTypeFloat32(), "memory"));
-        stmts.push_back(BinaryenStore(mod, 4, 0, 4, out_addr_vec(1, 0),
+        stmts.push_back(BinaryenStore(mod, 4, 0, 4, out_addr_vec_l(1),
                                       lane_f32(graph.dac_l_source, 1),
                                       BinaryenTypeFloat32(), "memory"));
-        stmts.push_back(BinaryenStore(mod, 4, 0, 4, out_addr_vec(1, 4),
+        stmts.push_back(BinaryenStore(mod, 4, 0, 4, out_addr_vec_r(1),
                                       lane_f32(graph.dac_r_source, 1),
                                       BinaryenTypeFloat32(), "memory"));
 

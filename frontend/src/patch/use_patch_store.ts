@@ -7,6 +7,11 @@ export interface BlockData {
     code: string;
     num_inputs: number;
     num_outputs: number;
+    params: string[];
+}
+
+export function scan_params(code: string): string[] {
+    return [...code.matchAll(/^\s*param\s+(\w+)\s*=/gm)].map((m) => m[1]);
 }
 
 export function scan_arity(code: string): { num_inputs: number; num_outputs: number } {
@@ -18,10 +23,16 @@ export function scan_arity(code: string): { num_inputs: number; num_outputs: num
     };
 }
 
+export interface InstrumentState {
+    code: string;
+    bpm: number;
+}
+
 interface PatchState {
     nodes: Node[];
     edges: Edge[];
     selected_id: string | null;
+    instrument: InstrumentState;
 }
 
 type PatchAction =
@@ -32,16 +43,25 @@ type PatchAction =
     | { type: 'update_code'; id: string; code: string }
     | { type: 'update_name'; id: string; name: string }
     | { type: 'add_node'; node: Node }
-    | { type: 'load'; nodes: Node[]; edges: Edge[] };
+    | { type: 'load'; nodes: Node[]; edges: Edge[]; instrument?: InstrumentState }
+    | { type: 'set_instrument_code'; code: string }
+    | { type: 'set_instrument_bpm'; bpm: number };
 
 const STORAGE_KEY = 'wasmwasm_patch';
+
+const DEFAULT_INSTRUMENT: InstrumentState = { code: '', bpm: 120 };
 
 function load_initial(): PatchState {
     try {
         const saved = localStorage.getItem(STORAGE_KEY);
         if (saved) {
-            const { nodes, edges } = JSON.parse(saved);
-            return { nodes, edges, selected_id: null };
+            const { nodes, edges, instrument } = JSON.parse(saved);
+            return {
+                nodes,
+                edges,
+                selected_id: null,
+                instrument: instrument ?? DEFAULT_INSTRUMENT,
+            };
         }
     } catch (_e) {
         void _e;
@@ -53,6 +73,7 @@ function load_initial(): PatchState {
         ],
         edges: [],
         selected_id: null,
+        instrument: DEFAULT_INSTRUMENT,
     };
 }
 
@@ -102,6 +123,7 @@ function reducer(state: PatchState, action: PatchAction): PatchState {
             break;
         case 'update_code': {
             const arity = scan_arity(action.code);
+            const params = scan_params(action.code);
             const edges = state.edges.filter((e) => {
                 if (e.source === action.id) {
                     const idx = parseInt((e.sourceHandle ?? '').replace('out_', ''));
@@ -118,7 +140,7 @@ function reducer(state: PatchState, action: PatchAction): PatchState {
                 edges,
                 nodes: state.nodes.map((n) =>
                     n.id === action.id
-                        ? { ...n, data: { ...n.data, code: action.code, ...arity } }
+                        ? { ...n, data: { ...n.data, code: action.code, ...arity, params } }
                         : n,
                 ),
             };
@@ -133,13 +155,27 @@ function reducer(state: PatchState, action: PatchAction): PatchState {
             };
             break;
         case 'load':
-            next = { nodes: action.nodes, edges: action.edges, selected_id: null };
+            next = {
+                nodes: action.nodes,
+                edges: action.edges,
+                selected_id: null,
+                instrument: action.instrument ?? state.instrument,
+            };
+            break;
+        case 'set_instrument_code':
+            next = { ...state, instrument: { ...state.instrument, code: action.code } };
+            break;
+        case 'set_instrument_bpm':
+            next = { ...state, instrument: { ...state.instrument, bpm: action.bpm } };
             break;
         default:
             return state;
     }
     try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify({ nodes: next.nodes, edges: next.edges }));
+        localStorage.setItem(
+            STORAGE_KEY,
+            JSON.stringify({ nodes: next.nodes, edges: next.edges, instrument: next.instrument }),
+        );
     } catch (_e) {
         void _e;
     }
@@ -170,7 +206,13 @@ export function usePatchStore() {
                 id,
                 type: 'block',
                 position,
-                data: { name, code: '', num_inputs: 0, num_outputs: 0 } satisfies BlockData,
+                data: {
+                    name,
+                    code: '',
+                    num_inputs: 0,
+                    num_outputs: 0,
+                    params: [],
+                } satisfies BlockData,
             },
         });
         dispatch({ type: 'select', id });
@@ -184,9 +226,24 @@ export function usePatchStore() {
         [],
     );
 
+    const set_instrument_code = useCallback(
+        (code: string) => dispatch({ type: 'set_instrument_code', code }),
+        [],
+    );
+    const set_instrument_bpm = useCallback(
+        (bpm: number) => dispatch({ type: 'set_instrument_bpm', bpm }),
+        [],
+    );
+
     const export_patch = useCallback(() => {
         const blob = new Blob(
-            [JSON.stringify({ nodes: state.nodes, edges: state.edges }, null, 2)],
+            [
+                JSON.stringify(
+                    { nodes: state.nodes, edges: state.edges, instrument: state.instrument },
+                    null,
+                    2,
+                ),
+            ],
             {
                 type: 'application/json',
             },
@@ -197,14 +254,14 @@ export function usePatchStore() {
         a.download = 'patch.json';
         a.click();
         URL.revokeObjectURL(url);
-    }, [state.nodes, state.edges]);
+    }, [state.nodes, state.edges, state.instrument]);
 
     const import_patch = useCallback((file: File) => {
         const reader = new FileReader();
         reader.onload = (e) => {
             try {
-                const { nodes, edges } = JSON.parse(e.target!.result as string);
-                dispatch({ type: 'load', nodes, edges });
+                const { nodes, edges, instrument } = JSON.parse(e.target!.result as string);
+                dispatch({ type: 'load', nodes, edges, instrument });
             } catch (_e) {
                 void _e;
             }
@@ -213,7 +270,8 @@ export function usePatchStore() {
     }, []);
 
     const load_patch = useCallback(
-        (nodes: Node[], edges: Edge[]) => dispatch({ type: 'load', nodes, edges }),
+        (nodes: Node[], edges: Edge[], instrument?: InstrumentState) =>
+            dispatch({ type: 'load', nodes, edges, instrument }),
         [],
     );
 
@@ -224,6 +282,7 @@ export function usePatchStore() {
         edges: state.edges,
         selected_id: state.selected_id,
         selected_node,
+        instrument: state.instrument,
         on_nodes_change,
         on_edges_change,
         on_connect,
@@ -231,6 +290,8 @@ export function usePatchStore() {
         add_block,
         update_code,
         update_name,
+        set_instrument_code,
+        set_instrument_bpm,
         export_patch,
         import_patch,
         load_patch,

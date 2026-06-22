@@ -150,9 +150,10 @@ export function PatchEditor({ store }: Props) {
                 deleteKeyCode={['Delete', 'Backspace']}
                 zoomOnDoubleClick={false}
                 fitView
+                proOptions={{ hideAttribution: true }}
             >
                 <Background />
-                <Controls />
+                <Controls showZoom={false} showInteractive={false} />
             </ReactFlow>
 
             {name_input && (

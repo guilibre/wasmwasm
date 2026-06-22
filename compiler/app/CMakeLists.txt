@@ -10,5 +10,5 @@ target_link_options(${PROJECT_NAME} PRIVATE
     -sWASM=1
 )
 
-target_link_libraries(${PROJECT_NAME} PRIVATE ${PROJECT_NAME}_lib binaryen compiler_flags)
-target_include_directories(${PROJECT_NAME} PRIVATE ${binaryen_SOURCE_DIR}/src ../src)
+target_link_libraries(${PROJECT_NAME} PRIVATE ${PROJECT_NAME}_lib compiler_flags)
+target_include_directories(${PROJECT_NAME} PRIVATE ../src)

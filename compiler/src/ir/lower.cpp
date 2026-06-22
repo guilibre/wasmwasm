@@ -47,6 +47,7 @@ struct Lowerer {
     std::unordered_map<std::string, FnInfo> fns;
     std::unordered_set<std::string> bufs;
     std::unordered_set<std::string> statics;
+    std::unordered_set<std::string> param_names;
     std::unordered_map<std::string, IRType> locals;
     std::vector<IRInstr> static_init_body;
 
@@ -59,7 +60,8 @@ struct Lowerer {
     [[nodiscard]] auto is_special(const std::string &name) const -> bool {
         return std::ranges::contains(language_globals, name) ||
                std::ranges::contains(math_builtins, name) ||
-               fns.contains(name) || bufs.contains(name);
+               fns.contains(name) || bufs.contains(name) ||
+               param_names.contains(name);
     }
 
     auto emit_global_read(const std::string &name, IRType type) -> IRValue {
@@ -144,6 +146,7 @@ struct Lowerer {
                 if constexpr (std::is_same_v<T, OutputWrite>)
                     return free_vars_of(node.value, bound);
                 if constexpr (std::is_same_v<T, StaticBind>) return {};
+                if constexpr (std::is_same_v<T, ParamBind>) return {};
 
                 return {};
             },
@@ -221,6 +224,12 @@ struct Lowerer {
                     if (statics.contains(name)) {
                         auto r = tmp();
                         emit(IRStaticRead{r, name});
+                        return IRLocalRef{r};
+                    }
+
+                    if (param_names.contains(name)) {
+                        auto r = tmp();
+                        emit(IRParamRead{.result = r, .name = name});
                         return IRLocalRef{r};
                     }
 
@@ -423,6 +432,20 @@ struct Lowerer {
                     if (val)
                         static_init_body.emplace_back(
                             IRStaticWrite{name, *val});
+                    return std::nullopt;
+                }
+
+                if constexpr (std::is_same_v<T, ParamBind>) {
+                    const auto &name = node.name.lexeme;
+                    const auto *lit =
+                        std::get_if<Literal>(&node.default_val->node);
+                    if (!lit)
+                        throw std::runtime_error(
+                            "param default must be a numeric literal");
+                    const double default_val =
+                        std::stod(std::string(lit->value.lexeme));
+                    param_names.insert(name);
+                    mod.params.emplace_back(name, default_val);
                     return std::nullopt;
                 }
 

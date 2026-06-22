@@ -33,6 +33,7 @@ enum class TokenKind : uint8_t {
     RBracket,
     RParen,
     Static,
+    Param,
     Caret,
 };
 

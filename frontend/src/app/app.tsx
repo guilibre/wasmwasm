@@ -1,14 +1,19 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { ReactFlowProvider } from '@xyflow/react';
 import workletUrl from '../audio/processor.worklet.js?url';
-import WasmWasm from '../audio/compiler';
+import WasmWasm, { type PatchParams } from '../audio/compiler';
 import Editor, { type EditorHandle } from './editor';
 import { Sidebar } from './sidebar';
+import { InstrumentPanel } from './instrument_panel';
 import { PatchEditor } from '../patch/patch_editor';
 import { usePatchStore } from '../patch/use_patch_store';
 import { patch_to_json } from '../patch/patch_to_json';
 import { patch_to_hash, hash_to_patch } from '../patch/share';
 import './app.scss';
+
+const MIN_INSTR_WIDTH = 200;
+const MAX_INSTR_WIDTH = 900;
+const DEFAULT_INSTR_WIDTH = 380;
 
 export default function App() {
     const audioContextRef = useRef<AudioContext | null>(null);
@@ -21,8 +26,12 @@ export default function App() {
     const [is_playing, set_is_playing] = useState(false);
     const [sidebar_visible, set_sidebar_visible] = useState(true);
     const [error, set_error] = useState<string | null>(null);
+    const [patch_params, set_patch_params] = useState<PatchParams | null>(null);
+    const [instr_width, set_instr_width] = useState(DEFAULT_INSTR_WIDTH);
     const import_ref = useRef<HTMLInputElement>(null);
     const editor_ref = useRef<EditorHandle>(null);
+    const instrumentWorkerRef = useRef<Worker | null>(null);
+    const [instrument_error, set_instrument_error] = useState<string | null>(null);
 
     const store = usePatchStore();
     const {
@@ -33,13 +42,16 @@ export default function App() {
         export_patch,
         import_patch,
         load_patch,
+        instrument,
+        set_instrument_code,
+        set_instrument_bpm,
     } = store;
     const selected_block = selected_node?.type === 'block' ? selected_node : null;
 
     const [share_label, set_share_label] = useState<'Share' | 'Copied!'>('Share');
 
     const share = useCallback(async () => {
-        const hash = await patch_to_hash(store.nodes, store.edges);
+        const hash = await patch_to_hash(store.nodes, store.edges, store.instrument);
         window.location.hash = hash;
         await navigator.clipboard.writeText(window.location.href);
         set_share_label('Copied!');
@@ -47,11 +59,15 @@ export default function App() {
     }, [store.nodes, store.edges]);
 
     useEffect(() => {
+        import('typescript');
+    }, []);
+
+    useEffect(() => {
         const hash = window.location.hash.slice(1);
         if (!hash) return;
         hash_to_patch(hash).then((result) => {
             if (result) {
-                load_patch(result.nodes, result.edges);
+                load_patch(result.nodes, result.edges, result.instrument);
                 history.replaceState(null, '', window.location.pathname + window.location.search);
             }
         });
@@ -143,20 +159,68 @@ export default function App() {
         if (sidebar_visible && analyser_l_ref.current && analyser_r_ref.current)
             set_analysers({ l: analyser_l_ref.current, r: analyser_r_ref.current });
 
-        let wasm: Uint8Array;
+        let result: { wasm: Uint8Array; params: PatchParams };
         try {
-            wasm = await WasmWasm.init_patch(audioContextRef.current.sampleRate, json);
+            result = await WasmWasm.init_patch(audioContextRef.current.sampleRate, json);
         } catch (e) {
             set_error(String(e));
             return;
         }
 
+        const { wasm, params } = result;
         const context = audioContextRef.current!;
         const node = workletNodeRef.current!;
 
         if (needs_capture(json)) await setup_capture(context, node);
 
         node.port.postMessage({ type: 'load-wasm', buffer: wasm });
+        node.port.postMessage({
+            type: 'load-params-sab',
+            sab: params.sab,
+            paramExportNames: params.paramExportNames,
+        });
+
+        set_patch_params(params);
+
+        instrumentWorkerRef.current?.terminate();
+        instrumentWorkerRef.current = null;
+        set_instrument_error(null);
+
+        if (instrument.code.trim()) {
+            let compiled: string;
+            try {
+                const ts = await import('typescript');
+                const result = ts.transpileModule(instrument.code, {
+                    compilerOptions: {
+                        target: ts.ScriptTarget.ES2020,
+                        module: ts.ModuleKind.None,
+                    },
+                });
+                compiled = result.outputText;
+            } catch (e) {
+                set_instrument_error(String(e));
+                compiled = '';
+            }
+
+            if (compiled) {
+                const worker = new Worker(
+                    new URL('../audio/instrument_worker.ts', import.meta.url),
+                    { type: 'module' },
+                );
+                worker.onmessage = (e) => {
+                    if (e.data.type === 'error') set_instrument_error(e.data.message);
+                };
+                instrumentWorkerRef.current = worker;
+                worker.postMessage({
+                    type: 'run',
+                    code: compiled,
+                    sab: params.sab,
+                    paramNames: params.paramNames,
+                    bpm: instrument.bpm,
+                });
+            }
+        }
+
         await context.resume();
         set_is_playing(true);
     };
@@ -188,7 +252,31 @@ export default function App() {
         await audioContextRef.current?.suspend();
         set_is_playing(false);
         set_analysers(null);
+        instrumentWorkerRef.current?.terminate();
+        instrumentWorkerRef.current = null;
+        set_instrument_error(null);
     };
+
+    const on_instr_handle_mousedown = useCallback(
+        (e: React.MouseEvent) => {
+            e.preventDefault();
+            const start_x = e.clientX;
+            const start_w = instr_width;
+            const on_move = (ev: MouseEvent) => {
+                const delta = ev.clientX - start_x;
+                set_instr_width(
+                    Math.max(MIN_INSTR_WIDTH, Math.min(MAX_INSTR_WIDTH, start_w + delta)),
+                );
+            };
+            const on_up = () => {
+                window.removeEventListener('mousemove', on_move);
+                window.removeEventListener('mouseup', on_up);
+            };
+            window.addEventListener('mousemove', on_move);
+            window.addEventListener('mouseup', on_up);
+        },
+        [instr_width],
+    );
 
     return (
         <div className="app">
@@ -213,20 +301,34 @@ export default function App() {
             </div>
 
             <div className="app__workspace">
-                <ReactFlowProvider>
-                    <PatchEditor store={store} />
-                </ReactFlowProvider>
-                {sidebar_visible ? (
-                    <Sidebar
-                        analyser_l={analysers?.l ?? null}
-                        analyser_r={analysers?.r ?? null}
-                        on_close={toggle_sidebar}
+                <div className="app__instrument-pane" style={{ width: instr_width }}>
+                    <InstrumentPanel
+                        params={patch_params}
+                        code={instrument.code}
+                        bpm={instrument.bpm}
+                        on_code_change={set_instrument_code}
+                        on_bpm_change={set_instrument_bpm}
+                        error={instrument_error}
                     />
-                ) : (
-                    <button className="app__sidebar-open" onClick={toggle_sidebar}>
-                        ‹
-                    </button>
-                )}
+                    <div className="app__orch-handle" onMouseDown={on_instr_handle_mousedown} />
+                </div>
+
+                <div className="app__patch-pane">
+                    <ReactFlowProvider>
+                        <PatchEditor store={store} />
+                    </ReactFlowProvider>
+                    {sidebar_visible ? (
+                        <Sidebar
+                            analyser_l={analysers?.l ?? null}
+                            analyser_r={analysers?.r ?? null}
+                            on_close={toggle_sidebar}
+                        />
+                    ) : (
+                        <button className="app__sidebar-open" onClick={toggle_sidebar}>
+                            ‹
+                        </button>
+                    )}
+                </div>
             </div>
 
             {selected_block && (

@@ -69,6 +69,34 @@ auto Parser::parse_expression() -> ParseResult {
         return Expr::make<StaticBind>(name, std::move(*init));
     }
 
+    if (match(TokenKind::Param)) {
+        advance();
+        if (!match(TokenKind::Identifier))
+            return std::unexpected(ParseError{
+                .msg = "Expected identifier after 'param'",
+                .line = current.line,
+                .col = current.column,
+            });
+        auto name = current;
+        advance();
+        if (!match(TokenKind::Eq))
+            return std::unexpected(ParseError{
+                .msg = "Expected '=' after param name",
+                .line = current.line,
+                .col = current.column,
+            });
+        advance();
+        if (!match(TokenKind::Number))
+            return std::unexpected(ParseError{
+                .msg = "Expected numeric literal as param default",
+                .line = current.line,
+                .col = current.column,
+            });
+        auto default_val = parse_expression();
+        if (!default_val) return default_val;
+        return Expr::make<ParamBind>(name, std::move(*default_val));
+    }
+
     if (match(TokenKind::Out)) {
         advance();
         if (!match(TokenKind::LBracket))

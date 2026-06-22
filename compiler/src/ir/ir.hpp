@@ -86,6 +86,11 @@ struct IRReturn {
     std::optional<IRValue> value;
 };
 
+struct IRParamRead {
+    std::string result;
+    std::string name;
+};
+
 struct IRInputRead {
     std::string result;
     size_t index;
@@ -96,10 +101,11 @@ struct IROutputWrite {
     IRValue value;
 };
 
-using IRInstr = std::variant<IRBinOp, IRUnaryNeg, IRAssign, IRCall,
-                             IRBufferRead, IRBufferReadDelayed, IRBufferWrite,
-                             IRGlobalRead, IRIf, IRInputRead, IROutputWrite,
-                             IRStaticRead, IRStaticWrite, IRReturn>;
+using IRInstr =
+    std::variant<IRBinOp, IRUnaryNeg, IRAssign, IRCall, IRBufferRead,
+                 IRBufferReadDelayed, IRBufferWrite, IRGlobalRead, IRIf,
+                 IRInputRead, IROutputWrite, IRParamRead, IRStaticRead,
+                 IRStaticWrite, IRReturn>;
 
 struct IRIfBody {
     std::vector<IRInstr> then_body;
@@ -136,6 +142,7 @@ struct IRModule {
     std::vector<IRFunction> functions;
     std::vector<IRBufferDecl> buffers;
     std::vector<IRStaticVar> static_vars;
+    std::vector<std::pair<std::string, double>> params;
     std::string init_fn;
     std::string main_fn;
     std::string static_init_fn;

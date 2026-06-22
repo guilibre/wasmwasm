@@ -1,4 +1,5 @@
 import type { Node, Edge } from '@xyflow/react';
+import type { InstrumentState } from './use_patch_store';
 
 interface MinNode {
     id: string;
@@ -17,6 +18,7 @@ interface MinEdge {
 interface SerializedPatch {
     nodes: MinNode[];
     edges: MinEdge[];
+    instrument?: InstrumentState;
 }
 
 function to_base64url(bytes: Uint8Array): string {
@@ -33,7 +35,11 @@ function from_base64url(str: string): Uint8Array {
     return bytes;
 }
 
-export async function patch_to_hash(nodes: Node[], edges: Edge[]): Promise<string> {
+export async function patch_to_hash(
+    nodes: Node[],
+    edges: Edge[],
+    instrument: InstrumentState,
+): Promise<string> {
     const payload: SerializedPatch = {
         nodes: nodes.map((n) => ({
             id: n.id,
@@ -47,6 +53,7 @@ export async function patch_to_hash(nodes: Node[], edges: Edge[]): Promise<strin
             sourceHandle: e.sourceHandle ?? null,
             targetHandle: e.targetHandle ?? null,
         })),
+        instrument,
     };
 
     const json = JSON.stringify(payload);
@@ -74,7 +81,7 @@ export async function patch_to_hash(nodes: Node[], edges: Edge[]): Promise<strin
 
 export async function hash_to_patch(
     hash: string,
-): Promise<{ nodes: Node[]; edges: Edge[] } | null> {
+): Promise<{ nodes: Node[]; edges: Edge[]; instrument?: InstrumentState } | null> {
     try {
         const raw = hash.startsWith('#') ? hash.slice(1) : hash;
         if (!raw) return null;
@@ -98,7 +105,7 @@ export async function hash_to_patch(
             offset += chunk.length;
         }
         const json = new TextDecoder().decode(bytes);
-        const { nodes, edges } = JSON.parse(json) as SerializedPatch;
+        const { nodes, edges, instrument } = JSON.parse(json) as SerializedPatch;
         const full_nodes: Node[] = nodes.map((n) => ({
             ...n,
             data: n.data as Record<string, unknown>,
@@ -107,7 +114,7 @@ export async function hash_to_patch(
             id: `e_${e.source}_${e.sourceHandle}_${e.target}_${e.targetHandle}`,
             ...e,
         }));
-        return { nodes: full_nodes, edges: full_edges };
+        return { nodes: full_nodes, edges: full_edges, instrument };
     } catch {
         return null;
     }

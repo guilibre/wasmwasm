@@ -1,5 +1,6 @@
 add_library(${PROJECT_NAME}_lib STATIC
     builtins.cpp
+    compile.cpp
     ast/ast.cpp
     ir/emit.cpp
     ir/emit_main_loop.cpp
