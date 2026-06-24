@@ -113,20 +113,24 @@ auto Tokenizer::next() -> Token {
         return make_token(TokenKind::Multiplicative);
     case '<':
         if (match('-')) return make_token(TokenKind::LeftArrow);
+        if (match('=')) return make_token(TokenKind::Comparison);
         return make_token(TokenKind::Comparison);
     case '>':
+        if (match('=')) return make_token(TokenKind::Comparison);
         return make_token(TokenKind::Comparison);
     case '&':
         return make_token(TokenKind::Ampersand);
     case '|':
         return make_token(TokenKind::Pipe);
     case '!':
+        if (match('=')) return make_token(TokenKind::Comparison);
         return make_token(TokenKind::Bang);
     case '?':
         return make_token(TokenKind::Question);
     case ':':
         return make_token(TokenKind::Colon);
     case '=':
+        if (match('=')) return make_token(TokenKind::Comparison);
         return make_token(TokenKind::Eq);
     case '^':
         return make_token(TokenKind::Caret);

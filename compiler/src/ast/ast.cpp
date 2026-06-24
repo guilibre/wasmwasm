@@ -21,6 +21,14 @@ auto op_to_string(const Operation &op) -> std::string {
         return "<";
     case Operation::Gt:
         return ">";
+    case Operation::Eq:
+        return "==";
+    case Operation::Ne:
+        return "!=";
+    case Operation::Le:
+        return "<=";
+    case Operation::Ge:
+        return ">=";
     case Operation::And:
         return "&";
     case Operation::Or:

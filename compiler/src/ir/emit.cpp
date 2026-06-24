@@ -172,10 +172,22 @@ auto emit_stmts(FnCtx &ctx, const std::vector<IRInstr> &body)
                 using T = std::decay_t<decltype(i)>;
 
                 if constexpr (std::is_same_v<T, IRBinOp>) {
-                    if (i.op == Operation::Lt || i.op == Operation::Gt) {
-                        const auto cmp_op = i.op == Operation::Lt
-                                                ? BinaryenLtFloat64()
-                                                : BinaryenGtFloat64();
+                    if (i.op == Operation::Lt || i.op == Operation::Gt ||
+                        i.op == Operation::Le || i.op == Operation::Ge ||
+                        i.op == Operation::Eq || i.op == Operation::Ne) {
+                        const auto cmp_op = [&] -> BinaryenOp {
+                            if (i.op == Operation::Lt)
+                                return BinaryenLtFloat64();
+                            if (i.op == Operation::Gt)
+                                return BinaryenGtFloat64();
+                            if (i.op == Operation::Le)
+                                return BinaryenLeFloat64();
+                            if (i.op == Operation::Ge)
+                                return BinaryenGeFloat64();
+                            if (i.op == Operation::Eq)
+                                return BinaryenEqFloat64();
+                            return BinaryenNeFloat64();
+                        }();
                         auto *cmp = BinaryenBinary(
                             ctx.mod, cmp_op, ctx.get(i.left), ctx.get(i.right));
                         auto *as_f64 = BinaryenUnary(
@@ -528,6 +540,13 @@ void emit_init_buffers(const IRModule &ir, BinaryenModuleRef mod) {
         };
         all_loops.push_back(BinaryenBlock(mod, nullptr, buf_init.data(),
                                           buf_init.size(), BinaryenTypeNone()));
+    }
+
+    for (const auto &[pname, pdefault] : ir.params) {
+        const auto gname = pfx(ir, "param$" + pname);
+        all_loops.push_back(BinaryenGlobalSet(
+            mod, gname.c_str(),
+            BinaryenConst(mod, BinaryenLiteralFloat64(pdefault))));
     }
 
     auto *body =

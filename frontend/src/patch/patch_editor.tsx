@@ -148,6 +148,8 @@ export function PatchEditor({ store }: Props) {
                 onNodeContextMenu={on_node_context_menu}
                 onEdgeContextMenu={on_edge_context_menu}
                 deleteKeyCode={['Delete', 'Backspace']}
+                selectionOnDrag
+                panOnDrag={[1, 2]}
                 zoomOnDoubleClick={false}
                 fitView
                 proOptions={{ hideAttribution: true }}

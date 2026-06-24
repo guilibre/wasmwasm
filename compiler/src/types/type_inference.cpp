@@ -118,12 +118,17 @@ void infer_expr(const ExprPtr &expr,
             using T = std::decay_t<decltype(node)>;
 
             if constexpr (std::is_same_v<T, Bind>) {
-                infer_expr(node.value, env, subst, gen);
                 auto existing = lookup_env(node.name.lexeme, env);
-                if (!existing)
-                    env.back().emplace(node.name.lexeme, node.value->type);
-                else
+                auto rec_type = gen.fresh_type_var();
+                if (!existing) env.back().emplace(node.name.lexeme, rec_type);
+                infer_expr(node.value, env, subst, gen);
+                if (!existing) {
+                    unify(rec_type, node.value->type, subst);
+                    env.back()[node.name.lexeme] =
+                        apply_subst(subst, node.value->type);
+                } else {
                     unify(*existing, node.value->type, subst);
+                }
                 return Type::make<TypeBase>(BaseTypeKind::Void);
             }
 
@@ -131,7 +136,7 @@ void infer_expr(const ExprPtr &expr,
                 infer_expr(node.left, env, subst, gen);
                 infer_expr(node.right, env, subst, gen);
                 unify(node.left->type, node.right->type, subst);
-                return node.left->type;
+                return apply_subst(subst, node.left->type);
             }
 
             if constexpr (std::is_same_v<T, CodeBlock>) {
@@ -188,6 +193,8 @@ void infer_expr(const ExprPtr &expr,
 
             if constexpr (std::is_same_v<T, OutputWrite>) {
                 infer_expr(node.value, env, subst, gen);
+                unify(node.value->type,
+                      Type::make<TypeBase>(BaseTypeKind::Float), subst);
                 return Type::make<TypeBase>(BaseTypeKind::Void);
             }
 
@@ -210,9 +217,12 @@ void infer_expr(const ExprPtr &expr,
             if constexpr (std::is_same_v<T, Conditional>) {
                 infer_expr(node.condition, env, subst, gen);
                 infer_expr(node.then_branch, env, subst, gen);
-                if (node.else_branch)
+                if (node.else_branch) {
                     infer_expr(*node.else_branch, env, subst, gen);
-                return Type::make<TypeBase>(BaseTypeKind::Void);
+                    unify(node.then_branch->type, (*node.else_branch)->type,
+                          subst);
+                }
+                return apply_subst(subst, node.then_branch->type);
             }
 
             if constexpr (std::is_same_v<T, Literal>) {
@@ -221,7 +231,7 @@ void infer_expr(const ExprPtr &expr,
 
             if constexpr (std::is_same_v<T, UnaryOp>) {
                 infer_expr(node.expr, env, subst, gen);
-                return node.expr->type;
+                return apply_subst(subst, node.expr->type);
             }
 
             if constexpr (std::is_same_v<T, Variable>) {

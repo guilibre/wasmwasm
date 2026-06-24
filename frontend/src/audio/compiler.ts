@@ -68,6 +68,18 @@ export default class WasmWasm {
         });
 
         const sab = new SharedArrayBuffer((paramNames.length + 1) * 8);
+        const sabView = new Float64Array(sab);
+        const parsed = JSON.parse(patch_json) as { modules: Record<string, string> };
+        const defaultsByExport: Record<string, number> = {};
+        for (const [modName, code] of Object.entries(parsed.modules)) {
+            for (const m of code.matchAll(/^\s*param\s+(\w+)\s*=\s*([\d.eE+\-]+)/gm)) {
+                defaultsByExport[`${modName}$param$${m[1]}`] = parseFloat(m[2]);
+            }
+        }
+        for (let i = 0; i < paramExportNames.length; i++) {
+            const d = defaultsByExport[paramExportNames[i]];
+            if (d !== undefined) sabView[i] = d;
+        }
 
         return { wasm, params: { paramNames, paramExportNames, sab } };
     }

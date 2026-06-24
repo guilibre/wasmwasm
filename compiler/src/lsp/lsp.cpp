@@ -95,6 +95,20 @@ auto find_node_at(const ExprPtr &expr, size_t line, size_t col)
                 return find_node_at(node.body, line, col);
             }
             if constexpr (std::is_same_v<T, Bind>) {
+                const auto &tok = node.name;
+                if (tok.line == line && col >= tok.column &&
+                    col < tok.column + tok.lexeme.size())
+                    return node.value.get();
+                return find_node_at(node.value, line, col);
+            }
+            if constexpr (std::is_same_v<T, StaticBind>) {
+                const auto &tok = node.name;
+                if (tok.line == line && col >= tok.column &&
+                    col < tok.column + tok.lexeme.size())
+                    return node.init.get();
+                return find_node_at(node.init, line, col);
+            }
+            if constexpr (std::is_same_v<T, OutputWrite>) {
                 return find_node_at(node.value, line, col);
             }
             if constexpr (std::is_same_v<T, BufferWrite>) {
@@ -264,11 +278,13 @@ auto lsp_diagnostics(const std::string &src) -> std::string {
 }
 
 auto lsp_tokens(const std::string &src) -> std::string {
-    static const std::unordered_set<std::string> builtins{
-        "sin",  "cos",         "sign",  "fract",   "clip",     "exp",
-        "PI",   "SAMPLE_RATE", "OUT",   "uniform", "gaussian", "floor",
-        "ceil", "sqrt",        "round", "log",
-    };
+    static const std::unordered_set<std::string> builtins =
+        []() -> std::unordered_set<std::string> {
+        std::unordered_set<std::string> s(math_builtins.begin(),
+                                          math_builtins.end());
+        for (const auto &g : language_globals) s.insert(std::string(g));
+        return s;
+    }();
 
     const auto comments = scan_comments(src.c_str());
 
@@ -345,7 +361,7 @@ auto lsp_completions(const std::string &src, size_t /*line*/, size_t /*col*/)
         const char *detail;
         const char *kind;
     };
-    static const std::array<BuiltinItem, 18> builtins = {{
+    static const std::array<BuiltinItem, 22> builtins = {{
         {.label = "sin", .detail = "Float -> Float", .kind = "function"},
         {.label = "cos", .detail = "Float -> Float", .kind = "function"},
         {.label = "sign", .detail = "Float -> Float", .kind = "function"},
@@ -363,6 +379,14 @@ auto lsp_completions(const std::string &src, size_t /*line*/, size_t /*col*/)
         {.label = "sqrt", .detail = "Float -> Float", .kind = "function"},
         {.label = "round", .detail = "Float -> Float", .kind = "function"},
         {.label = "log", .detail = "Float -> Float", .kind = "function"},
+        {.label = "abs", .detail = "Float -> Float", .kind = "function"},
+        {.label = "tanh", .detail = "Float -> Float", .kind = "function"},
+        {.label = "min",
+         .detail = "Float -> Float -> Float",
+         .kind = "function"},
+        {.label = "max",
+         .detail = "Float -> Float -> Float",
+         .kind = "function"},
         {.label = "PI", .detail = "Float", .kind = "constant"},
         {.label = "SAMPLE_RATE", .detail = "Float", .kind = "constant"},
         {.label = "OUT", .detail = "Float", .kind = "constant"},
@@ -412,16 +436,16 @@ auto lsp_hover(const std::string &src, size_t line, size_t col) -> std::string {
     const auto main_result = main_parser.parse_code();
     if (!main_result) return "null";
 
+    auto env = make_builtin_env();
+    Substitution subst;
+    TypeGenerator gen;
     try {
-        auto env = make_builtin_env();
-        Substitution subst;
-        TypeGenerator gen;
         infer_expr(*main_result, env, subst, gen);
     } catch (...) { return "null"; }
 
     const auto *hit = find_node_at(*main_result, line, col);
     if ((hit == nullptr) || !hit->type) return "null";
 
-    const auto type_str = type_to_string(hit->type);
+    const auto type_str = type_to_string(apply_subst(subst, hit->type));
     return R"({"type":")" + json_escape(type_str) + R"("})";
 }

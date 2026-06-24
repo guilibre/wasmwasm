@@ -27,6 +27,10 @@ auto make_builtin_env()
         {"sqrt", float_to_float},
         {"round", float_to_float},
         {"log", float_to_float},
+        {"abs", float_to_float},
+        {"tanh", float_to_float},
+        {"min", float_to_float_to_float},
+        {"max", float_to_float_to_float},
         {"buffer",
          Type::make<TypeFun>(
              float_type,

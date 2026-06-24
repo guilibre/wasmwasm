@@ -38,6 +38,7 @@ struct FnInfo {
     std::vector<std::string> free_vars;
     IRType return_type{IRType::Void};
     size_t arity{0};
+    bool is_math{false};
 };
 
 struct Lowerer {
@@ -45,6 +46,7 @@ struct Lowerer {
     std::vector<IRInstr> *cur = nullptr;
 
     std::unordered_map<std::string, FnInfo> fns;
+    std::unordered_map<std::string, size_t> fn_indices;
     std::unordered_set<std::string> bufs;
     std::unordered_set<std::string> statics;
     std::unordered_set<std::string> param_names;
@@ -176,6 +178,7 @@ struct Lowerer {
             .return_type = ret_type,
             .arity = params.size(),
         };
+        fn_indices.emplace(name, fn_indices.size());
 
         IRFunction fn;
         fn.name = name;
@@ -234,9 +237,7 @@ struct Lowerer {
                     }
 
                     if (fns.contains(name))
-                        throw std::runtime_error("Function '" + name +
-                                                 "' used as value (partial "
-                                                 "application not supported)");
+                        return IRLiteral{(double)fn_indices.at(name)};
 
                     return IRLocalRef{name};
                 }
@@ -507,6 +508,53 @@ struct Lowerer {
                             return IRLocalRef{r};
                         }
 
+                        if (locals.contains(name)) {
+                            auto res = tmp();
+                            emit(IRAssign{
+                                .result = res,
+                                .value = IRLiteral{0.0},
+                                .type = IRType::Float,
+                            });
+                            for (const auto &[fn_name, fn_info] : fns) {
+                                if (fn_info.arity != arg_vals.size()) continue;
+                                if (fn_info.return_type == IRType::Void)
+                                    continue;
+                                auto cond = tmp();
+                                emit(IRBinOp{
+                                    .result = cond,
+                                    .op = Operation::Eq,
+                                    .left = IRLocalRef{name},
+                                    .right = IRLiteral{(double)fn_indices.at(
+                                        fn_name)},
+                                });
+                                auto call_r = tmp();
+                                auto call_args = arg_vals;
+                                for (const auto &fv : fn_info.free_vars)
+                                    call_args.emplace_back(IRLocalRef{fv});
+                                std::vector<IRInstr> then_instrs;
+                                const auto callee = fn_info.is_math
+                                                        ? "wasmwasm_" + fn_name
+                                                        : fn_name;
+                                then_instrs.emplace_back(IRCall{
+                                    .result = call_r,
+                                    .callee = callee,
+                                    .args = call_args,
+                                    .result_type = fn_info.return_type,
+                                });
+                                then_instrs.emplace_back(IRAssign{
+                                    .result = res,
+                                    .value = IRLocalRef{call_r},
+                                    .type = IRType::Float,
+                                });
+                                emit(IRIf{
+                                    .condition = IRLocalRef{cond},
+                                    .body = std::make_shared<IRIfBody>(
+                                        std::move(then_instrs),
+                                        std::vector<IRInstr>{}),
+                                });
+                            }
+                            return IRLocalRef{res};
+                        }
                         throw std::runtime_error("Unknown function: " + name);
                     }
 
@@ -522,10 +570,29 @@ struct Lowerer {
                     std::vector<IRInstr> else_instrs;
                     auto *saved = cur;
                     cur = &then_instrs;
-                    lower_expr(node.then_branch);
+                    auto then_val = lower_expr(node.then_branch);
                     cur = &else_instrs;
-                    if (node.else_branch) lower_expr(*node.else_branch);
+                    std::optional<IRValue> else_val;
+                    if (node.else_branch)
+                        else_val = lower_expr(*node.else_branch);
                     cur = saved;
+                    if (then_val || else_val) {
+                        auto res = tmp();
+                        define(res, IRType::Float);
+                        if (then_val)
+                            then_instrs.emplace_back(
+                                IRAssign{res, *then_val, IRType::Float});
+                        if (else_val)
+                            else_instrs.emplace_back(IRAssign{
+                                .result = res,
+                                .value = *else_val,
+                                .type = IRType::Float,
+                            });
+                        emit(IRIf{*cond, std::make_shared<IRIfBody>(
+                                             std::move(then_instrs),
+                                             std::move(else_instrs))});
+                        return IRLocalRef{res};
+                    }
                     emit(IRIf{*cond, std::make_shared<IRIfBody>(
                                          std::move(then_instrs),
                                          std::move(else_instrs))});
@@ -579,6 +646,49 @@ struct Lowerer {
         }
     }
 
+    void pre_register_math_builtins() {
+        const auto env = make_builtin_env();
+        const auto &map = env[0];
+        for (const auto &sv : math_builtins) {
+            const std::string name(sv);
+            const auto it = map.find(name);
+            if (it == map.end()) continue;
+            size_t arity = 0;
+            const TypePtr *t = &it->second;
+            while (const auto *fn = std::get_if<TypeFun>(&(*t)->node)) {
+                arity++;
+                t = &fn->result;
+            }
+            fns.emplace(name, FnInfo{.free_vars = {},
+                                     .return_type = IRType::Float,
+                                     .arity = arity,
+                                     .is_math = true});
+            fn_indices.emplace(name, fn_indices.size());
+        }
+    }
+
+    void pre_register_fns(const ExprPtr &program) {
+        const auto *block = std::get_if<CodeBlock>(&program->node);
+        if (block == nullptr) return;
+        for (const auto &expr : block->expressions) {
+            const auto *bind = std::get_if<Bind>(&expr->node);
+            if (bind == nullptr) continue;
+            const auto &name = bind->name.lexeme;
+            if (!std::holds_alternative<Lambda>(bind->value->node)) continue;
+            size_t arity = 0;
+            const ExprPtr *ptr = &bind->value;
+            while (std::holds_alternative<Lambda>((*ptr)->node)) {
+                arity++;
+                ptr = &std::get<Lambda>((*ptr)->node).body;
+            }
+            const auto ret_type = ir_type_of((*ptr)->type);
+            fns.emplace(name, FnInfo{.free_vars = {},
+                                     .return_type = ret_type,
+                                     .arity = arity});
+            fn_indices.emplace(name, fn_indices.size());
+        }
+    }
+
     void compute_arity() {
         for (const auto &fn : mod.functions) scan_arity(fn.body);
     }
@@ -590,6 +700,8 @@ auto lower(const ExprPtr &program, const std::string &module_name) -> IRModule {
     Lowerer l;
     l.mod.name = module_name;
     l.mod.init_fn = "init";
+    l.pre_register_math_builtins();
+    l.pre_register_fns(program);
     l.lower_main(program);
     l.compute_arity();
     return std::move(l.mod);

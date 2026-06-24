@@ -125,7 +125,7 @@ const editorTheme = EditorView.theme(
         '.cm-scroller': {
             overflow: 'auto',
             fontFamily: 'monospace',
-            fontSize: '0.9rem',
+            fontSize: '0.7rem',
             lineHeight: '1.5',
         },
         '.cm-content': { padding: '0.5rem', caretColor: 'currentColor' },

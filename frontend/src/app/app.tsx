@@ -56,7 +56,7 @@ export default function App() {
         await navigator.clipboard.writeText(window.location.href);
         set_share_label('Copied!');
         setTimeout(() => set_share_label('Share'), 2000);
-    }, [store.nodes, store.edges]);
+    }, [store.nodes, store.edges, store.instrument]);
 
     useEffect(() => {
         import('typescript');

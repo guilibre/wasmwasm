@@ -212,7 +212,14 @@ auto Parser::parse_comparison() -> ParseResult {
     auto left = parse_additive();
     if (!left) return left;
     if (match(TokenKind::Comparison)) {
-        const auto op = current.lexeme == "<" ? Operation::Lt : Operation::Gt;
+        const auto op = [&] -> Operation {
+            if (current.lexeme == "<") return Operation::Lt;
+            if (current.lexeme == ">") return Operation::Gt;
+            if (current.lexeme == "<=") return Operation::Le;
+            if (current.lexeme == ">=") return Operation::Ge;
+            if (current.lexeme == "==") return Operation::Eq;
+            return Operation::Ne;
+        }();
         advance();
         auto right = parse_additive();
         if (!right) return right;

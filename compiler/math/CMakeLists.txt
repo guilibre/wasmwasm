@@ -39,6 +39,14 @@ add_custom_command(
     -Wl,--export=wasmwasm_sqrt_f64x2
     -Wl,--export=wasmwasm_uniform
     -Wl,--export=wasmwasm_uniform_f64x2
+    -Wl,--export=wasmwasm_abs
+    -Wl,--export=wasmwasm_abs_f64x2
+    -Wl,--export=wasmwasm_tanh
+    -Wl,--export=wasmwasm_tanh_f64x2
+    -Wl,--export=wasmwasm_min
+    -Wl,--export=wasmwasm_min_f64x2
+    -Wl,--export=wasmwasm_max
+    -Wl,--export=wasmwasm_max_f64x2
     -Wl,--lto-O3
     -Wl,--gc-sections
     -isystem ${WASM_SYSROOT}/include/c++/v1

@@ -256,4 +256,33 @@ auto wasmwasm_pow_f64x2(v128_t base, v128_t exp) -> v128_t {
                            wasmwasm_pow(wasm_f64x2_extract_lane(base, 1),
                                         wasm_f64x2_extract_lane(exp, 1)));
 }
+
+auto wasmwasm_abs(double x) -> double { return x < 0.0 ? -x : x; }
+
+auto wasmwasm_abs_f64x2(v128_t x) -> v128_t {
+    return wasm_f64x2_make(wasmwasm_abs(wasm_f64x2_extract_lane(x, 0)),
+                           wasmwasm_abs(wasm_f64x2_extract_lane(x, 1)));
+}
+
+auto wasmwasm_tanh(double x) -> double {
+    const auto e = wasmwasm_exp(2.0 * x);
+    return (e - 1.0) / (e + 1.0);
+}
+
+auto wasmwasm_tanh_f64x2(v128_t x) -> v128_t {
+    return wasm_f64x2_make(wasmwasm_tanh(wasm_f64x2_extract_lane(x, 0)),
+                           wasmwasm_tanh(wasm_f64x2_extract_lane(x, 1)));
+}
+
+auto wasmwasm_min(double a, double b) -> double { return a < b ? a : b; }
+
+auto wasmwasm_min_f64x2(v128_t a, v128_t b) -> v128_t {
+    return wasm_f64x2_pmin(a, b);
+}
+
+auto wasmwasm_max(double a, double b) -> double { return a > b ? a : b; }
+
+auto wasmwasm_max_f64x2(v128_t a, v128_t b) -> v128_t {
+    return wasm_f64x2_pmax(a, b);
+}
 }
