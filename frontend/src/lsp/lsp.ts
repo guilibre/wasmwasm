@@ -23,7 +23,7 @@ export interface LspHoverResult {
     type: string;
 }
 
-export function getDiagnostics(src: string): LspDiagnostic[] {
+export function get_diagnostics(src: string): LspDiagnostic[] {
     try {
         return JSON.parse(WasmWasm.getModule().lsp_diagnostics(src)) as LspDiagnostic[];
     } catch {
@@ -31,7 +31,7 @@ export function getDiagnostics(src: string): LspDiagnostic[] {
     }
 }
 
-export function getTokens(src: string): LspToken[] {
+export function get_tokens(src: string): LspToken[] {
     try {
         return JSON.parse(WasmWasm.getModule().lsp_tokens(src)) as LspToken[];
     } catch {
@@ -39,7 +39,7 @@ export function getTokens(src: string): LspToken[] {
     }
 }
 
-export function getCompletions(src: string, line: number, col: number): LspCompletion[] {
+export function get_completions(src: string, line: number, col: number): LspCompletion[] {
     try {
         return JSON.parse(WasmWasm.getModule().lsp_completions(src, line, col)) as LspCompletion[];
     } catch {
@@ -47,7 +47,7 @@ export function getCompletions(src: string, line: number, col: number): LspCompl
     }
 }
 
-export function getHover(src: string, line: number, col: number): LspHoverResult | null {
+export function get_hover(src: string, line: number, col: number): LspHoverResult | null {
     try {
         const parsed = JSON.parse(WasmWasm.getModule().lsp_hover(src, line, col));
         return parsed as LspHoverResult | null;

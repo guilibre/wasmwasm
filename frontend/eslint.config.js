@@ -31,6 +31,65 @@ export default tseslint.config([
             ...reactHooks.configs.recommended.rules,
             ...prettierConfig.rules,
             'prettier/prettier': 'error',
+            '@typescript-eslint/naming-convention': [
+                'error',
+                { selector: 'default', format: ['snake_case'] },
+                {
+                    selector: 'import',
+                    format: ['camelCase', 'PascalCase', 'snake_case', 'UPPER_CASE'],
+                },
+                { selector: 'typeLike', format: ['PascalCase'] },
+                { selector: 'enumMember', format: ['PascalCase', 'UPPER_CASE'] },
+                {
+                    selector: 'variable',
+                    format: ['snake_case', 'UPPER_CASE', 'PascalCase'],
+                },
+                {
+                    selector: 'function',
+                    format: ['snake_case', 'PascalCase'],
+                },
+                {
+                    selector: 'function',
+                    modifiers: ['exported'],
+                    format: ['snake_case', 'PascalCase'],
+                },
+                {
+                    selector: ['variable', 'function'],
+                    format: ['camelCase'],
+                    filter: { regex: '^use[A-Z]', match: true },
+                },
+                {
+                    selector: 'parameter',
+                    format: ['snake_case'],
+                    leadingUnderscore: 'allow',
+                },
+                {
+                    selector: 'objectLiteralProperty',
+                    format: null,
+                },
+                {
+                    selector: 'typeProperty',
+                    format: null,
+                },
+                {
+                    selector: ['variable', 'parameter'],
+                    modifiers: ['destructured'],
+                    format: null,
+                },
+                {
+                    selector: 'classProperty',
+                    format: ['snake_case', 'UPPER_CASE'],
+                    leadingUnderscore: 'allow',
+                },
+                {
+                    selector: 'classMethod',
+                    format: ['snake_case', 'camelCase'],
+                },
+                {
+                    selector: 'objectLiteralMethod',
+                    format: ['snake_case', 'camelCase'],
+                },
+            ],
         },
         languageOptions: {
             ecmaVersion: 2020,

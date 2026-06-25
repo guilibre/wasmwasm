@@ -4,7 +4,7 @@ import workletUrl from '../audio/processor.worklet.js?url';
 import WasmWasm, { type PatchParams } from '../audio/compiler';
 import Editor, { type EditorHandle } from './editor';
 import { Sidebar } from './sidebar';
-import { InstrumentPanel } from './instrument_panel';
+import { OrchestraPanel } from './instrument_panel';
 import { PatchEditor } from '../patch/patch_editor';
 import { usePatchStore } from '../patch/use_patch_store';
 import { patch_to_json } from '../patch/patch_to_json';
@@ -16,63 +16,47 @@ const MAX_INSTR_WIDTH = 900;
 const DEFAULT_INSTR_WIDTH = 380;
 
 export default function App() {
-    const audioContextRef = useRef<AudioContext | null>(null);
-    const workletNodeRef = useRef<AudioWorkletNode | null>(null);
-    const micSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
+    const audio_context_ref = useRef<AudioContext | null>(null);
+    const merger_ref = useRef<GainNode | null>(null);
+    const worklet_nodes_ref = useRef<Map<string, AudioWorkletNode>>(new Map());
+    const mic_source_ref = useRef<MediaStreamAudioSourceNode | null>(null);
     const analyser_l_ref = useRef<AnalyserNode | null>(null);
     const analyser_r_ref = useRef<AnalyserNode | null>(null);
-    const splitter_ref = useRef<ChannelSplitterNode | null>(null);
+    const orchestra_worker_ref = useRef<Worker | null>(null);
     const [analysers, set_analysers] = useState<{ l: AnalyserNode; r: AnalyserNode } | null>(null);
     const [is_playing, set_is_playing] = useState(false);
-    const [sidebar_visible, set_sidebar_visible] = useState(true);
     const [error, set_error] = useState<string | null>(null);
-    const [patch_params, set_patch_params] = useState<PatchParams | null>(null);
+    const [patch_params, set_patch_params] = useState<Map<string, PatchParams>>(new Map());
     const [instr_width, set_instr_width] = useState(DEFAULT_INSTR_WIDTH);
     const import_ref = useRef<HTMLInputElement>(null);
     const editor_ref = useRef<EditorHandle>(null);
-    const instrumentWorkerRef = useRef<Worker | null>(null);
-    const [instrument_error, set_instrument_error] = useState<string | null>(null);
 
     const store = usePatchStore();
     const {
+        orchestra,
+        active_instrument,
         selected_node,
         update_code,
         update_name,
         select,
         export_patch,
         import_patch,
-        load_patch,
-        instrument,
+        set_orchestra_bpm,
+        set_orchestra_code,
+        add_instrument,
+        remove_instrument,
         set_instrument_code,
-        set_instrument_bpm,
+        rename_instrument,
+        set_active_instrument,
+        load_patch,
     } = store;
     const selected_block = selected_node?.type === 'block' ? selected_node : null;
-
-    const [share_label, set_share_label] = useState<'Share' | 'Copied!'>('Share');
-
-    const share = useCallback(async () => {
-        const hash = await patch_to_hash(store.nodes, store.edges, store.instrument);
-        window.location.hash = hash;
-        await navigator.clipboard.writeText(window.location.href);
-        set_share_label('Copied!');
-        setTimeout(() => set_share_label('Share'), 2000);
-    }, [store.nodes, store.edges, store.instrument]);
 
     useEffect(() => {
         import('typescript');
     }, []);
 
-    useEffect(() => {
-        const hash = window.location.hash.slice(1);
-        if (!hash) return;
-        hash_to_patch(hash).then((result) => {
-            if (result) {
-                load_patch(result.nodes, result.edges, result.instrument);
-                history.replaceState(null, '', window.location.pathname + window.location.search);
-            }
-        });
-    }, [load_patch]);
-
+    const [sidebar_visible, set_sidebar_visible] = useState(true);
     const [editing_block_id, set_editing_block_id] = useState<string | null>(null);
     const [name_draft, set_name_draft] = useState('');
 
@@ -101,40 +85,52 @@ export default function App() {
         WasmWasm.ensureReady().then(() => editor_ref.current?.refresh());
     }, []);
 
+    useEffect(() => {
+        const hash = window.location.hash;
+        if (!hash) return;
+        hash_to_patch(hash).then((orchestra) => {
+            if (orchestra) load_patch(orchestra);
+        });
+    }, [load_patch]);
+
+    const share = useCallback(async () => {
+        const hash = await patch_to_hash(orchestra);
+        window.location.hash = hash;
+        await navigator.clipboard.writeText(window.location.href);
+    }, [orchestra]);
+
     const needs_capture = (patch_json: string) => patch_json.includes('capture_');
 
     const setup_capture = async (context: AudioContext, node: AudioWorkletNode) => {
-        if (micSourceRef.current) return;
-        let stream: MediaStream;
-        try {
-            stream = await navigator.mediaDevices.getUserMedia({
-                audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
-                video: false,
-            });
-        } catch (e) {
-            throw new Error(`Microphone unavailable: ${e instanceof Error ? e.message : e}`, {
-                cause: e,
-            });
+        if (!mic_source_ref.current) {
+            let stream: MediaStream;
+            try {
+                stream = await navigator.mediaDevices.getUserMedia({
+                    audio: {
+                        echoCancellation: false,
+                        noiseSuppression: false,
+                        autoGainControl: false,
+                    },
+                    video: false,
+                });
+            } catch (e) {
+                throw new Error(`Microphone unavailable: ${e instanceof Error ? e.message : e}`, {
+                    cause: e,
+                });
+            }
+            mic_source_ref.current = context.createMediaStreamSource(stream);
         }
-        const source = context.createMediaStreamSource(stream);
-        source.connect(node);
-        micSourceRef.current = source;
+        mic_source_ref.current.connect(node);
     };
 
     const play = async () => {
         set_error(null);
-        const json = patch_to_json(store.nodes, store.edges);
 
-        if (!audioContextRef.current) {
+        if (!audio_context_ref.current) {
             const context = new AudioContext({ latencyHint: 'interactive' });
-            console.log('audio latency:', context.baseLatency, context.outputLatency);
             await context.audioWorklet.addModule(workletUrl);
-            const node = new AudioWorkletNode(context, 'wasm-processor', {
-                numberOfInputs: 1,
-                numberOfOutputs: 1,
-                outputChannelCount: [2],
-            });
 
+            const merger = context.createGain();
             const splitter = context.createChannelSplitter(2);
             const al = context.createAnalyser();
             const ar = context.createAnalyser();
@@ -142,143 +138,173 @@ export default function App() {
             ar.fftSize = 4096;
             al.smoothingTimeConstant = 0.75;
             ar.smoothingTimeConstant = 0.75;
-            node.connect(splitter);
+            merger.connect(context.destination);
+            merger.connect(splitter);
             splitter.connect(al, 0);
             splitter.connect(ar, 1);
-            node.connect(context.destination);
 
+            merger_ref.current = merger;
             analyser_l_ref.current = al;
             analyser_r_ref.current = ar;
-            splitter_ref.current = splitter;
-            set_analysers({ l: al, r: ar });
-
-            audioContextRef.current = context;
-            workletNodeRef.current = node;
+            audio_context_ref.current = context;
         }
 
-        if (sidebar_visible && analyser_l_ref.current && analyser_r_ref.current)
-            set_analysers({ l: analyser_l_ref.current, r: analyser_r_ref.current });
+        set_analysers(
+            analyser_l_ref.current && analyser_r_ref.current
+                ? { l: analyser_l_ref.current, r: analyser_r_ref.current }
+                : null,
+        );
 
-        let result: { wasm: Uint8Array; params: PatchParams };
-        try {
-            result = await WasmWasm.init_patch(audioContextRef.current.sampleRate, json);
-        } catch (e) {
-            set_error(String(e));
-            return;
-        }
+        worklet_nodes_ref.current.forEach((n) => n.disconnect());
+        worklet_nodes_ref.current.clear();
+        orchestra_worker_ref.current?.terminate();
+        orchestra_worker_ref.current = null;
 
-        const { wasm, params } = result;
-        const context = audioContextRef.current!;
-        const node = workletNodeRef.current!;
+        const context = audio_context_ref.current!;
+        const merger = merger_ref.current!;
+        const new_patch_params = new Map<string, PatchParams>();
 
-        if (needs_capture(json)) await setup_capture(context, node);
-
-        node.port.postMessage({ type: 'clear' });
         await context.resume();
 
-        const readyPromise = new Promise<{ startTime: number; readyPerfNow: number }>((resolve) => {
-            const handler = (e: MessageEvent) => {
-                if (e.data.type === 'ready') {
-                    node.port.removeEventListener('message', handler);
-                    resolve({
-                        startTime: e.data.startTime as number,
-                        readyPerfNow: performance.now(),
-                    });
-                }
-            };
-            node.port.addEventListener('message', handler);
-            node.port.start();
-        });
+        let first_audio_time: number | null = null;
+        const worker_instruments: {
+            name: string;
+            code: string;
+            param_names: string[];
+            state_sab: SharedArrayBuffer;
+            event_sab: SharedArrayBuffer;
+        }[] = [];
 
-        node.port.postMessage({ type: 'load-wasm', buffer: wasm });
-        node.port.postMessage({
-            type: 'load-params-sab',
-            input_sab: params.input_sab,
-            state_sab: params.state_sab,
-            event_sab: params.event_sab,
-            paramExportNames: params.paramExportNames,
-        });
+        for (const instr of orchestra.instruments) {
+            const json = patch_to_json(instr.nodes, instr.edges);
 
-        set_patch_params(params);
-
-        instrumentWorkerRef.current?.terminate();
-        instrumentWorkerRef.current = null;
-        set_instrument_error(null);
-
-        const { startTime, readyPerfNow } = await readyPromise;
-        const audioCurrentTime = startTime + (performance.now() - readyPerfNow) / 1000;
-
-        if (instrument.code.trim()) {
-            let compiled: string;
+            let result: { wasm: Uint8Array; params: PatchParams };
             try {
-                const ts = await import('typescript');
-                const result = ts.transpileModule(instrument.code, {
+                result = await WasmWasm.init_patch(context.sampleRate, json);
+            } catch (e) {
+                set_error(`[${instr.name}] ${String(e)}`);
+                continue;
+            }
+
+            const { wasm, params } = result;
+            new_patch_params.set(instr.id, params);
+
+            const node = new AudioWorkletNode(context, 'wasm-processor', {
+                numberOfInputs: 1,
+                numberOfOutputs: 1,
+                outputChannelCount: [2],
+            });
+            node.connect(merger);
+            worklet_nodes_ref.current.set(instr.id, node);
+
+            if (needs_capture(json)) {
+                try {
+                    await setup_capture(context, node);
+                } catch (e) {
+                    set_error(String(e));
+                }
+            }
+
+            node.port.postMessage({ type: 'clear' });
+
+            const perf_before = performance.now();
+            const ready_promise = new Promise<number>((resolve) => {
+                const handler = (e: MessageEvent) => {
+                    if (e.data.type === 'ready') {
+                        node.port.removeEventListener('message', handler);
+                        resolve(
+                            (e.data.startTime as number) + (performance.now() - perf_before) / 1000,
+                        );
+                    }
+                };
+                node.port.addEventListener('message', handler);
+                node.port.start();
+            });
+
+            node.port.postMessage({ type: 'load-wasm', buffer: wasm });
+            node.port.postMessage({
+                type: 'load-params-sab',
+                input_sab: params.input_sab,
+                state_sab: params.state_sab,
+                event_sab: params.event_sab,
+                param_export_names: params.param_export_names,
+            });
+
+            const audio_current_time = await ready_promise;
+            if (first_audio_time === null) first_audio_time = audio_current_time;
+
+            worker_instruments.push({
+                name: instr.name,
+                code: instr.code,
+                param_names: params.param_names,
+                state_sab: params.state_sab,
+                event_sab: params.event_sab,
+            });
+        }
+
+        set_patch_params(new_patch_params);
+
+        const ts = await import('typescript');
+
+        const compiled_instruments = worker_instruments.map((i) => ({
+            ...i,
+            code: i.code.trim()
+                ? ts.transpileModule(i.code, {
+                      compilerOptions: {
+                          target: ts.ScriptTarget.ES2020,
+                          module: ts.ModuleKind.None,
+                      },
+                  }).outputText
+                : '',
+        }));
+
+        let compiled_orchestra = '';
+        if (orchestra.code.trim()) {
+            try {
+                compiled_orchestra = ts.transpileModule(orchestra.code, {
                     compilerOptions: {
                         target: ts.ScriptTarget.ES2020,
                         module: ts.ModuleKind.None,
                     },
-                });
-                compiled = result.outputText;
+                }).outputText;
             } catch (e) {
-                set_instrument_error(String(e));
-                compiled = '';
-            }
-
-            if (compiled) {
-                const worker = new Worker(
-                    new URL('../audio/instrument_worker.ts', import.meta.url),
-                    { type: 'module' },
-                );
-                worker.onmessage = (e) => {
-                    if (e.data.type === 'error') set_instrument_error(e.data.message);
-                };
-                instrumentWorkerRef.current = worker;
-                worker.postMessage({
-                    type: 'run',
-                    code: compiled,
-                    state_sab: params.state_sab,
-                    event_sab: params.event_sab,
-                    paramNames: params.paramNames,
-                    bpm: instrument.bpm,
-                    sampleRate: audioContextRef.current!.sampleRate,
-                    audioCurrentTime,
-                });
+                set_error(`[orchestra] ${String(e)}`);
             }
         }
+
+        const worker = new Worker(new URL('../audio/orchestra_worker.ts', import.meta.url), {
+            type: 'module',
+        });
+        worker.onmessage = (e) => {
+            if (e.data.type === 'error') set_error(`[orchestra] ${e.data.message}`);
+        };
+        worker.postMessage({
+            type: 'run',
+            orchestra_code: compiled_orchestra,
+            bpm: orchestra.bpm,
+            sampleRate: context.sampleRate,
+            audioCurrentTime: first_audio_time ?? 0,
+            instruments: compiled_instruments,
+        });
+        orchestra_worker_ref.current = worker;
 
         set_is_playing(true);
     };
 
-    const toggle_sidebar = useCallback(() => {
-        const al = analyser_l_ref.current;
-        const ar = analyser_r_ref.current;
-        const splitter = splitter_ref.current;
-        if (sidebar_visible) {
-            al?.disconnect();
-            ar?.disconnect();
-            set_analysers(null);
-        } else {
-            if (is_playing && splitter && al && ar) {
-                splitter.connect(al, 0);
-                splitter.connect(ar, 1);
-                set_analysers({ l: al, r: ar });
-            }
-        }
-        set_sidebar_visible((v) => !v);
-    }, [sidebar_visible, is_playing]);
-
     const stop = async () => {
-        if (micSourceRef.current) {
-            micSourceRef.current.mediaStream.getTracks().forEach((t) => t.stop());
-            micSourceRef.current.disconnect();
-            micSourceRef.current = null;
+        if (mic_source_ref.current) {
+            mic_source_ref.current.mediaStream.getTracks().forEach((t) => t.stop());
+            mic_source_ref.current.disconnect();
+            mic_source_ref.current = null;
         }
-        await audioContextRef.current?.suspend();
+        worklet_nodes_ref.current.forEach((n) => n.disconnect());
+        worklet_nodes_ref.current.clear();
+        orchestra_worker_ref.current?.terminate();
+        orchestra_worker_ref.current = null;
+        await audio_context_ref.current?.suspend();
         set_is_playing(false);
         set_analysers(null);
-        instrumentWorkerRef.current?.terminate();
-        instrumentWorkerRef.current = null;
-        set_instrument_error(null);
+        set_patch_params(new Map());
     };
 
     const on_instr_handle_mousedown = useCallback(
@@ -302,14 +328,21 @@ export default function App() {
         [instr_width],
     );
 
+    const active_params = active_instrument
+        ? (patch_params.get(active_instrument.id) ?? null)
+        : null;
+
     return (
         <div className="app">
             <div className="app__toolbar">
                 <span className="app__brand">wasmwasm</span>
                 <button onClick={is_playing ? stop : play}>{is_playing ? 'Stop' : 'Play'}</button>
-                <button onClick={share}>{share_label}</button>
                 <button onClick={export_patch}>Export</button>
                 <button onClick={() => import_ref.current?.click()}>Import</button>
+                <button onClick={share}>Share</button>
+                <button onClick={() => set_sidebar_visible((v) => !v)}>
+                    {sidebar_visible ? 'Hide sidebar' : 'Show sidebar'}
+                </button>
                 <input
                     ref={import_ref}
                     type="file"
@@ -326,13 +359,16 @@ export default function App() {
 
             <div className="app__workspace">
                 <div className="app__instrument-pane" style={{ width: instr_width }}>
-                    <InstrumentPanel
-                        params={patch_params}
-                        code={instrument.code}
-                        bpm={instrument.bpm}
-                        on_code_change={set_instrument_code}
-                        on_bpm_change={set_instrument_bpm}
-                        error={instrument_error}
+                    <OrchestraPanel
+                        orchestra={orchestra}
+                        params={active_params}
+                        on_bpm_change={set_orchestra_bpm}
+                        on_add={add_instrument}
+                        on_remove={remove_instrument}
+                        on_rename={rename_instrument}
+                        on_instrument_code_change={set_instrument_code}
+                        on_orchestra_code_change={set_orchestra_code}
+                        on_set_active={set_active_instrument}
                     />
                     <div className="app__orch-handle" onMouseDown={on_instr_handle_mousedown} />
                 </div>
@@ -341,16 +377,11 @@ export default function App() {
                     <ReactFlowProvider>
                         <PatchEditor store={store} />
                     </ReactFlowProvider>
-                    {sidebar_visible ? (
+                    {sidebar_visible && (
                         <Sidebar
                             analyser_l={analysers?.l ?? null}
                             analyser_r={analysers?.r ?? null}
-                            on_close={toggle_sidebar}
                         />
-                    ) : (
-                        <button className="app__sidebar-open" onClick={toggle_sidebar}>
-                            ‹
-                        </button>
                     )}
                 </div>
             </div>
@@ -382,8 +413,8 @@ export default function App() {
                         <Editor
                             ref={editor_ref}
                             key={selected_block.id}
-                            initialValue={(selected_block.data as { code: string }).code}
-                            onChange={(code) => update_code(selected_block.id, code)}
+                            initial_value={(selected_block.data as { code: string }).code}
+                            on_change={(code) => update_code(selected_block.id, code)}
                         />
                     </div>
                 </div>

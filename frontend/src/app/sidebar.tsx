@@ -3,14 +3,13 @@ import { useRef, useEffect, useState, useCallback } from 'react';
 interface Props {
     analyser_l: AnalyserNode | null;
     analyser_r: AnalyserNode | null;
-    on_close: () => void;
 }
 
 const MIN_WIDTH = 180;
 const MAX_WIDTH = 600;
 const DEFAULT_WIDTH = 260;
 
-export function Sidebar({ analyser_l, analyser_r, on_close }: Props) {
+export function Sidebar({ analyser_l, analyser_r }: Props) {
     const waveform_ref = useRef<HTMLCanvasElement>(null);
     const spectro_ref = useRef<HTMLCanvasElement>(null);
     const raf_ref = useRef<number>(0);
@@ -76,6 +75,15 @@ export function Sidebar({ analyser_l, analyser_r, on_close }: Props) {
         const col_img = new ImageData(1, sc.height);
         const col_data = col_img.data;
 
+        const SH = sc.height;
+        const half_h = SH >> 1;
+        const bin_map = new Int32Array(SH);
+        for (let y = 0; y < SH; y++) {
+            const local_y = y < half_h ? y : y - half_h;
+            const norm = 1 - local_y / half_h;
+            bin_map[y] = Math.min(bin_count - 1, Math.pow(bin_count, norm) | 0);
+        }
+
         let col = 0;
 
         const draw = () => {
@@ -131,21 +139,16 @@ export function Sidebar({ analyser_l, analyser_r, on_close }: Props) {
                 wctx.fillText(`${zoom}×`, 4, WH - 4);
             }
 
-            const SH = sc.height;
-            const half_h = SH >> 1;
-
             for (let y = 0; y < SH; y++) {
-                const is_top = y < half_h;
-                const local_y = is_top ? y : y - half_h;
-                const norm = 1 - local_y / half_h;
-                const bin = Math.min(bin_count - 1, Math.pow(bin_count, norm) | 0);
-                const db = is_top ? freq_l[bin] : freq_r[bin];
+                const db = y < half_h ? freq_l[bin_map[y]] : freq_r[bin_map[y]];
                 const t = Math.max(0, Math.min(1, (db + 96) / 96));
-                const [r, g, b] = hsl_to_rgb((240 - t * 200) / 360, 0.8, t * 0.5);
+                const h = (240 - t * 200) / 360;
+                const l = t * 0.5;
+                const a = 0.8 * Math.min(l, 1 - l);
                 const i = y << 2;
-                col_data[i] = r;
-                col_data[i + 1] = g;
-                col_data[i + 2] = b;
+                col_data[i] = (hsl_channel(h, a, l, 0) * 255) | 0;
+                col_data[i + 1] = (hsl_channel(h, a, l, 8) * 255) | 0;
+                col_data[i + 2] = (hsl_channel(h, a, l, 4) * 255) | 0;
                 col_data[i + 3] = 255;
             }
             bctx.putImageData(col_img, col, 0);
@@ -165,11 +168,7 @@ export function Sidebar({ analyser_l, analyser_r, on_close }: Props) {
     return (
         <div className="app__sidebar" style={{ width }}>
             <div className="app__sidebar-handle" onMouseDown={on_handle_mousedown} />
-            <div className="app__sidebar-header">
-                <button className="app__sidebar-close" onClick={on_close}>
-                    ×
-                </button>
-            </div>
+
             <span className="app__sidebar-label">waveform</span>
             <canvas
                 ref={waveform_ref}
@@ -183,11 +182,7 @@ export function Sidebar({ analyser_l, analyser_r, on_close }: Props) {
     );
 }
 
-function hsl_to_rgb(h: number, s: number, l: number): [number, number, number] {
-    const a = s * Math.min(l, 1 - l);
-    const f = (n: number) => {
-        const k = (n + h * 12) % 12;
-        return l - a * Math.max(-1, Math.min(k - 3, Math.min(9 - k, 1)));
-    };
-    return [(f(0) * 255) | 0, (f(8) * 255) | 0, (f(4) * 255) | 0];
+function hsl_channel(h: number, a: number, l: number, n: number): number {
+    const k = (n + h * 12) % 12;
+    return l - a * Math.max(-1, Math.min(k - 3, Math.min(9 - k, 1)));
 }

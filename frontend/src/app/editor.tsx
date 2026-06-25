@@ -12,10 +12,10 @@ import { EditorState, Prec, RangeSetBuilder, StateEffect } from '@codemirror/sta
 import { defaultKeymap, indentWithTab, historyKeymap } from '@codemirror/commands';
 import { history } from '@codemirror/commands';
 import {
-    getDiagnostics,
-    getTokens,
-    getCompletions,
-    getHover,
+    get_diagnostics,
+    get_tokens,
+    get_completions,
+    get_hover,
     type LspCompletion,
 } from '../lsp/lsp';
 
@@ -28,19 +28,19 @@ const TOKEN_CLASS: Record<string, string> = {
     comment: 'ww-comment',
 };
 
-const forceHighlight = StateEffect.define<void>();
+const force_highlight = StateEffect.define<void>();
 
-function lineStarts(src: string): number[] {
+function line_starts(src: string): number[] {
     const s = [0];
     for (let i = 0; i < src.length; i++) if (src[i] === '\n') s.push(i + 1);
     return s;
 }
 
-function buildDecorations(view: EditorView): DecorationSet {
+function build_decorations(view: EditorView): DecorationSet {
     const src = view.state.doc.toString();
-    const tokens = getTokens(src);
-    const diags = getDiagnostics(src);
-    const starts = lineStarts(src);
+    const tokens = get_tokens(src);
+    const diags = get_diagnostics(src);
+    const starts = line_starts(src);
 
     const cls = new Array<string>(src.length).fill('');
     const err = new Array<boolean>(src.length).fill(false);
@@ -77,34 +77,34 @@ function buildDecorations(view: EditorView): DecorationSet {
     return builder.finish();
 }
 
-const highlightPlugin = ViewPlugin.fromClass(
+const highlight_plugin = ViewPlugin.fromClass(
     class {
         decorations: DecorationSet;
         constructor(view: EditorView) {
-            this.decorations = buildDecorations(view);
+            this.decorations = build_decorations(view);
         }
         update(update: ViewUpdate) {
             const forced = update.transactions.some((tr) =>
-                tr.effects.some((e) => e.is(forceHighlight)),
+                tr.effects.some((e) => e.is(force_highlight)),
             );
             if (update.docChanged || forced) {
-                this.decorations = buildDecorations(update.view);
+                this.decorations = build_decorations(update.view);
             }
         }
     },
     { decorations: (v) => v.decorations },
 );
 
-const hoverPlugin = hoverTooltip((view, pos) => {
+const hover_plugin = hoverTooltip((view, pos) => {
     const src = view.state.doc.toString();
-    const starts = lineStarts(src);
+    const starts = line_starts(src);
     let line = 0;
     for (let i = 0; i < starts.length; i++) {
         if (starts[i] <= pos) line = i;
         else break;
     }
     const col = pos - starts[line];
-    const result = getHover(src, line, col);
+    const result = get_hover(src, line, col);
     if (!result) return null;
     return {
         pos,
@@ -119,7 +119,7 @@ const hoverPlugin = hoverTooltip((view, pos) => {
     };
 });
 
-const editorTheme = EditorView.theme(
+const editor_theme = EditorView.theme(
     {
         '&': { height: '100%', background: 'transparent', color: '#cdd6f4' },
         '.cm-scroller': {
@@ -138,120 +138,123 @@ const editorTheme = EditorView.theme(
 );
 
 export interface EditorHandle {
-    setValue(code: string): void;
+    set_value(code: string): void;
     refresh(): void;
 }
 
 interface Props {
-    initialValue: string;
-    onChange: (v: string) => void;
+    initial_value: string;
+    on_change: (v: string) => void;
 }
 
-const Editor = forwardRef<EditorHandle, Props>(function Editor({ initialValue, onChange }, ref) {
-    const containerRef = useRef<HTMLDivElement>(null);
-    const viewRef = useRef<EditorView | null>(null);
-    const initialValueRef = useRef(initialValue);
-    const onChangeRef = useRef(onChange);
-    onChangeRef.current = onChange;
+const Editor = forwardRef<EditorHandle, Props>(function Editor({ initial_value, on_change }, ref) {
+    const container_ref = useRef<HTMLDivElement>(null);
+    const view_ref = useRef<EditorView | null>(null);
+    const initial_value_ref = useRef(initial_value);
+    const on_change_ref = useRef(on_change);
+    on_change_ref.current = on_change;
 
-    const wrapperRef = useRef<HTMLDivElement>(null);
-    const [completions, setCompletions] = useState<LspCompletion[]>([]);
-    const completionsRef = useRef<LspCompletion[]>([]);
-    const compStateRef = useRef({ from: 0, prefix: '' });
-    const [compPos, setCompPos] = useState({ top: 0, left: 0 });
-    const [selectedComp, setSelectedComp] = useState(0);
-    const selectedCompRef = useRef(0);
+    const wrapper_ref = useRef<HTMLDivElement>(null);
+    const [completions, set_completions] = useState<LspCompletion[]>([]);
+    const completions_ref = useRef<LspCompletion[]>([]);
+    const comp_state_ref = useRef({ from: 0, prefix: '' });
+    const [comp_pos, set_comp_pos] = useState({ top: 0, left: 0 });
+    const [selected_comp, set_selected_comp] = useState(0);
+    const selected_comp_ref = useRef(0);
 
-    function syncCompletions(
+    function sync_completions(
         items: LspCompletion[],
         state?: { from: number; prefix: string },
         pos?: { top: number; left: number },
     ) {
-        completionsRef.current = items;
-        setCompletions(items);
-        if (state) compStateRef.current = state;
-        if (pos) setCompPos(pos);
+        completions_ref.current = items;
+        set_completions(items);
+        if (state) comp_state_ref.current = state;
+        if (pos) set_comp_pos(pos);
         if (items.length === 0) {
-            selectedCompRef.current = 0;
-            setSelectedComp(0);
+            selected_comp_ref.current = 0;
+            set_selected_comp(0);
         }
     }
 
-    const completionHandlers = useRef({
+    const completion_handlers = useRef({
         apply() {
-            const items = completionsRef.current;
+            const items = completions_ref.current;
             if (items.length === 0) return false;
-            const view = viewRef.current!;
-            const { from, prefix } = compStateRef.current;
-            const label = items[selectedCompRef.current].label;
+            const view = view_ref.current!;
+            const { from, prefix } = comp_state_ref.current;
+            const label = items[selected_comp_ref.current].label;
             const code = view.state.doc.toString();
-            const newCode = code.slice(0, from) + label + code.slice(from + prefix.length);
+            const new_code = code.slice(0, from) + label + code.slice(from + prefix.length);
             view.dispatch({
-                changes: { from: 0, to: view.state.doc.length, insert: newCode },
+                changes: { from: 0, to: view.state.doc.length, insert: new_code },
                 selection: { anchor: from + label.length },
             });
-            syncCompletions([]);
+            sync_completions([]);
             return true;
         },
         dismiss() {
-            if (completionsRef.current.length === 0) return false;
-            syncCompletions([]);
+            if (completions_ref.current.length === 0) return false;
+            sync_completions([]);
             return true;
         },
-        selectNext() {
-            if (completionsRef.current.length === 0) return false;
-            const next = Math.min(selectedCompRef.current + 1, completionsRef.current.length - 1);
-            selectedCompRef.current = next;
-            setSelectedComp(next);
+        select_next() {
+            if (completions_ref.current.length === 0) return false;
+            const next = Math.min(
+                selected_comp_ref.current + 1,
+                completions_ref.current.length - 1,
+            );
+            selected_comp_ref.current = next;
+            set_selected_comp(next);
             return true;
         },
-        selectPrev() {
-            if (completionsRef.current.length === 0) return false;
-            const prev = Math.max(selectedCompRef.current - 1, 0);
-            selectedCompRef.current = prev;
-            setSelectedComp(prev);
+        select_prev() {
+            if (completions_ref.current.length === 0) return false;
+            const prev = Math.max(selected_comp_ref.current - 1, 0);
+            selected_comp_ref.current = prev;
+            set_selected_comp(prev);
             return true;
         },
     });
 
     useImperativeHandle(ref, () => ({
-        setValue(code: string) {
-            const view = viewRef.current;
+        set_value(code: string) {
+            const view = view_ref.current;
             if (!view) return;
             view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: code } });
-            syncCompletions([]);
+            sync_completions([]);
         },
         refresh() {
-            viewRef.current?.dispatch({ effects: forceHighlight.of() });
+            view_ref.current?.dispatch({ effects: force_highlight.of() });
         },
     }));
 
     useEffect(() => {
-        const h = completionHandlers.current;
+        const h = completion_handlers.current;
 
-        const completionKeymap = Prec.highest(
+        const completion_keymap = Prec.highest(
             keymap.of([
                 { key: 'Enter', run: () => h.apply() },
                 { key: 'Tab', run: () => h.apply() },
                 { key: 'Escape', run: () => h.dismiss() },
-                { key: 'ArrowDown', run: () => h.selectNext() },
-                { key: 'ArrowUp', run: () => h.selectPrev() },
+                { key: 'ArrowDown', run: () => h.select_next() },
+                { key: 'ArrowUp', run: () => h.select_prev() },
             ]),
         );
 
-        const updateListener = EditorView.updateListener.of((update: ViewUpdate) => {
+        const update_listener = EditorView.updateListener.of((update: ViewUpdate) => {
             if (!update.docChanged && !update.selectionSet) return;
 
             const code = update.state.doc.toString();
-            if (update.docChanged) onChangeRef.current(code);
+            if (update.docChanged) on_change_ref.current(code);
 
             if (!update.docChanged) {
-                syncCompletions([]);
+                sync_completions([]);
                 return;
             }
 
             const offset = update.state.selection.main.head;
-            const starts = lineStarts(code);
+            const starts = line_starts(code);
             let line = 0;
             for (let i = 0; i < starts.length; i++) {
                 if (starts[i] <= offset) line = i;
@@ -259,66 +262,69 @@ const Editor = forwardRef<EditorHandle, Props>(function Editor({ initialValue, o
             }
             const col = offset - starts[line];
 
-            let wordFrom = offset;
-            while (wordFrom > 0 && /\w/.test(code[wordFrom])) wordFrom--;
-            const prefix = code.slice(wordFrom, offset);
+            let word_from = offset;
+            while (word_from > 0 && /\w/.test(code[word_from])) word_from--;
+            const prefix = code.slice(word_from, offset);
 
             if (prefix.length === 0) {
-                syncCompletions([]);
+                sync_completions([]);
                 return;
             }
 
-            const filtered = getCompletions(code, line, col).filter(
+            const filtered = get_completions(code, line, col).filter(
                 (c) => c.label.startsWith(prefix) && c.label !== prefix,
             );
 
             if (filtered.length > 0) {
                 const coords = update.view.coordsAtPos(offset);
-                const wRect = wrapperRef.current!.getBoundingClientRect();
+                const w_rect = wrapper_ref.current!.getBoundingClientRect();
                 const pos = coords
-                    ? { top: coords.bottom - wRect.top + 4, left: coords.left - wRect.left }
+                    ? { top: coords.bottom - w_rect.top + 4, left: coords.left - w_rect.left }
                     : undefined;
-                syncCompletions(filtered, { from: wordFrom, prefix }, pos);
+                sync_completions(filtered, { from: word_from, prefix }, pos);
             } else {
-                syncCompletions([]);
+                sync_completions([]);
             }
         });
 
         const view = new EditorView({
             state: EditorState.create({
-                doc: initialValueRef.current,
+                doc: initial_value_ref.current,
                 extensions: [
-                    completionKeymap,
+                    completion_keymap,
                     history(),
                     keymap.of([indentWithTab, ...historyKeymap, ...defaultKeymap]),
-                    highlightPlugin,
-                    hoverPlugin,
-                    updateListener,
-                    editorTheme,
+                    highlight_plugin,
+                    hover_plugin,
+                    update_listener,
+                    editor_theme,
                 ],
             }),
-            parent: containerRef.current!,
+            parent: container_ref.current!,
         });
 
-        viewRef.current = view;
+        view_ref.current = view;
         return () => view.destroy();
     }, []);
 
     return (
-        <div ref={wrapperRef} className="app__code-wrapper">
-            <div ref={containerRef} className="app__code" />
+        <div ref={wrapper_ref} className="app__code-wrapper">
+            <div ref={container_ref} className="app__code" />
             {completions.length > 0 && (
-                <div className="app__completions" style={{ top: compPos.top, left: compPos.left }}>
+                <div
+                    className="app__completions"
+                    style={{ top: comp_pos.top, left: comp_pos.left }}
+                >
                     {completions.slice(0, 8).map((c, i) => (
                         <div
                             key={c.label}
                             className={
-                                'app__completion-item' + (i === selectedComp ? ' selected' : '')
+                                'app__completion-item' + (i === selected_comp ? ' selected' : '')
                             }
                             onMouseDown={(e) => {
                                 e.preventDefault();
-                                selectedCompRef.current = i;
-                                completionHandlers.current.apply();
+                                selected_comp_ref.current = i;
+                                completion_handlers.current.apply();
                             }}
                         >
                             <span className="app__completion-label">{c.label}</span>

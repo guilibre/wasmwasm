@@ -5,10 +5,10 @@ import type { BlockData } from './use_patch_store';
 
 export function BlockNode({ id, data, selected }: NodeProps) {
     const { name, num_inputs, num_outputs, params } = data as unknown as BlockData;
-    const updateNodeInternals = useUpdateNodeInternals();
+    const update_node_internals = useUpdateNodeInternals();
     useEffect(() => {
-        updateNodeInternals(id);
-    }, [id, num_inputs, num_outputs, updateNodeInternals]);
+        update_node_internals(id);
+    }, [id, num_inputs, num_outputs, update_node_internals]);
 
     return (
         <div className={`ww-node ww-node--block${selected ? ' ww-node--selected' : ''}`}>

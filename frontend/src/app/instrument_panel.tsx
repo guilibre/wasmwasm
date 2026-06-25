@@ -6,8 +6,14 @@ import { autocompletion } from '@codemirror/autocomplete';
 import { javascript } from '@codemirror/lang-javascript';
 import { HighlightStyle, syntaxHighlighting } from '@codemirror/language';
 import { tags } from '@lezer/highlight';
+import { tsFacet, tsSync, tsHover, tsAutocomplete, tsLinter } from '@valtown/codemirror-ts';
+import ts from 'typescript';
+import { createSystem, createVirtualTypeScriptEnvironment } from '@typescript/vfs';
+import type { VirtualTypeScriptEnvironment } from '@typescript/vfs';
+import type { PatchParams } from '../audio/compiler';
+import type { OrchestraState } from '../patch/use_patch_store';
 
-const highlightStyle = HighlightStyle.define([
+const highlight_style = HighlightStyle.define([
     { tag: tags.keyword, color: '#c792ea', fontWeight: 'bold' },
     { tag: tags.number, color: '#f78c6c' },
     { tag: tags.string, color: '#c3e88d' },
@@ -16,23 +22,45 @@ const highlightStyle = HighlightStyle.define([
     { tag: [tags.variableName, tags.propertyName], color: '#82aaff' },
     { tag: tags.typeName, color: '#ffcb6b' },
 ]);
-import { tsFacet, tsSync, tsHover, tsAutocomplete, tsLinter } from '@valtown/codemirror-ts';
-import ts from 'typescript';
-import { createSystem, createVirtualTypeScriptEnvironment } from '@typescript/vfs';
-import type { VirtualTypeScriptEnvironment } from '@typescript/vfs';
-import type { PatchParams } from '../audio/compiler';
 
 interface Props {
+    orchestra: OrchestraState;
     params: PatchParams | null;
-    code: string;
-    bpm: number;
-    on_code_change: (code: string) => void;
     on_bpm_change: (bpm: number) => void;
-    error: string | null;
+    on_add: () => void;
+    on_remove: (id: string) => void;
+    on_rename: (id: string, name: string) => void;
+    on_instrument_code_change: (id: string, code: string) => void;
+    on_orchestra_code_change: (code: string) => void;
+    on_set_active: (id: string) => void;
 }
 
-const FALLBACK =
-    "// Example:\nwhile (true) {\n  setParam('gain', Math.random());\n  await sleepBeats(1);\n}";
+const ORCHESTRA_DEFS = `
+declare function instrument(name: string): any;
+declare function sleep(seconds: number): Promise<void>;
+declare function sleep_beats(beats: number): Promise<void>;
+declare function on_beat(fn: (beat: number) => void): void;
+declare function current_time(): number;
+`;
+
+const INSTRUMENT_DEFS = `
+declare function set_param(name: string, value: number, delay?: number): void;
+declare function sleep(seconds: number): Promise<void>;
+declare function sleep_beats(beats: number): Promise<void>;
+`;
+
+const ORCHESTRA_FALLBACK = `const i = instrument('instrument1');
+while (true) {
+  i.note(440, 0.4);
+  await sleep_beats(1);
+}`;
+
+const INSTRUMENT_FALLBACK = `async function note(freq: number, dur: number) {
+  set_param('osc.freq', freq);
+  set_param('env.gate', 1);
+  await sleep(dur);
+  set_param('env.gate', 0);
+}`;
 
 const TS_FILE = '/index.ts';
 const DEFS_FILE = '/defs.d.ts';
@@ -41,32 +69,28 @@ const TS_COMPILER_OPTIONS: ts.CompilerOptions = {
     module: ts.ModuleKind.ESNext,
 };
 
-const INSTRUMENT_DEFS = `
-declare function setParam(name: string, value: number): void;
-declare function sleep(seconds: number): Promise<void>;
-declare function sleepBeats(beats: number): Promise<void>;
-declare function onBeat(fn: (beat: number) => void): void;
-declare function currentTime(): number;
-`;
-
-const tsLibFiles = import.meta.glob<string>('/node_modules/typescript/lib/lib.*.d.ts', {
+const ts_lib_files = import.meta.glob<string>('/node_modules/typescript/lib/lib.*.d.ts', {
     eager: true,
     query: '?raw',
     import: 'default',
 });
 
-let envPromise: Promise<VirtualTypeScriptEnvironment> | null = null;
+const orchestra_env_promise: Promise<VirtualTypeScriptEnvironment> | null = null;
+const instrument_env_promise: Promise<VirtualTypeScriptEnvironment> | null = null;
 
-function getEnv(): Promise<VirtualTypeScriptEnvironment> {
-    if (!envPromise) {
-        const fsMap = new Map<string, string>();
-        for (const [path, content] of Object.entries(tsLibFiles)) {
-            fsMap.set('/' + path.split('/').pop()!, content);
+function get_env(
+    defs: string,
+    promise_ref: { current: Promise<VirtualTypeScriptEnvironment> | null },
+): Promise<VirtualTypeScriptEnvironment> {
+    if (!promise_ref.current) {
+        const fs_map = new Map<string, string>();
+        for (const [path, content] of Object.entries(ts_lib_files)) {
+            fs_map.set('/' + path.split('/').pop()!, content);
         }
-        fsMap.set(DEFS_FILE, INSTRUMENT_DEFS);
-        fsMap.set(TS_FILE, ' ');
-        const system = createSystem(fsMap);
-        envPromise = Promise.resolve(
+        fs_map.set(DEFS_FILE, defs);
+        fs_map.set(TS_FILE, ' ');
+        const system = createSystem(fs_map);
+        promise_ref.current = Promise.resolve(
             createVirtualTypeScriptEnvironment(
                 system,
                 [DEFS_FILE, TS_FILE],
@@ -75,10 +99,13 @@ function getEnv(): Promise<VirtualTypeScriptEnvironment> {
             ),
         );
     }
-    return envPromise;
+    return promise_ref.current;
 }
 
-const editorTheme = EditorView.theme(
+const orchestra_env_ref = { current: orchestra_env_promise };
+const instrument_env_ref = { current: instrument_env_promise };
+
+const editor_theme = EditorView.theme(
     {
         '&': { height: '100%', background: 'transparent', color: '#cdd6f4' },
         '.cm-scroller': {
@@ -99,22 +126,22 @@ const editorTheme = EditorView.theme(
 );
 
 interface EditorProps {
-    initialValue: string;
-    onChange: (v: string) => void;
+    initial_value: string;
+    on_change: (v: string) => void;
     env: VirtualTypeScriptEnvironment | null;
 }
 
-function TsEditor({ initialValue, onChange, env }: EditorProps) {
-    const containerRef = useRef<HTMLDivElement>(null);
-    const viewRef = useRef<EditorView | null>(null);
-    const initialValueRef = useRef(initialValue);
-    const onChangeRef = useRef(onChange);
+function TsEditor({ initial_value, on_change, env }: EditorProps) {
+    const container_ref = useRef<HTMLDivElement>(null);
+    const view_ref = useRef<EditorView | null>(null);
+    const initial_value_ref = useRef(initial_value);
+    const on_change_ref = useRef(on_change);
     useEffect(() => {
-        onChangeRef.current = onChange;
+        on_change_ref.current = on_change;
     });
 
     useEffect(() => {
-        const tsExtensions = env
+        const ts_extensions = env
             ? [
                   tsFacet.of({ env, path: TS_FILE }),
                   tsSync(),
@@ -126,34 +153,62 @@ function TsEditor({ initialValue, onChange, env }: EditorProps) {
 
         const view = new EditorView({
             state: EditorState.create({
-                doc: initialValueRef.current,
+                doc: initial_value_ref.current,
                 extensions: [
                     history(),
                     keymap.of([indentWithTab, ...historyKeymap, ...defaultKeymap]),
                     javascript({ typescript: true }),
-                    syntaxHighlighting(highlightStyle),
-                    ...tsExtensions,
-                    editorTheme,
+                    syntaxHighlighting(highlight_style),
+                    ...ts_extensions,
+                    editor_theme,
                     EditorView.updateListener.of((update) => {
-                        if (update.docChanged) onChangeRef.current(update.state.doc.toString());
+                        if (update.docChanged) on_change_ref.current(update.state.doc.toString());
                     }),
                 ],
             }),
-            parent: containerRef.current!,
+            parent: container_ref.current!,
         });
-        viewRef.current = view;
+        view_ref.current = view;
         return () => view.destroy();
     }, [env]);
 
-    return <div ref={containerRef} style={{ height: '100%' }} />;
+    return <div ref={container_ref} style={{ height: '100%' }} />;
 }
 
-export function InstrumentPanel({ code, bpm, on_code_change, on_bpm_change, error }: Props) {
-    const [env, setEnv] = useState<VirtualTypeScriptEnvironment | null>(null);
+const ORCHESTRATOR_ID = '__orchestrator__';
+
+export function OrchestraPanel({
+    orchestra,
+    on_bpm_change,
+    on_add,
+    on_remove,
+    on_rename,
+    on_instrument_code_change,
+    on_orchestra_code_change,
+    on_set_active,
+}: Props) {
+    const [orchestra_env, set_orchestra_env] = useState<VirtualTypeScriptEnvironment | null>(null);
+    const [instrument_env, set_instrument_env] = useState<VirtualTypeScriptEnvironment | null>(
+        null,
+    );
+    const [editing_tab_id, set_editing_tab_id] = useState<string | null>(null);
+    const [name_draft, set_name_draft] = useState('');
+    const [active_tab, set_active_tab] = useState<string>(ORCHESTRATOR_ID);
 
     useEffect(() => {
-        getEnv().then(setEnv);
+        get_env(ORCHESTRA_DEFS, orchestra_env_ref).then(set_orchestra_env);
+        get_env(INSTRUMENT_DEFS, instrument_env_ref).then(set_instrument_env);
     }, []);
+
+    const active_instr =
+        active_tab !== ORCHESTRATOR_ID
+            ? (orchestra.instruments.find((i) => i.id === active_tab) ?? null)
+            : null;
+
+    const handle_tab_click = (id: string) => {
+        set_active_tab(id);
+        if (id !== ORCHESTRATOR_ID) on_set_active(id);
+    };
 
     const commit_bpm = (
         e: React.FocusEvent<HTMLInputElement> | React.KeyboardEvent<HTMLInputElement>,
@@ -162,35 +217,119 @@ export function InstrumentPanel({ code, bpm, on_code_change, on_bpm_change, erro
         if (isFinite(v) && v > 0) on_bpm_change(v);
     };
 
+    const start_rename = (id: string, name: string) => {
+        set_editing_tab_id(id);
+        set_name_draft(name);
+    };
+
+    const commit_rename = () => {
+        const trimmed = name_draft.trim();
+        if (trimmed && editing_tab_id) on_rename(editing_tab_id, trimmed);
+        set_editing_tab_id(null);
+    };
+
+    const on_tab_key_down = (e: React.KeyboardEvent<HTMLInputElement>) => {
+        if (e.key === 'Enter') commit_rename();
+        else if (e.key === 'Escape') set_editing_tab_id(null);
+    };
+
+    const handle_remove = (e: React.MouseEvent, id: string) => {
+        e.stopPropagation();
+        if (active_tab === id) set_active_tab(ORCHESTRATOR_ID);
+        on_remove(id);
+    };
+
     return (
         <div className="instrument">
             <div className="instrument__header">
-                <span className="instrument__title">Instrument</span>
-                <div className="instrument__controls">
-                    <label className="instrument__bpm-label">
-                        BPM
-                        <input
-                            key={bpm}
-                            className="instrument__bpm-input"
-                            type="number"
-                            min={1}
-                            max={999}
-                            defaultValue={bpm}
-                            onBlur={commit_bpm}
-                            onKeyDown={(e) => e.key === 'Enter' && commit_bpm(e)}
-                        />
-                    </label>
+                <div className="instrument__tabs">
+                    <div
+                        className={`instrument__tab${active_tab === ORCHESTRATOR_ID ? ' instrument__tab--active' : ''}`}
+                        onClick={() => handle_tab_click(ORCHESTRATOR_ID)}
+                    >
+                        <span className="instrument__tab-name">orchestrator</span>
+                    </div>
+                    {orchestra.instruments.map((instr) => (
+                        <div
+                            key={instr.id}
+                            className={`instrument__tab${active_tab === instr.id ? ' instrument__tab--active' : ''}`}
+                            onClick={() => handle_tab_click(instr.id)}
+                        >
+                            {editing_tab_id === instr.id ? (
+                                <input
+                                    className="instrument__tab-input"
+                                    autoFocus
+                                    value={name_draft}
+                                    onChange={(e) => set_name_draft(e.target.value)}
+                                    onKeyDown={on_tab_key_down}
+                                    onBlur={commit_rename}
+                                    onClick={(e) => e.stopPropagation()}
+                                />
+                            ) : (
+                                <span
+                                    className="instrument__tab-name"
+                                    onDoubleClick={(e) => {
+                                        e.stopPropagation();
+                                        start_rename(instr.id, instr.name);
+                                    }}
+                                >
+                                    {instr.name}
+                                </span>
+                            )}
+                            <button
+                                className="instrument__tab-remove"
+                                onClick={(e) => handle_remove(e, instr.id)}
+                            >
+                                ×
+                            </button>
+                        </div>
+                    ))}
+                    <button className="instrument__add" onClick={on_add}>
+                        +
+                    </button>
                 </div>
             </div>
-            {error && <div className="instrument__error">{error}</div>}
-            <div className="instrument__editor">
-                <TsEditor
-                    key={code === '' ? 'empty' : 'user'}
-                    initialValue={code || FALLBACK}
-                    onChange={on_code_change}
-                    env={env}
-                />
-            </div>
+
+            {active_tab === ORCHESTRATOR_ID ? (
+                <div className="instrument__orch-body">
+                    <div className="instrument__controls">
+                        <label className="instrument__bpm-label">
+                            BPM
+                            <input
+                                key={orchestra.bpm}
+                                className="instrument__bpm-input"
+                                type="number"
+                                min={1}
+                                max={999}
+                                defaultValue={orchestra.bpm}
+                                onBlur={commit_bpm}
+                                onKeyDown={(e) => e.key === 'Enter' && commit_bpm(e)}
+                            />
+                        </label>
+                    </div>
+                    <div className="instrument__editor">
+                        <TsEditor
+                            key="orchestra"
+                            initial_value={orchestra.code || ORCHESTRA_FALLBACK}
+                            on_change={on_orchestra_code_change}
+                            env={orchestra_env}
+                        />
+                    </div>
+                </div>
+            ) : active_instr ? (
+                <div className="instrument__editor">
+                    <TsEditor
+                        key={active_instr.id}
+                        initial_value={active_instr.code || INSTRUMENT_FALLBACK}
+                        on_change={(code) => on_instrument_code_change(active_instr.id, code)}
+                        env={instrument_env}
+                    />
+                </div>
+            ) : (
+                <div className="instrument__empty">
+                    Adicione um instrument com <strong>+</strong>
+                </div>
+            )}
         </div>
     );
 }
