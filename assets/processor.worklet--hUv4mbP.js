@@ -18,13 +18,26 @@ class WasmProcessor extends AudioWorkletProcessor {
         super();
 
         this.port.onmessage = async (event) => {
+            if (event.data.type === 'clear') {
+                if (this.evReadHead && this.evWriteHead) {
+                    Atomics.store(this.evReadHead, 0, Atomics.load(this.evWriteHead, 0));
+                }
+                this.heap = null;
+                this.instance = null;
+                this.inputBuf = null;
+                this.stateBuf = null;
+                this.evWriteHead = null;
+                this.evReadHead = null;
+                this.evData = null;
+            }
+
             if (event.data.type === 'load-wasm') {
                 const memory = new WebAssembly.Memory({ initial: 64, maximum: 64 });
-                this.heap = new Float32Array(memory.buffer);
 
                 const { instance } = await WebAssembly.instantiate(event.data.buffer, {
                     env: { memory },
                 });
+                this.heap = new Float32Array(memory.buffer);
                 this.instance = instance;
                 instance.exports.init();
                 this.main = instance.exports.main;
