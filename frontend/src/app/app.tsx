@@ -173,10 +173,29 @@ export default function App() {
 
         if (needs_capture(json)) await setup_capture(context, node);
 
+        node.port.postMessage({ type: 'clear' });
+        await context.resume();
+
+        const readyPromise = new Promise<{ startTime: number; readyPerfNow: number }>((resolve) => {
+            const handler = (e: MessageEvent) => {
+                if (e.data.type === 'ready') {
+                    node.port.removeEventListener('message', handler);
+                    resolve({
+                        startTime: e.data.startTime as number,
+                        readyPerfNow: performance.now(),
+                    });
+                }
+            };
+            node.port.addEventListener('message', handler);
+            node.port.start();
+        });
+
         node.port.postMessage({ type: 'load-wasm', buffer: wasm });
         node.port.postMessage({
             type: 'load-params-sab',
-            sab: params.sab,
+            input_sab: params.input_sab,
+            state_sab: params.state_sab,
+            event_sab: params.event_sab,
             paramExportNames: params.paramExportNames,
         });
 
@@ -185,6 +204,9 @@ export default function App() {
         instrumentWorkerRef.current?.terminate();
         instrumentWorkerRef.current = null;
         set_instrument_error(null);
+
+        const { startTime, readyPerfNow } = await readyPromise;
+        const audioCurrentTime = startTime + (performance.now() - readyPerfNow) / 1000;
 
         if (instrument.code.trim()) {
             let compiled: string;
@@ -214,14 +236,16 @@ export default function App() {
                 worker.postMessage({
                     type: 'run',
                     code: compiled,
-                    sab: params.sab,
+                    state_sab: params.state_sab,
+                    event_sab: params.event_sab,
                     paramNames: params.paramNames,
                     bpm: instrument.bpm,
+                    sampleRate: audioContextRef.current!.sampleRate,
+                    audioCurrentTime,
                 });
             }
         }
 
-        await context.resume();
         set_is_playing(true);
     };
 

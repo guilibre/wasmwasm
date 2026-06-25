@@ -410,6 +410,12 @@ struct Lowerer {
                         return std::nullopt;
                     }
 
+                    if (param_names.contains(name)) {
+                        const auto val = lower_expr(node.value);
+                        if (val) emit(IRParamWrite{name, *val});
+                        return std::nullopt;
+                    }
+
                     const auto val = lower_expr(node.value);
                     if (!val) return std::nullopt;
                     const auto type = ir_type_of(node.value->type);

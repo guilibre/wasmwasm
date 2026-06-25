@@ -455,6 +455,11 @@ auto emit_stmts(FnCtx &ctx, const std::vector<IRInstr> &body)
                         i.result, BinaryenGlobalGet(ctx.mod, gname.c_str(),
                                                     BinaryenTypeFloat64())));
                 }
+                if constexpr (std::is_same_v<T, IRParamWrite>) {
+                    const auto gname = pfx(*ctx.ir, "param$" + i.name);
+                    stmts.push_back(BinaryenGlobalSet(ctx.mod, gname.c_str(),
+                                                      ctx.get(i.value)));
+                }
                 if constexpr (std::is_same_v<T, IRReturn>) {
                     if (i.value) stmts.push_back(ctx.get(*i.value));
                 }
@@ -774,6 +779,14 @@ auto emit_body_vec(FnCtxVec &ctx, const std::vector<IRInstr> &body)
                     stmts.push_back(ctx.set(
                         i.result,
                         BinaryenUnary(ctx.mod, BinaryenSplatVecF64x2(), g)));
+                }
+                if constexpr (std::is_same_v<T, IRParamWrite>) {
+                    const auto gname = pfx(*ctx.ir, "param$" + i.name);
+                    auto *scalar = BinaryenSIMDExtract(
+                        ctx.mod, BinaryenExtractLaneVecF64x2(),
+                        ctx.get(i.value), 0);
+                    stmts.push_back(
+                        BinaryenGlobalSet(ctx.mod, gname.c_str(), scalar));
                 }
             },
             instr);

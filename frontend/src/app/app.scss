@@ -65,7 +65,7 @@ body,
         position: relative;
         background: #13151f;
         border-right: 1px solid #2a2d3e;
-        min-width: 200px;
+        min-width: 400px;
         max-width: 900px;
     }
 
@@ -286,6 +286,7 @@ body,
     &__completion-label {
         color: #89ddff;
     }
+
     &__completion-detail {
         color: #546e7a;
         font-size: 0.8em;
@@ -301,6 +302,7 @@ body,
     .react-flow__background {
         background: #1a1d2e;
     }
+
     .react-flow__controls button {
         background: #263238;
         border-color: #37474f;
@@ -310,25 +312,27 @@ body,
 }
 
 .ww-node {
-    padding: 0.75rem 1.25rem;
+    padding: 0.5rem 0;
     border-radius: 6px;
     border: 1px solid #37474f;
     background: #263238;
     min-width: 100px;
     text-align: center;
-    font-size: 0.85rem;
+    font-size: 0.6rem;
     cursor: grab;
     position: relative;
 
     &--block {
         border-color: #82aaff;
     }
+
     &--system {
         border-color: #546e7a;
         color: #89ddff;
     }
+
     &--selected {
-        box-shadow: 0 0 0 2px #89ddff;
+        border-color: #ffcb6b;
     }
 
     &__label {
@@ -344,7 +348,7 @@ body,
     }
 
     &__param {
-        font-size: 0.7rem;
+        font-size: 0.5rem;
         color: #c3e88d;
         background: rgba(195, 232, 141, 0.1);
         border: 1px solid rgba(195, 232, 141, 0.3);
@@ -367,16 +371,17 @@ body,
 }
 
 .ww-handle {
-    width: 10px;
-    height: 10px;
+    width: 5px;
+    height: 5px;
     border-radius: 50%;
-    border: 2px solid;
+    border: 1px solid;
 
     &--in {
         background: #1a1d2e;
         border-color: #82aaff;
         cursor: crosshair;
     }
+
     &--out {
         background: #82aaff;
         border-color: #82aaff;
@@ -430,22 +435,28 @@ body,
     color: #c792ea;
     font-weight: bold;
 }
+
 .ww-number {
     color: #f78c6c;
 }
+
 .ww-function {
     color: #89ddff;
 }
+
 .ww-variable {
     color: #82aaff;
 }
+
 .ww-operator {
     color: #89ddff;
 }
+
 .ww-comment {
     color: #546e7a;
     font-style: italic;
 }
+
 .ww-error {
     text-decoration: underline wavy red;
 }

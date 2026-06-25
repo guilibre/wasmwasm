@@ -91,6 +91,11 @@ struct IRParamRead {
     std::string name;
 };
 
+struct IRParamWrite {
+    std::string name;
+    IRValue value;
+};
+
 struct IRInputRead {
     std::string result;
     size_t index;
@@ -104,8 +109,8 @@ struct IROutputWrite {
 using IRInstr =
     std::variant<IRBinOp, IRUnaryNeg, IRAssign, IRCall, IRBufferRead,
                  IRBufferReadDelayed, IRBufferWrite, IRGlobalRead, IRIf,
-                 IRInputRead, IROutputWrite, IRParamRead, IRStaticRead,
-                 IRStaticWrite, IRReturn>;
+                 IRInputRead, IROutputWrite, IRParamRead, IRParamWrite,
+                 IRStaticRead, IRStaticWrite, IRReturn>;
 
 struct IRIfBody {
     std::vector<IRInstr> then_body;

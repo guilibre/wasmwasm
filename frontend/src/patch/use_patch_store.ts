@@ -110,6 +110,7 @@ function reducer(state: PatchState, action: PatchAction): PatchState {
                 sourceHandle: sourceHandle ?? null,
                 target,
                 targetHandle: targetHandle ?? null,
+                type: source === target ? 'self_loop' : undefined,
                 markerEnd: undefined,
                 markerStart: undefined,
             };

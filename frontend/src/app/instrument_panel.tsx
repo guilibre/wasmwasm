@@ -78,18 +78,6 @@ function getEnv(): Promise<VirtualTypeScriptEnvironment> {
     return envPromise;
 }
 
-function build_preamble(paramNames: string[]): string {
-    if (paramNames.length === 0) return '';
-    const fields = paramNames.map((n) => `  ${n}: number;`).join('\n');
-    return [
-        `// Available params: ${paramNames.join(', ')}`,
-        `// type PatchParams = {\n${fields}\n// }`,
-        `// setParam(name, value)  sleep(seconds)  sleepBeats(beats)`,
-        `// onBeat(fn)  currentTime()`,
-        '',
-    ].join('\n');
-}
-
 const editorTheme = EditorView.theme(
     {
         '&': { height: '100%', background: 'transparent', color: '#cdd6f4' },
@@ -160,16 +148,8 @@ function TsEditor({ initialValue, onChange, env }: EditorProps) {
     return <div ref={containerRef} style={{ height: '100%' }} />;
 }
 
-export function InstrumentPanel({
-    params,
-    code,
-    bpm,
-    on_code_change,
-    on_bpm_change,
-    error,
-}: Props) {
+export function InstrumentPanel({ code, bpm, on_code_change, on_bpm_change, error }: Props) {
     const [env, setEnv] = useState<VirtualTypeScriptEnvironment | null>(null);
-    const preamble = params ? build_preamble(params.paramNames) : '';
 
     useEffect(() => {
         getEnv().then(setEnv);
@@ -202,7 +182,6 @@ export function InstrumentPanel({
                     </label>
                 </div>
             </div>
-            {preamble && <pre className="instrument__preamble">{preamble}</pre>}
             {error && <div className="instrument__error">{error}</div>}
             <div className="instrument__editor">
                 <TsEditor

@@ -11,12 +11,17 @@ import '@xyflow/react/dist/style.css';
 import { BlockNode } from './block_node';
 import { CaptureNode } from './capture_node';
 import { DacNode } from './dac_node';
+import { SelfLoopEdge } from './self_loop_edge';
 import type { usePatchStore } from './use_patch_store';
 
 const NODE_TYPES = {
     block: BlockNode,
     capture: CaptureNode,
     dac: DacNode,
+};
+
+const EDGE_TYPES = {
+    self_loop: SelfLoopEdge,
 };
 
 interface ContextMenu {
@@ -126,6 +131,7 @@ export function PatchEditor({ store }: Props) {
                 nodes={nodes}
                 edges={edges}
                 nodeTypes={NODE_TYPES}
+                edgeTypes={EDGE_TYPES}
                 onNodesChange={on_nodes_change}
                 onEdgesChange={on_edges_change}
                 onConnect={on_connect}
