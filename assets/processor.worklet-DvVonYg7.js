@@ -1,18 +1,19 @@
 const EVENT_CAPACITY = 256;
+const inv_sample_rate = 1 / sampleRate;
 
 class WasmProcessor extends AudioWorkletProcessor {
     main = () => {};
     heap = null;
     has_capture = false;
-    _vizCounter = 0;
+
     _readySent = false;
     instance = null;
     inputBuf = null;
-    stateBuf = null;
+    paramExportNames = [];
+    paramExports = [];
     evWriteHead = null;
     evReadHead = null;
     evData = null;
-    paramExportNames = [];
 
     constructor() {
         super();
@@ -25,7 +26,7 @@ class WasmProcessor extends AudioWorkletProcessor {
                 this.heap = null;
                 this.instance = null;
                 this.inputBuf = null;
-                this.stateBuf = null;
+                this.paramExports = [];
                 this.evWriteHead = null;
                 this.evReadHead = null;
                 this.evData = null;
@@ -43,73 +44,59 @@ class WasmProcessor extends AudioWorkletProcessor {
                 this.main = instance.exports.main;
                 this.has_capture = this.main.length === 4;
                 this._readySent = false;
+                if (this.paramExportNames.length > 0) {
+                    this.paramExports = this.paramExportNames.map(n => instance.exports[n] ?? null);
+                    if (this.inputBuf) {
+                        for (let i = 0; i < this.paramExports.length; i++) {
+                            if (this.paramExports[i]) this.paramExports[i].value = this.inputBuf[i];
+                        }
+                    }
+                }
             }
 
             if (event.data.type === 'load-params-sab') {
                 this.inputBuf = new Float64Array(event.data.input_sab);
-                this.stateBuf = new Float64Array(event.data.state_sab);
                 this.evWriteHead = new Int32Array(event.data.event_sab, 0, 1);
                 this.evReadHead = new Int32Array(event.data.event_sab, 4, 1);
                 this.evData = new DataView(event.data.event_sab, 8);
                 this.paramExportNames = event.data.param_export_names;
+                if (this.instance) {
+                    this.paramExports = this.paramExportNames.map(n => this.instance.exports[n] ?? null);
+                    for (let i = 0; i < this.paramExports.length; i++) {
+                        if (this.paramExports[i]) this.paramExports[i].value = this.inputBuf[i];
+                    }
+                }
             }
         };
     }
 
     _consume_events(frame) {
-        if (!this.evData || !this.instance) return;
+        if (!this.evData) return;
         const wh = Atomics.load(this.evWriteHead, 0);
         let rh = Atomics.load(this.evReadHead, 0);
+        if (rh === wh) return;
+        const exports = this.paramExports;
+        const buf = this.inputBuf;
         while (rh !== wh) {
             const slot = (rh % EVENT_CAPACITY) * 16;
             const evFrame = this.evData.getInt32(slot, true);
             if (evFrame > frame) break;
             const idx = this.evData.getInt32(slot + 4, true);
             const value = this.evData.getFloat64(slot + 8, true);
-            const g = this.instance.exports[this.paramExportNames[idx]];
+            const g = exports[idx];
             if (g) {
                 g.value = value;
-                this.inputBuf[idx] = value;
+                buf[idx] = value;
             }
             rh = (rh + 1) >>> 0;
-            Atomics.store(this.evReadHead, 0, rh);
         }
-    }
-
-    _apply_params() {
-        if (!this.inputBuf || !this.instance) return;
-        const names = this.paramExportNames;
-        const buf = this.inputBuf;
-        for (let i = 0; i < names.length; i++) {
-            const g = this.instance.exports[names[i]];
-            if (g) g.value = buf[i];
-        }
-    }
-
-    _writeback_params() {
-        if (!this.stateBuf || !this.instance) return;
-        const names = this.paramExportNames;
-        const buf = this.stateBuf;
-        for (let i = 0; i < names.length; i++) {
-            const g = this.instance.exports[names[i]];
-            if (g) {
-                buf[i] = g.value;
-                this.inputBuf[i] = g.value;
-            }
-        }
-        buf[names.length] = currentFrame / sampleRate;
-
-        if (!this._readySent) {
-            this._readySent = true;
-            this.port.postMessage({ type: 'ready', startTime: currentFrame / sampleRate });
-        }
+        Atomics.store(this.evReadHead, 0, rh);
     }
 
     process(inputs, outputs) {
         if (!this.heap) return true;
 
         this._consume_events(currentFrame);
-        this._apply_params();
 
         const heap = this.heap;
         const num_samples = outputs[0][0].length;
@@ -129,17 +116,13 @@ class WasmProcessor extends AudioWorkletProcessor {
             this.main(0, num_samples, 2);
         }
 
-        this._writeback_params();
+        if (!this._readySent && this.evData) {
+            this._readySent = true;
+            this.port.postMessage({ type: 'ready', startTime: currentFrame * inv_sample_rate });
+        }
 
         out_l.set(heap.subarray(0, num_samples));
         if (out_r) out_r.set(heap.subarray(num_samples, num_samples * 2));
-
-        if (this.port && ++this._vizCounter >= 16) {
-            this._vizCounter = 0;
-            const buf = new Float32Array(num_samples);
-            buf.set(out_l);
-            this.port.postMessage({ type: 'signal', data: buf }, [buf.buffer]);
-        }
 
         return true;
     }
