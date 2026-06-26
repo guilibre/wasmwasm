@@ -43,20 +43,26 @@ struct IRCall {
     IRType result_type;
 };
 
-struct IRBufferRead {
+struct IRDelayRead {
     std::string result;
-    std::string buffer;
+    std::string delay;
 };
 
-struct IRBufferReadDelayed {
+struct IRDelayReadDelayed {
     std::string result;
-    std::string buffer;
+    std::string delay;
     std::string delay_ref;
 };
 
-struct IRBufferWrite {
-    std::string buffer;
+struct IRDelayWrite {
+    std::string delay;
     IRValue value;
+};
+
+struct IRDelayWriteQuiet {
+    std::string delay;
+    IRValue value;
+    std::optional<std::string> delay_ref;
 };
 
 struct IRGlobalRead {
@@ -107,10 +113,10 @@ struct IROutputWrite {
 };
 
 using IRInstr =
-    std::variant<IRBinOp, IRUnaryNeg, IRAssign, IRCall, IRBufferRead,
-                 IRBufferReadDelayed, IRBufferWrite, IRGlobalRead, IRIf,
-                 IRInputRead, IROutputWrite, IRParamRead, IRParamWrite,
-                 IRStaticRead, IRStaticWrite, IRReturn>;
+    std::variant<IRBinOp, IRUnaryNeg, IRAssign, IRCall, IRDelayRead,
+                 IRDelayReadDelayed, IRDelayWrite, IRDelayWriteQuiet,
+                 IRGlobalRead, IRIf, IRInputRead, IROutputWrite, IRParamRead,
+                 IRParamWrite, IRStaticRead, IRStaticWrite, IRReturn>;
 
 struct IRIfBody {
     std::vector<IRInstr> then_body;
@@ -129,13 +135,13 @@ struct IRFunction {
     std::vector<IRInstr> body;
 };
 
-struct IRBufferDecl {
+struct IRDelayDecl {
     std::string name;
     size_t size_elements;
     std::string init_fn;
 };
 
-inline constexpr uint32_t buffer_memory_start = 4096;
+inline constexpr uint32_t delay_memory_start = 4096;
 
 struct IRStaticVar {
     std::string name;
@@ -145,7 +151,7 @@ struct IRStaticVar {
 struct IRModule {
     std::string name;
     std::vector<IRFunction> functions;
-    std::vector<IRBufferDecl> buffers;
+    std::vector<IRDelayDecl> delays;
     std::vector<IRStaticVar> static_vars;
     std::vector<std::pair<std::string, double>> params;
     std::string init_fn;
@@ -153,9 +159,9 @@ struct IRModule {
     std::string static_init_fn;
     size_t num_inputs = 0;
     size_t num_outputs = 0;
-    uint32_t memory_base = buffer_memory_start;
+    uint32_t memory_base = delay_memory_start;
 
-    [[nodiscard]] auto buffer_base(const std::string &buf_name) const
+    [[nodiscard]] auto delay_base(const std::string &buf_name) const
         -> uint32_t;
-    [[nodiscard]] auto total_buffer_bytes() const -> uint32_t;
+    [[nodiscard]] auto total_delay_bytes() const -> uint32_t;
 };

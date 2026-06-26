@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { ReactFlow, Background, Controls, useReactFlow } from '@xyflow/react';
 import type {
     NodeMouseHandler,
@@ -39,6 +39,10 @@ export function PatchEditor({ store }: Props) {
     const { nodes, edges, on_nodes_change, on_edges_change, on_connect, select, add_block } = store;
 
     const rf = useReactFlow();
+
+    useEffect(() => {
+        requestAnimationFrame(() => rf.fitView());
+    }, [store.orchestra.active_id, rf]);
 
     const [name_input, set_name_input] = useState<{
         x: number;
@@ -113,6 +117,15 @@ export function PatchEditor({ store }: Props) {
 
     const close_ctx = useCallback(() => set_ctx_menu(null), []);
 
+    const is_valid_connection = useCallback<IsValidConnection>(
+        (conn) =>
+            !edges.some(
+                (e: Edge) =>
+                    e.target === conn.target && e.targetHandle === (conn.targetHandle ?? null),
+            ),
+        [edges],
+    );
+
     const ctx_remove = useCallback(() => {
         if (!ctx_menu) return;
         if (ctx_menu.node_id) {
@@ -135,16 +148,7 @@ export function PatchEditor({ store }: Props) {
                 onNodesChange={on_nodes_change}
                 onEdgesChange={on_edges_change}
                 onConnect={on_connect}
-                isValidConnection={useCallback<IsValidConnection>(
-                    (conn) => {
-                        return !edges.some(
-                            (e: Edge) =>
-                                e.target === conn.target &&
-                                e.targetHandle === (conn.targetHandle ?? null),
-                        );
-                    },
-                    [edges],
-                )}
+                isValidConnection={is_valid_connection}
                 onNodeDoubleClick={on_node_double_click}
                 onPaneClick={() => {
                     select(null);

@@ -14,79 +14,19 @@ source code → tokenizer → parser → AST → type inference → Binaryen IR 
 
 ## Language
 
-Programs consist of expressions and variable bindings. Lines beginning with `#` are comments.
+Programs consist of variable bindings and output assignments. Lines beginning with `#` are comments.
 
-### Variables
+See [docs/language.md](docs/language.md) for the full language reference and [docs/tutorial.md](docs/tutorial.md) for a step-by-step tutorial.
+
+### Quick example
 
 ```
 freq = 440
-OUT[0] <- 0.2 * sin (TIME * freq * 2 * PI)
-```
-
-`OUT[i]` is the audio output for channel `i` (expected range `[-1, 1]`). `TIME`, `PI`, and `SAMPLE_RATE` are built-in constants.
-
-### Functions (lambdas)
-
-Functions are defined with `{params. body}` and applied by juxtaposition. Multiple parameters are curried.
-
-```
-osc = {amp freq. amp * sin (TIME * freq * 2 * PI)}
-OUT[0] <- osc 0.2 440
-```
-
-### Buffers (persistent state)
-
-Buffers hold values that persist across audio frames — essential for filters, delays, and feedback oscillators.
-
-```
-x = delay N {i. init_expr}
-```
-
-`N` is the buffer size (1–1024). The lambda initializes each element by index.
-
-| Syntax         | Meaning                                   |
-| -------------- | ----------------------------------------- |
-| `@buf`         | Read from previous frame (delay 1)        |
-| `@[n]buf`      | Read with delay offset `n`                |
-| `buf <- value` | Write to buffer (takes effect next frame) |
-
-### Operators
-
-| Category        | Operators            |
-| --------------- | -------------------- |
-| Arithmetic      | `+`  `-`  `*`  `/`   |
-| Exponentiation  | `x ^ y`              |
-| Comparison      | `<`  `>`             |
-| Logical         | `&`  `\|`  `!`       |
-| Conditional     | `cond ? then : else` |
-| Unary           | `-x`                 |
-
-`^` is right-associative and has higher precedence than `*` and `/`: `2 * x^3` means `2 * (x^3)`.
-
-### Built-in functions
-
-| Function       | Description                     |
-| -------------- | ------------------------------- |
-| `sin x`        | Sine                            |
-| `cos x`        | Cosine                          |
-| `exp x`        | Exponential (eˣ)                |
-| `log x`        | Natural logarithm               |
-| `sqrt x`       | Square root                     |
-| `floor x`      | Round down to nearest integer   |
-| `ceil x`       | Round up to nearest integer     |
-| `round x`      | Round to nearest integer        |
-| `sign x`       | Sign (±1)                       |
-| `fract x`      | Fractional part                 |
-| `clip x`       | Clamp to `[-1, 1]`              |
-| `uniform x y`  | Uniform random in [x, y]        |
-| `gaussian x y` | Gaussian random (μ=x, σ=y)      |
-
-### `static`
-
-A `static` binding is initialized once at startup and persists across frames without requiring an explicit buffer.
-
-```
-static phase = 0.0
+static two_pi = 2 * PI
+static dt = freq * two_pi / SAMPLE_RATE
+static t = 0
+OUT[0] <- 0.2 * sin t
+t = t > two_pi ? t + dt : t + dt - two_pi
 ```
 
 ## Building
@@ -117,15 +57,17 @@ compiler/         C++ compiler source
     parser/       tokenizer and parser
     ast/          AST nodes
     types/        type inference (Hindley-Milner)
-    ir/           intermediate representation
-    code_gen/     Binaryen-based WebAssembly emitter
-  math/           math intrinsics compiled separately (sin, cos, etc.)
+    ir/           intermediate representation and code generation
+    routing/      audio graph routing for patches
+    lsp/          Language Server Protocol support
+  math/           math intrinsics compiled separately
   app/            Emscripten bindings
 frontend/         Vite + React frontend
   src/
     app/          editor, oscilloscope, spectrogram
+    audio/        Web Audio compiler and orchestra worker
     patch/        visual node-based routing editor
-  examples/       example programs
+docs/             language reference and tutorial
 ```
 
 ## License

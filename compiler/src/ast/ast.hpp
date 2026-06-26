@@ -19,18 +19,24 @@ struct Bind {
     ExprPtr value;
 };
 
-struct BufferCtor {
+struct DelayCtor {
     size_t size;
     ExprPtr init_fn;
 };
 
-struct BufferRead {
+struct DelayRead {
     Token name;
     std::optional<ExprPtr> delay;
 };
 
-struct BufferWrite {
+struct DelayWrite {
     Token target;
+    ExprPtr value;
+};
+
+struct DelayWriteQuiet {
+    Token target;
+    std::optional<ExprPtr> delay;
     ExprPtr value;
 };
 
@@ -117,9 +123,10 @@ struct SourcePos {
 struct Expr {
 
     using ExprNode =
-        std::variant<Bind, CodeBlock, BinaryOp, BufferCtor, BufferRead,
-                     BufferWrite, Call, Conditional, InputRead, Lambda, Literal,
-                     OutputWrite, ParamBind, StaticBind, UnaryOp, Variable>;
+        std::variant<Bind, CodeBlock, BinaryOp, DelayCtor, DelayRead,
+                     DelayWrite, DelayWriteQuiet, Call, Conditional, InputRead,
+                     Lambda, Literal, OutputWrite, ParamBind, StaticBind,
+                     UnaryOp, Variable>;
 
     ExprNode node;
     TypePtr type;
@@ -144,11 +151,13 @@ class ASTPrinter {
         -> std::string;
     auto dispatch(const ExprPtr &expr, BinaryOp &op, size_t indent)
         -> std::string;
-    auto dispatch(const ExprPtr &expr, BufferCtor &ctor, size_t indent)
+    auto dispatch(const ExprPtr &expr, DelayCtor &ctor, size_t indent)
         -> std::string;
-    auto dispatch(const ExprPtr &expr, BufferRead &rd, size_t indent)
+    auto dispatch(const ExprPtr &expr, DelayRead &rd, size_t indent)
         -> std::string;
-    auto dispatch(const ExprPtr &expr, BufferWrite &wr, size_t indent)
+    auto dispatch(const ExprPtr &expr, DelayWrite &wr, size_t indent)
+        -> std::string;
+    auto dispatch(const ExprPtr &expr, DelayWriteQuiet &wr, size_t indent)
         -> std::string;
     auto dispatch(const ExprPtr &expr, Call &call, size_t indent)
         -> std::string;

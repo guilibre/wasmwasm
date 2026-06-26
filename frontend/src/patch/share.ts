@@ -75,8 +75,7 @@ function auto_layout(nodes: MinNode[], edges: MinEdge[]): Map<string, { x: numbe
 }
 
 function to_base64url(bytes: Uint8Array): string {
-    let binary = '';
-    for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+    const binary = String.fromCharCode(...bytes);
     return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
 }
 
@@ -88,13 +87,9 @@ function from_base64url(str: string): Uint8Array {
     return bytes;
 }
 
-async function compress(data: Uint8Array): Promise<Uint8Array> {
-    const cs = new CompressionStream('deflate-raw');
-    const writer = cs.writable.getWriter();
-    writer.write(data as BufferSource);
-    writer.close();
+async function collect_stream(stream: ReadableStream<Uint8Array>): Promise<Uint8Array> {
     const chunks: Uint8Array[] = [];
-    const reader = cs.readable.getReader();
+    const reader = stream.getReader();
     while (true) {
         const { done, value } = await reader.read();
         if (done) break;
@@ -110,26 +105,20 @@ async function compress(data: Uint8Array): Promise<Uint8Array> {
     return out;
 }
 
+async function compress(data: Uint8Array): Promise<Uint8Array> {
+    const cs = new CompressionStream('deflate-raw');
+    const writer = cs.writable.getWriter();
+    writer.write(data as BufferSource);
+    writer.close();
+    return collect_stream(cs.readable);
+}
+
 async function decompress(data: Uint8Array): Promise<Uint8Array> {
     const ds = new DecompressionStream('deflate-raw');
     const writer = ds.writable.getWriter();
     writer.write(data as Uint8Array<ArrayBuffer>);
     writer.close();
-    const chunks: Uint8Array[] = [];
-    const reader = ds.readable.getReader();
-    while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        chunks.push(value);
-    }
-    const total = chunks.reduce((n, c) => n + c.length, 0);
-    const out = new Uint8Array(total);
-    let offset = 0;
-    for (const chunk of chunks) {
-        out.set(chunk, offset);
-        offset += chunk.length;
-    }
-    return out;
+    return collect_stream(ds.readable);
 }
 
 export async function patch_to_hash(orchestra: OrchestraState): Promise<string> {

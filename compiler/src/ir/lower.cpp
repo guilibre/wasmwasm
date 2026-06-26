@@ -141,8 +141,8 @@ struct Lowerer {
                     }
                     return fv;
                 }
-                if constexpr (std::is_same_v<T, BufferRead>) return {};
-                if constexpr (std::is_same_v<T, BufferWrite>)
+                if constexpr (std::is_same_v<T, DelayRead>) return {};
+                if constexpr (std::is_same_v<T, DelayWrite>)
                     return free_vars_of(node.value, bound);
                 if constexpr (std::is_same_v<T, InputRead>) return {};
                 if constexpr (std::is_same_v<T, OutputWrite>)
@@ -242,11 +242,11 @@ struct Lowerer {
                     return IRLocalRef{name};
                 }
 
-                if constexpr (std::is_same_v<T, BufferRead>) {
+                if constexpr (std::is_same_v<T, DelayRead>) {
                     const auto &name = node.name.lexeme;
                     if (!bufs.contains(name))
                         throw std::runtime_error("@" + name +
-                                                 " is not a buffer");
+                                                 " is not a delay");
                     auto r = tmp();
                     if (node.delay) {
                         auto d = lower_expr(*node.delay);
@@ -256,22 +256,46 @@ struct Lowerer {
                         auto dr = tmp();
                         emit(IRAssign{
                             .result = dr, .value = *d, .type = IRType::Float});
-                        emit(IRBufferReadDelayed{
-                            .result = r, .buffer = name, .delay_ref = dr});
+                        emit(IRDelayReadDelayed{
+                            .result = r, .delay = name, .delay_ref = dr});
                     } else {
-                        emit(IRBufferRead{.result = r, .buffer = name});
+                        emit(IRDelayRead{.result = r, .delay = name});
                     }
                     return IRLocalRef{r};
                 }
 
-                if constexpr (std::is_same_v<T, BufferWrite>) {
+                if constexpr (std::is_same_v<T, DelayWrite>) {
                     const auto &target = node.target.lexeme;
                     const auto val = lower_expr(node.value);
                     if (!val)
-                        throw std::runtime_error("assigning void to buffer");
+                        throw std::runtime_error("assigning void to delay");
                     if (!bufs.contains(target))
-                        throw std::runtime_error(target + " is not a buffer");
-                    emit(IRBufferWrite{.buffer = target, .value = *val});
+                        throw std::runtime_error(target + " is not a delay");
+                    emit(IRDelayWrite{.delay = target, .value = *val});
+                    return std::nullopt;
+                }
+
+                if constexpr (std::is_same_v<T, DelayWriteQuiet>) {
+                    const auto &target = node.target.lexeme;
+                    const auto val = lower_expr(node.value);
+                    if (!val)
+                        throw std::runtime_error("assigning void to delay");
+                    if (!bufs.contains(target))
+                        throw std::runtime_error(target + " is not a delay");
+                    std::optional<std::string> dr;
+                    if (node.delay) {
+                        auto d = lower_expr(*node.delay);
+                        if (!d)
+                            throw std::runtime_error(
+                                "delay expression is void");
+                        auto drtmp = tmp();
+                        emit(IRAssign{.result = drtmp,
+                                      .value = *d,
+                                      .type = IRType::Float});
+                        dr = drtmp;
+                    }
+                    emit(IRDelayWriteQuiet{
+                        .delay = target, .value = *val, .delay_ref = dr});
                     return std::nullopt;
                 }
 
@@ -375,12 +399,12 @@ struct Lowerer {
                         return std::nullopt;
                     }
 
-                    if (std::holds_alternative<BufferCtor>(node.value->node)) {
+                    if (std::holds_alternative<DelayCtor>(node.value->node)) {
                         const auto &ctor =
-                            std::get<BufferCtor>(node.value->node);
+                            std::get<DelayCtor>(node.value->node);
                         if (!std::holds_alternative<Lambda>(ctor.init_fn->node))
                             throw std::runtime_error(
-                                "Buffer init must be a lambda");
+                                "Delay init must be a lambda");
                         const auto &lam = std::get<Lambda>(ctor.init_fn->node);
                         const std::string init_name = name + "$init";
 
@@ -396,7 +420,7 @@ struct Lowerer {
 
                         mod.functions.emplace_back(std::move(init_fn));
                         bufs.insert(name);
-                        mod.buffers.push_back({
+                        mod.delays.push_back({
                             .name = name,
                             .size_elements = ctor.size,
                             .init_fn = init_name,
@@ -605,7 +629,7 @@ struct Lowerer {
                     return std::nullopt;
                 }
 
-                if constexpr (std::is_same_v<T, BufferCtor>)
+                if constexpr (std::is_same_v<T, DelayCtor>)
                     throw std::runtime_error(
                         "delay(...) must appear as the rhs of a bind (name = "
                         "delay N f)");

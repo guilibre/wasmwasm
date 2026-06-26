@@ -33,6 +33,8 @@ function build_instrument(
     }
 
     let active_ctx: { v: number } | null = null;
+    let active_token: object | null = null;
+    const ABORT = Symbol();
 
     const write_events = (name: string, value: number, t: number) => {
         const indices = name_to_indices.get(name);
@@ -54,11 +56,13 @@ function build_instrument(
     };
 
     const sleep = async (s: number) => {
+        const my_token = active_token;
         const my_ctx = active_ctx;
         if (my_ctx) my_ctx.v += s;
         const target = my_ctx ? my_ctx.v : get_orch_time() + s;
         const wait_ms = (target - LOOKAHEAD - real_time()) * 1000;
         if (wait_ms > 0) await new Promise<void>((r) => setTimeout(r, wait_ms));
+        if (active_token !== my_token) throw ABORT;
         active_ctx = my_ctx;
     };
 
@@ -81,12 +85,19 @@ function build_instrument(
     const wrapped: Record<string, (...args: unknown[]) => Promise<void>> = {};
     for (const [name, fn] of Object.entries(raw_fns)) {
         wrapped[name] = async (...args: unknown[]) => {
+            const my_token = {};
+            active_token = my_token;
             const prev = active_ctx;
             active_ctx = { v: get_orch_time() };
             try {
                 return await fn(...args);
+            } catch (e) {
+                if (e !== ABORT) throw e;
             } finally {
-                if (active_ctx) sync_orch_time(active_ctx.v);
+                if (active_token === my_token) {
+                    if (active_ctx) sync_orch_time(active_ctx.v);
+                    active_token = null;
+                }
                 active_ctx = prev;
             }
         };
@@ -112,14 +123,14 @@ self.onmessage = async (event: MessageEvent) => {
 
     const get_orch_time = () => orch_scheduled.v;
 
-    const instruments_map = new Map<string, Record<string, (...args: unknown[]) => unknown>>();
+    const instruments_map = new Map<string, Record<string, (...args: unknown[]) => unknown>[]>();
     for (const instr of instruments) {
-        instruments_map.set(
-            instr.name,
-            build_instrument(instr, bpm, sampleRate, get_orch_time, real_time, (t) => {
-                if (t > orch_scheduled.v) orch_scheduled.v = t;
-            }),
-        );
+        const built = build_instrument(instr, bpm, sampleRate, get_orch_time, real_time, (t) => {
+            if (t > orch_scheduled.v) orch_scheduled.v = t;
+        });
+        const arr = instruments_map.get(instr.name);
+        if (arr) arr.push(built);
+        else instruments_map.set(instr.name, [built]);
     }
 
     const sleep = async (s: number) => {
@@ -146,7 +157,13 @@ self.onmessage = async (event: MessageEvent) => {
 
     const current_time = real_time;
 
-    const instrument = (name: string) => instruments_map.get(name) ?? {};
+    const instrument_counters = new Map<string, number>();
+    const instrument = (name: string) => {
+        const arr = instruments_map.get(name) ?? [];
+        const idx = instrument_counters.get(name) ?? 0;
+        instrument_counters.set(name, idx + 1);
+        return arr[idx] ?? {};
+    };
 
     try {
         const fn = new async_function(

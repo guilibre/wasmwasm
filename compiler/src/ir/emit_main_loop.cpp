@@ -103,8 +103,8 @@ auto resolve_source_vec_lane(BinaryenModuleRef mod, const std::string &src,
 void emit_main_loop(const RoutingGraph &graph, BinaryenModuleRef mod) {
     const bool simd_eligible = std::ranges::all_of(
         graph.modules, [](const ModuleRoute &route) -> bool {
-            return std::ranges::all_of(route.ir.buffers,
-                                       [](const IRBufferDecl &b) -> bool {
+            return std::ranges::all_of(route.ir.delays,
+                                       [](const IRDelayDecl &b) -> bool {
                                            return b.size_elements >= 2;
                                        });
         });

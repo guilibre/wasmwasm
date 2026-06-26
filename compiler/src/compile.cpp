@@ -28,9 +28,13 @@ auto make_monomorphize(
                     monomorphize(node.init);
                 if constexpr (std::is_same_v<T, ParamBind>)
                     monomorphize(node.default_val);
-                if constexpr (std::is_same_v<T, BufferWrite>)
+                if constexpr (std::is_same_v<T, DelayWrite>)
                     monomorphize(node.value);
-                if constexpr (std::is_same_v<T, BufferCtor>)
+                if constexpr (std::is_same_v<T, DelayWriteQuiet>) {
+                    if (node.delay) monomorphize(*node.delay);
+                    monomorphize(node.value);
+                }
+                if constexpr (std::is_same_v<T, DelayCtor>)
                     monomorphize(node.init_fn);
                 if constexpr (std::is_same_v<T, OutputWrite>)
                     monomorphize(node.value);
@@ -117,12 +121,12 @@ auto compile_to_binary(float sample_rate, const std::string &patch_json,
         throw std::runtime_error("unable to create binaryen module");
 
     std::vector<IRModule> compiled;
-    auto next_mem = buffer_memory_start;
+    auto next_mem = delay_memory_start;
     for (const auto &[name, src] : patch.module_sources) {
         auto ir = compile_module(name, src, math_module,
                                  static_cast<double>(sample_rate), main_module,
                                  next_mem);
-        next_mem += ir.total_buffer_bytes();
+        next_mem += ir.total_delay_bytes();
         compiled.push_back(std::move(ir));
     }
 
@@ -138,11 +142,11 @@ auto compile_to_binary(float sample_rate, const std::string &patch_json,
     BinaryenSetLowMemoryUnused(true);
     BinaryenModuleOptimize(main_module);
 
-    auto buffer = BinaryenModuleAllocateAndWrite(main_module, nullptr);
+    auto delay = BinaryenModuleAllocateAndWrite(main_module, nullptr);
     auto binary_ptr =
-        std::unique_ptr<void, decltype(&free)>(buffer.binary, free);
-    auto *binary_data = static_cast<char *>(buffer.binary);
-    std::vector<char> result(binary_data, binary_data + buffer.binaryBytes);
+        std::unique_ptr<void, decltype(&free)>(delay.binary, free);
+    auto *binary_data = static_cast<char *>(delay.binary);
+    std::vector<char> result(binary_data, binary_data + delay.binaryBytes);
     BinaryenModuleDispose(main_module);
     BinaryenModuleDispose(math_module);
     return result;

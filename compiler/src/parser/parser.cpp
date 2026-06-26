@@ -8,8 +8,8 @@
 #include <variant>
 #include <vector>
 
-static constexpr size_t buffer_size_min = 1;
-static constexpr size_t buffer_size_max = 1024;
+static constexpr size_t delay_size_min = 1;
+static constexpr size_t delay_size_max = 4096;
 
 Parser::Parser(Tokenizer tokenizer)
     : tokenizer(tokenizer), current(this->tokenizer.next()) {}
@@ -152,6 +152,16 @@ auto Parser::parse_expression() -> ParseResult {
     }
 
     if (match(TokenKind::Eq)) {
+        if (auto *dr = std::get_if<DelayRead>(&(*expr)->node)) {
+            auto target = dr->name;
+            std::optional<ExprPtr> delay;
+            if (dr->delay) { delay = std::move(*dr->delay); }
+            advance();
+            auto rhs = parse_expression();
+            if (!rhs) return rhs;
+            return Expr::make<DelayWriteQuiet>(target, std::move(delay),
+                                               std::move(*rhs));
+        }
         auto name = expect_variable(*expr);
         if (!name)
             return std::unexpected(ParseError{
@@ -176,7 +186,7 @@ auto Parser::parse_expression() -> ParseResult {
         advance();
         auto rhs = parse_logical_or();
         if (!rhs) return rhs;
-        return Expr::make<BufferWrite>(*target, std::move(*rhs));
+        return Expr::make<DelayWrite>(*target, std::move(*rhs));
     }
 
     return expr;
@@ -371,12 +381,12 @@ auto Parser::parse_factor() -> ParseResult {
             });
         auto name = current;
         advance();
-        auto e = Expr::make<BufferRead>(name, std::move(delay));
+        auto e = Expr::make<DelayRead>(name, std::move(delay));
         e->pos = {.line = name.line, .col = name.column};
         return e;
     }
 
-    if (match(TokenKind::Delay)) { return parse_buffer_ctor(); }
+    if (match(TokenKind::Delay)) { return parse_delay_ctor(); }
 
     if (match(TokenKind::Identifier)) {
         advance();
@@ -473,7 +483,7 @@ auto Parser::parse_block() -> ParseResult {
     return Expr::make<CodeBlock>(std::move(expressions));
 }
 
-auto Parser::parse_buffer_ctor() -> ParseResult {
+auto Parser::parse_delay_ctor() -> ParseResult {
     advance();
 
     if (!match(TokenKind::Number))
@@ -482,8 +492,8 @@ auto Parser::parse_buffer_ctor() -> ParseResult {
             .line = current.line,
             .col = current.column,
         });
-    const auto size = static_cast<size_t>(std::clamp(
-        std::stoul(current.lexeme), buffer_size_min, buffer_size_max));
+    const auto size = static_cast<size_t>(
+        std::clamp(std::stoul(current.lexeme), delay_size_min, delay_size_max));
     advance();
 
     if (!match(TokenKind::LBrace))
@@ -503,5 +513,5 @@ auto Parser::parse_buffer_ctor() -> ParseResult {
             .col = current.column,
         });
 
-    return Expr::make<BufferCtor>(size, std::move(*init_fn));
+    return Expr::make<DelayCtor>(size, std::move(*init_fn));
 }

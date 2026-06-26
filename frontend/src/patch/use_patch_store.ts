@@ -88,7 +88,7 @@ function load_initial(): PatchState {
             }
         }
     } catch (_e) {
-        void _e;
+        console.error(_e);
     }
     return { orchestra: DEFAULT_ORCHESTRA, selected_id: null };
 }
@@ -171,8 +171,6 @@ function reducer(state: PatchState, action: PatchAction): PatchState {
                 target,
                 targetHandle: targetHandle ?? null,
                 type: source === target ? 'self_loop' : undefined,
-                markerEnd: undefined,
-                markerStart: undefined,
             };
             next = map_active(state, (i) => ({ ...i, edges: [...i.edges, new_edge] }));
             break;
@@ -294,7 +292,7 @@ function reducer(state: PatchState, action: PatchAction): PatchState {
     try {
         localStorage.setItem(STORAGE_KEY, JSON.stringify({ orchestra: next.orchestra }));
     } catch (_e) {
-        void _e;
+        console.error(_e);
     }
     return next;
 }
@@ -393,7 +391,7 @@ export function usePatchStore() {
                 const { orchestra } = JSON.parse(e.target!.result as string);
                 if (orchestra) dispatch({ type: 'load', orchestra });
             } catch (_e) {
-                void _e;
+                console.error(_e);
             }
         };
         reader.readAsText(file);
@@ -406,7 +404,6 @@ export function usePatchStore() {
 
     return {
         orchestra: state.orchestra,
-        active_instrument,
         nodes,
         edges,
         selected_id: state.selected_id,

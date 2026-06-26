@@ -31,10 +31,9 @@ auto make_builtin_env()
         {"tanh", float_to_float},
         {"min", float_to_float_to_float},
         {"max", float_to_float_to_float},
-        {"buffer",
-         Type::make<TypeFun>(
-             float_type,
-             Type::make<TypeFun>(
-                 int_type, Type::make<TypeFun>(int_to_float, void_type)))},
+        {"delay", Type::make<TypeFun>(
+                      float_type, Type::make<TypeFun>(
+                                      int_type, Type::make<TypeFun>(
+                                                    int_to_float, void_type)))},
     }};
 }

@@ -10,7 +10,6 @@ import { tsFacet, tsSync, tsHover, tsAutocomplete, tsLinter } from '@valtown/cod
 import ts from 'typescript';
 import { createSystem, createVirtualTypeScriptEnvironment } from '@typescript/vfs';
 import type { VirtualTypeScriptEnvironment } from '@typescript/vfs';
-import type { PatchParams } from '../audio/compiler';
 import type { OrchestraState } from '../patch/use_patch_store';
 
 const highlight_style = HighlightStyle.define([
@@ -25,7 +24,6 @@ const highlight_style = HighlightStyle.define([
 
 interface Props {
     orchestra: OrchestraState;
-    params: PatchParams | null;
     on_bpm_change: (bpm: number) => void;
     on_add: () => void;
     on_remove: (id: string) => void;
@@ -55,17 +53,16 @@ while (true) {
   await sleep_beats(1);
 }`;
 
-const INSTRUMENT_FALLBACK = `async function note(freq: number, dur: number) {
-  set_param('osc.freq', freq);
-  set_param('env.gate', 1);
-  await sleep(dur);
-  set_param('env.gate', 0);
+const INSTRUMENT_FALLBACK = `async function note(amp: number, freq: number) {
+  set_param('amp', amp);
+  set_param('freq', freq);
+  set_param('gate', 1);
 }`;
 
 const TS_FILE = '/index.ts';
 const DEFS_FILE = '/defs.d.ts';
 const TS_COMPILER_OPTIONS: ts.CompilerOptions = {
-    target: ts.ScriptTarget.ES2022,
+    target: ts.ScriptTarget.ES2025,
     module: ts.ModuleKind.ESNext,
 };
 

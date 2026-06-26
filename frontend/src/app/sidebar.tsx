@@ -15,25 +15,26 @@ export function Sidebar({ analyser_l, analyser_r }: Props) {
     const raf_ref = useRef<number>(0);
     const zoom_ref = useRef(1);
     const [width, set_width] = useState(DEFAULT_WIDTH);
+    const width_ref = useRef(width);
+    useEffect(() => {
+        width_ref.current = width;
+    }, [width]);
 
-    const on_handle_mousedown = useCallback(
-        (e: React.MouseEvent) => {
-            e.preventDefault();
-            const start_x = e.clientX;
-            const start_w = width;
-            const on_move = (ev: MouseEvent) => {
-                const delta = start_x - ev.clientX;
-                set_width(Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, start_w + delta)));
-            };
-            const on_up = () => {
-                window.removeEventListener('mousemove', on_move);
-                window.removeEventListener('mouseup', on_up);
-            };
-            window.addEventListener('mousemove', on_move);
-            window.addEventListener('mouseup', on_up);
-        },
-        [width],
-    );
+    const on_handle_mousedown = useCallback((e: React.MouseEvent) => {
+        e.preventDefault();
+        const start_x = e.clientX;
+        const start_w = width_ref.current;
+        const on_move = (ev: MouseEvent) => {
+            const delta = start_x - ev.clientX;
+            set_width(Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, start_w + delta)));
+        };
+        const on_up = () => {
+            window.removeEventListener('mousemove', on_move);
+            window.removeEventListener('mouseup', on_up);
+        };
+        window.addEventListener('mousemove', on_move);
+        window.addEventListener('mouseup', on_up);
+    }, []);
 
     const on_waveform_wheel = useCallback((e: React.WheelEvent) => {
         e.preventDefault();

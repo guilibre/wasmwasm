@@ -79,28 +79,38 @@ auto ASTPrinter::dispatch(const ExprPtr &expr, CodeBlock &block, size_t indent)
     return out.str();
 }
 
-auto ASTPrinter::dispatch(const ExprPtr &expr, BufferCtor &ctor, size_t indent)
+auto ASTPrinter::dispatch(const ExprPtr &expr, DelayCtor &ctor, size_t indent)
     -> std::string {
     std::ostringstream out;
     out << indent_str(indent);
-    out << attach_type("BufferCtor(" + std::to_string(ctor.size) + ")", expr);
+    out << attach_type("DelayCtor(" + std::to_string(ctor.size) + ")", expr);
     out << print(ctor.init_fn, indent + 2);
     return out.str();
 }
 
-auto ASTPrinter::dispatch(const ExprPtr &expr, BufferRead &rd, size_t indent)
+auto ASTPrinter::dispatch(const ExprPtr &expr, DelayRead &rd, size_t indent)
     -> std::string {
     std::ostringstream out;
     out << indent_str(indent);
-    out << attach_type("BufferRead(@" + rd.name.lexeme + ")", expr);
+    out << attach_type("DelayRead(@" + rd.name.lexeme + ")", expr);
     return out.str();
 }
 
-auto ASTPrinter::dispatch(const ExprPtr &expr, BufferWrite &wr, size_t indent)
+auto ASTPrinter::dispatch(const ExprPtr &expr, DelayWrite &wr, size_t indent)
     -> std::string {
     std::ostringstream out;
     out << indent_str(indent);
-    out << attach_type("BufferWrite(" + wr.target.lexeme + ")", expr);
+    out << attach_type("DelayWrite(" + wr.target.lexeme + ")", expr);
+    out << print(wr.value, indent + 2);
+    return out.str();
+}
+
+auto ASTPrinter::dispatch(const ExprPtr &expr, DelayWriteQuiet &wr,
+                          size_t indent) -> std::string {
+    std::ostringstream out;
+    out << indent_str(indent);
+    out << attach_type("DelayWriteQuiet(" + wr.target.lexeme + ")", expr);
+    if (wr.delay) out << print(*wr.delay, indent + 2);
     out << print(wr.value, indent + 2);
     return out.str();
 }

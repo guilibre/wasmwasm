@@ -147,21 +147,27 @@ void infer_expr(const ExprPtr &expr,
                 return apply_subst(subst, node.expressions.back()->type);
             }
 
-            if constexpr (std::is_same_v<T, BufferCtor>) {
+            if constexpr (std::is_same_v<T, DelayCtor>) {
                 infer_expr(node.init_fn, env, subst, gen);
                 return Type::make<TypeBase>(BaseTypeKind::Float);
             }
 
-            if constexpr (std::is_same_v<T, BufferRead>) {
+            if constexpr (std::is_same_v<T, DelayRead>) {
                 if (node.delay) infer_expr(*node.delay, env, subst, gen);
                 auto type = lookup_env(node.name.lexeme, env);
                 if (!type)
-                    throw std::runtime_error("Unbound buffer: @" +
+                    throw std::runtime_error("Unbound delay: @" +
                                              node.name.lexeme);
                 return apply_subst(subst, *type);
             }
 
-            if constexpr (std::is_same_v<T, BufferWrite>) {
+            if constexpr (std::is_same_v<T, DelayWrite>) {
+                infer_expr(node.value, env, subst, gen);
+                return Type::make<TypeBase>(BaseTypeKind::Void);
+            }
+
+            if constexpr (std::is_same_v<T, DelayWriteQuiet>) {
+                if (node.delay) infer_expr(*node.delay, env, subst, gen);
                 infer_expr(node.value, env, subst, gen);
                 return Type::make<TypeBase>(BaseTypeKind::Void);
             }

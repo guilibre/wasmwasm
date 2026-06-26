@@ -34,7 +34,7 @@ class Parser {
     auto parse_factor() -> ParseResult;
     auto parse_lambda() -> ParseResult;
     auto parse_block() -> ParseResult;
-    auto parse_buffer_ctor() -> ParseResult;
+    auto parse_delay_ctor() -> ParseResult;
 
   public:
     explicit Parser(Tokenizer tokenizer);

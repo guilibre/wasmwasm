@@ -3,6 +3,7 @@ import type { Edge, Node } from '@xyflow/react';
 export function patch_to_json(nodes: Node[], edges: Edge[]): string {
     const modules: Record<string, string> = {};
     const patch: Record<string, string> = {};
+    const node_map = new Map(nodes.map((n) => [n.id, n]));
 
     for (const node of nodes) {
         if (node.type === 'block') {
@@ -12,8 +13,8 @@ export function patch_to_json(nodes: Node[], edges: Edge[]): string {
     }
 
     for (const edge of edges) {
-        const src_node = nodes.find((n) => n.id === edge.source);
-        const tgt_node = nodes.find((n) => n.id === edge.target);
+        const src_node = node_map.get(edge.source);
+        const tgt_node = node_map.get(edge.target);
         if (!src_node || !tgt_node || !edge.sourceHandle || !edge.targetHandle) continue;
 
         const src_key =

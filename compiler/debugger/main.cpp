@@ -143,7 +143,7 @@ auto run(const char *math_wasm_path) -> int {
             std::cout << "parse OK\n";
 
             std::vector<IRModule> compiled;
-            auto next_mem = buffer_memory_start;
+            auto next_mem = delay_memory_start;
             for (const auto &[name, code] : patch.module_sources) {
                 const Tokenizer tok(code);
                 Parser parser(tok);
@@ -160,7 +160,7 @@ auto run(const char *math_wasm_path) -> int {
                 auto ir = lower(*ast, name);
                 ir.memory_base = next_mem;
                 emit_ir(ir, main_module, math_module, 44100.0);
-                next_mem += ir.total_buffer_bytes();
+                next_mem += ir.total_delay_bytes();
                 compiled.push_back(std::move(ir));
             }
             std::cout << "lower OK\n";

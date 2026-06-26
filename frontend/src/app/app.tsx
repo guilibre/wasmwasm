@@ -26,15 +26,17 @@ export default function App() {
     const [analysers, set_analysers] = useState<{ l: AnalyserNode; r: AnalyserNode } | null>(null);
     const [is_playing, set_is_playing] = useState(false);
     const [error, set_error] = useState<string | null>(null);
-    const [patch_params, set_patch_params] = useState<Map<string, PatchParams>>(new Map());
     const [instr_width, set_instr_width] = useState(DEFAULT_INSTR_WIDTH);
+    const instr_width_ref = useRef(DEFAULT_INSTR_WIDTH);
+    useEffect(() => {
+        instr_width_ref.current = instr_width;
+    }, [instr_width]);
     const import_ref = useRef<HTMLInputElement>(null);
     const editor_ref = useRef<EditorHandle>(null);
 
     const store = usePatchStore();
     const {
         orchestra,
-        active_instrument,
         selected_node,
         update_code,
         update_name,
@@ -54,6 +56,19 @@ export default function App() {
 
     useEffect(() => {
         import('typescript');
+    }, []);
+
+    useEffect(() => {
+        const worker_ref = orchestra_worker_ref;
+        const nodes_ref = worklet_nodes_ref;
+        const ctx_ref = audio_context_ref;
+        const mic_ref = mic_source_ref;
+        return () => {
+            worker_ref.current?.terminate();
+            nodes_ref.current.forEach((n) => n.disconnect());
+            ctx_ref.current?.close();
+            mic_ref.current?.mediaStream.getTracks().forEach((t) => t.stop());
+        };
     }, []);
 
     const [sidebar_visible, set_sidebar_visible] = useState(true);
@@ -162,9 +177,28 @@ export default function App() {
 
         const context = audio_context_ref.current!;
         const merger = merger_ref.current!;
-        const new_patch_params = new Map<string, PatchParams>();
-
         await context.resume();
+
+        const ts = await import('typescript');
+
+        let compiled_orchestra = '';
+        if (orchestra.code.trim()) {
+            try {
+                compiled_orchestra = ts.transpileModule(orchestra.code, {
+                    compilerOptions: { target: ts.ScriptTarget.ES2025, module: 0 },
+                }).outputText;
+            } catch (e) {
+                set_error(`[orchestra] ${String(e)}`);
+            }
+        }
+
+        const instance_counts = new Map<string, number>();
+        for (const match of compiled_orchestra.matchAll(
+            /instrument\s*\(\s*['"]([^'"]+)['"]\s*\)/g,
+        )) {
+            const name = match[1];
+            instance_counts.set(name, (instance_counts.get(name) ?? 0) + 1);
+        }
 
         let first_audio_time: number | null = null;
         const worker_instruments: {
@@ -175,19 +209,19 @@ export default function App() {
             event_sab: SharedArrayBuffer;
         }[] = [];
 
-        for (const instr of orchestra.instruments) {
-            const json = patch_to_json(instr.nodes, instr.edges);
-
-            let result: { wasm: Uint8Array; params: PatchParams };
+        const create_instance = async (
+            instr: (typeof orchestra.instruments)[number],
+            json: string,
+            wasm: Uint8Array,
+            instance_idx: number,
+        ) => {
+            let params: PatchParams;
             try {
-                result = await WasmWasm.init_patch(context.sampleRate, json);
+                ({ params } = await WasmWasm.init_patch(context.sampleRate, json));
             } catch (e) {
                 set_error(`[${instr.name}] ${String(e)}`);
-                continue;
+                return;
             }
-
-            const { wasm, params } = result;
-            new_patch_params.set(instr.id, params);
 
             const node = new AudioWorkletNode(context, 'wasm-processor', {
                 numberOfInputs: 1,
@@ -195,7 +229,7 @@ export default function App() {
                 outputChannelCount: [2],
             });
             node.connect(merger);
-            worklet_nodes_ref.current.set(instr.id, node);
+            worklet_nodes_ref.current.set(`${instr.id}:${instance_idx}`, node);
 
             if (needs_capture(json)) {
                 try {
@@ -231,6 +265,7 @@ export default function App() {
             });
 
             const audio_current_time = await ready_promise;
+
             if (first_audio_time === null) first_audio_time = audio_current_time;
 
             worker_instruments.push({
@@ -240,37 +275,33 @@ export default function App() {
                 state_sab: params.state_sab,
                 event_sab: params.event_sab,
             });
+        };
+
+        for (const instr of orchestra.instruments) {
+            const json = patch_to_json(instr.nodes, instr.edges);
+
+            let wasm: Uint8Array;
+            try {
+                ({ wasm } = await WasmWasm.init_patch(context.sampleRate, json));
+            } catch (e) {
+                set_error(`[${instr.name}] ${String(e)}`);
+                continue;
+            }
+
+            const count = instance_counts.get(instr.name) ?? 1;
+            for (let i = 0; i < count; i++) {
+                await create_instance(instr, json, wasm, i);
+            }
         }
-
-        set_patch_params(new_patch_params);
-
-        const ts = await import('typescript');
 
         const compiled_instruments = worker_instruments.map((i) => ({
             ...i,
             code: i.code.trim()
                 ? ts.transpileModule(i.code, {
-                      compilerOptions: {
-                          target: ts.ScriptTarget.ES2020,
-                          module: ts.ModuleKind.None,
-                      },
+                      compilerOptions: { target: ts.ScriptTarget.ES2025, module: 0 },
                   }).outputText
                 : '',
         }));
-
-        let compiled_orchestra = '';
-        if (orchestra.code.trim()) {
-            try {
-                compiled_orchestra = ts.transpileModule(orchestra.code, {
-                    compilerOptions: {
-                        target: ts.ScriptTarget.ES2020,
-                        module: ts.ModuleKind.None,
-                    },
-                }).outputText;
-            } catch (e) {
-                set_error(`[orchestra] ${String(e)}`);
-            }
-        }
 
         const worker = new Worker(new URL('../audio/orchestra_worker.ts', import.meta.url), {
             type: 'module',
@@ -304,33 +335,23 @@ export default function App() {
         await audio_context_ref.current?.suspend();
         set_is_playing(false);
         set_analysers(null);
-        set_patch_params(new Map());
     };
 
-    const on_instr_handle_mousedown = useCallback(
-        (e: React.MouseEvent) => {
-            e.preventDefault();
-            const start_x = e.clientX;
-            const start_w = instr_width;
-            const on_move = (ev: MouseEvent) => {
-                const delta = ev.clientX - start_x;
-                set_instr_width(
-                    Math.max(MIN_INSTR_WIDTH, Math.min(MAX_INSTR_WIDTH, start_w + delta)),
-                );
-            };
-            const on_up = () => {
-                window.removeEventListener('mousemove', on_move);
-                window.removeEventListener('mouseup', on_up);
-            };
-            window.addEventListener('mousemove', on_move);
-            window.addEventListener('mouseup', on_up);
-        },
-        [instr_width],
-    );
-
-    const active_params = active_instrument
-        ? (patch_params.get(active_instrument.id) ?? null)
-        : null;
+    const on_instr_handle_mousedown = useCallback((e: React.MouseEvent) => {
+        e.preventDefault();
+        const start_x = e.clientX;
+        const start_w = instr_width_ref.current;
+        const on_move = (ev: MouseEvent) => {
+            const delta = ev.clientX - start_x;
+            set_instr_width(Math.max(MIN_INSTR_WIDTH, Math.min(MAX_INSTR_WIDTH, start_w + delta)));
+        };
+        const on_up = () => {
+            window.removeEventListener('mousemove', on_move);
+            window.removeEventListener('mouseup', on_up);
+        };
+        window.addEventListener('mousemove', on_move);
+        window.addEventListener('mouseup', on_up);
+    }, []);
 
     return (
         <div className="app">
@@ -361,7 +382,6 @@ export default function App() {
                 <div className="app__instrument-pane" style={{ width: instr_width }}>
                     <OrchestraPanel
                         orchestra={orchestra}
-                        params={active_params}
                         on_bpm_change={set_orchestra_bpm}
                         on_add={add_instrument}
                         on_remove={remove_instrument}

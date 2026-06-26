@@ -111,7 +111,14 @@ auto find_node_at(const ExprPtr &expr, size_t line, size_t col)
             if constexpr (std::is_same_v<T, OutputWrite>) {
                 return find_node_at(node.value, line, col);
             }
-            if constexpr (std::is_same_v<T, BufferWrite>) {
+            if constexpr (std::is_same_v<T, DelayWrite>) {
+                return find_node_at(node.value, line, col);
+            }
+            if constexpr (std::is_same_v<T, DelayWriteQuiet>) {
+                if (node.delay) {
+                    const auto *hit = find_node_at(*node.delay, line, col);
+                    if (hit) return hit;
+                }
                 return find_node_at(node.value, line, col);
             }
             if constexpr (std::is_same_v<T, CodeBlock>) {
@@ -132,10 +139,10 @@ auto find_node_at(const ExprPtr &expr, size_t line, size_t col)
                 const auto *hit = find_node_at(node.callee, line, col);
                 return hit ? hit : find_node_at(node.argument, line, col);
             }
-            if constexpr (std::is_same_v<T, BufferCtor>) {
+            if constexpr (std::is_same_v<T, DelayCtor>) {
                 return find_node_at(node.init_fn, line, col);
             }
-            if constexpr (std::is_same_v<T, BufferRead>) {
+            if constexpr (std::is_same_v<T, DelayRead>) {
                 const auto &tok = node.name;
                 if (tok.line == line && col >= tok.column &&
                     col < tok.column + tok.lexeme.size())
@@ -166,7 +173,11 @@ void collect_user_defs(const ExprPtr &expr, std::vector<std::string> &defs) {
                 defs.push_back(node.name.lexeme);
                 collect_user_defs(node.value, defs);
             }
-            if constexpr (std::is_same_v<T, BufferWrite>) {
+            if constexpr (std::is_same_v<T, DelayWrite>) {
+                collect_user_defs(node.value, defs);
+            }
+            if constexpr (std::is_same_v<T, DelayWriteQuiet>) {
+                if (node.delay) collect_user_defs(*node.delay, defs);
                 collect_user_defs(node.value, defs);
             }
             if constexpr (std::is_same_v<T, CodeBlock>) {
@@ -391,7 +402,7 @@ auto lsp_completions(const std::string &src, size_t /*line*/, size_t /*col*/)
         {.label = "SAMPLE_RATE", .detail = "Float", .kind = "constant"},
         {.label = "OUT", .detail = "Float", .kind = "constant"},
         {.label = "delay",
-         .detail = "Int -> (Int -> Float) -> Buffer",
+         .detail = "Int -> (Int -> Float) -> Delay",
          .kind = "keyword"},
     }};
 
