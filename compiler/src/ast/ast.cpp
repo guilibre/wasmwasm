@@ -138,7 +138,10 @@ auto ASTPrinter::dispatch(const ExprPtr &expr, Lambda &lam, size_t indent)
     -> std::string {
     std::ostringstream out;
     out << indent_str(indent);
-    out << attach_type("Lambda(" + lam.parameter.lexeme + ")", expr);
+    out << attach_type(
+        "Lambda(" + (lam.parameter.has_value() ? lam.parameter->lexeme : "_") +
+            ")",
+        expr);
     out << print(lam.body, indent + 2);
     return out.str();
 }

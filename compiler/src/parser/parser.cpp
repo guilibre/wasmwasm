@@ -429,6 +429,19 @@ auto Parser::parse_factor() -> ParseResult {
 }
 
 auto Parser::parse_lambda() -> ParseResult {
+    if (match(TokenKind::Period)) {
+        advance();
+        auto block = parse_block();
+        if (!match(TokenKind::RBrace))
+            return std::unexpected(ParseError{
+                .msg = "Expected '}': " + current.to_string(),
+                .line = current.line,
+                .col = current.column,
+            });
+        advance();
+        return Expr::make<Lambda>(std::nullopt, std::move(*block));
+    }
+
     const auto maybe_parameter = parse_factor();
     if (!maybe_parameter)
         return std::unexpected(ParseError{

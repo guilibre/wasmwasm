@@ -88,10 +88,12 @@ auto find_node_at(const ExprPtr &expr, size_t line, size_t col)
                 return nullptr;
             }
             if constexpr (std::is_same_v<T, Lambda>) {
-                const auto &param = node.parameter;
-                if (param.line == line && col >= param.column &&
-                    col < param.column + param.lexeme.size())
-                    return expr.get();
+                if (node.parameter.has_value()) {
+                    const auto &param = *node.parameter;
+                    if (param.line == line && col >= param.column &&
+                        col < param.column + param.lexeme.size())
+                        return expr.get();
+                }
                 return find_node_at(node.body, line, col);
             }
             if constexpr (std::is_same_v<T, Bind>) {

@@ -115,7 +115,8 @@ struct Lowerer {
                 }
                 if constexpr (std::is_same_v<T, Lambda>) {
                     auto b2 = bound;
-                    b2.insert(node.parameter.lexeme);
+                    if (node.parameter.has_value())
+                        b2.insert(node.parameter->lexeme);
                     return free_vars_of(node.body, b2);
                 }
                 if constexpr (std::is_same_v<T, CodeBlock>) {
@@ -160,7 +161,8 @@ struct Lowerer {
         const ExprPtr *body_ptr = &e;
         while (std::holds_alternative<Lambda>((*body_ptr)->node)) {
             const auto &lam = std::get<Lambda>((*body_ptr)->node);
-            params.emplace_back(lam.parameter.lexeme);
+            if (lam.parameter.has_value())
+                params.emplace_back(lam.parameter->lexeme);
             body_ptr = &lam.body;
         }
         const ExprPtr &body = *body_ptr;
@@ -236,8 +238,28 @@ struct Lowerer {
                         return IRLocalRef{r};
                     }
 
-                    if (fns.contains(name))
+                    if (fns.contains(name)) {
+                        const auto &info = fns.at(name);
+                        if (info.arity == 0) {
+                            std::vector<IRValue> call_args;
+                            for (const auto &fv : info.free_vars)
+                                call_args.emplace_back(IRLocalRef{fv});
+                            if (info.return_type == IRType::Void) {
+                                emit(IRCall{.result = "",
+                                            .callee = name,
+                                            .args = call_args,
+                                            .result_type = IRType::Void});
+                                return std::nullopt;
+                            }
+                            auto r = tmp();
+                            emit(IRCall{.result = r,
+                                        .callee = name,
+                                        .args = call_args,
+                                        .result_type = info.return_type});
+                            return IRLocalRef{r};
+                        }
                         return IRLiteral{(double)fn_indices.at(name)};
+                    }
 
                     return IRLocalRef{name};
                 }
@@ -407,15 +429,16 @@ struct Lowerer {
                                 "Delay init must be a lambda");
                         const auto &lam = std::get<Lambda>(ctor.init_fn->node);
                         const std::string init_name = name + "$init";
+                        const std::string param_name =
+                            lam.parameter.has_value() ? lam.parameter->lexeme
+                                                      : "$_";
 
                         IRFunction init_fn;
                         init_fn.name = init_name;
                         init_fn.return_type = IRType::Float;
-                        init_fn.params.emplace_back(lam.parameter.lexeme,
-                                                    IRType::Float);
+                        init_fn.params.emplace_back(param_name, IRType::Float);
 
-                        lower_fn_body(init_fn,
-                                      {{lam.parameter.lexeme, IRType::Float}},
+                        lower_fn_body(init_fn, {{param_name, IRType::Float}},
                                       lam.body);
 
                         mod.functions.emplace_back(std::move(init_fn));
@@ -708,7 +731,8 @@ struct Lowerer {
             size_t arity = 0;
             const ExprPtr *ptr = &bind->value;
             while (std::holds_alternative<Lambda>((*ptr)->node)) {
-                arity++;
+                if (std::get<Lambda>((*ptr)->node).parameter.has_value())
+                    arity++;
                 ptr = &std::get<Lambda>((*ptr)->node).body;
             }
             const auto ret_type = ir_type_of((*ptr)->type);

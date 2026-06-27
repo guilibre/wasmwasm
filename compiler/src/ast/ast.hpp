@@ -73,7 +73,7 @@ struct Call {
 };
 
 struct Lambda {
-    Token parameter;
+    std::optional<Token> parameter;
     ExprPtr body;
 };
 

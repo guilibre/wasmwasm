@@ -185,10 +185,14 @@ void infer_expr(const ExprPtr &expr,
 
             if constexpr (std::is_same_v<T, Lambda>) {
                 auto param_type = gen.fresh_type_var();
-                env.emplace_back(std::unordered_map<std::string, TypePtr>(
-                    {{node.parameter.lexeme, param_type}}));
-                infer_expr(node.body, env, subst, gen);
-                env.pop_back();
+                if (node.parameter.has_value()) {
+                    env.emplace_back(std::unordered_map<std::string, TypePtr>(
+                        {{node.parameter->lexeme, param_type}}));
+                    infer_expr(node.body, env, subst, gen);
+                    env.pop_back();
+                } else {
+                    infer_expr(node.body, env, subst, gen);
+                }
                 return Type::make<TypeFun>(apply_subst(subst, param_type),
                                            apply_subst(subst, node.body->type));
             }
