@@ -13,13 +13,18 @@ interface InstrumentInit {
     event_sab: SharedArrayBuffer;
 }
 
+interface SpawnCtxRef {
+    current: { task_time: { v: number } } | null;
+}
+
 function build_instrument(
     instr: InstrumentInit,
     bpm: number,
     sample_rate: number,
-    get_orch_time: () => number,
+    get_task_time: () => number,
     real_time: () => number,
     sync_orch_time: (t: number) => void,
+    spawn_ctx_ref: SpawnCtxRef,
 ) {
     const ev_write_head = new Int32Array(instr.event_sab, 0, 1);
     const ev_data = new DataView(instr.event_sab, 8);
@@ -34,6 +39,7 @@ function build_instrument(
 
     let active_ctx: { v: number } | null = null;
     let active_token: object | null = null;
+    let cursor: number | null = null;
     const ABORT = Symbol();
 
     const write_events = (name: string, value: number, t: number) => {
@@ -51,7 +57,7 @@ function build_instrument(
     };
 
     const set_param = (name: string, value: number, delay = 0) => {
-        const t = (active_ctx?.v ?? get_orch_time()) + delay;
+        const t = (active_ctx?.v ?? get_task_time()) + delay;
         write_events(name, value, t);
     };
 
@@ -59,7 +65,7 @@ function build_instrument(
         const my_token = active_token;
         const my_ctx = active_ctx;
         if (my_ctx) my_ctx.v += s;
-        const target = my_ctx ? my_ctx.v : get_orch_time() + s;
+        const target = my_ctx ? my_ctx.v : get_task_time() + s;
         const wait_ms = (target - LOOKAHEAD - real_time()) * 1000;
         if (wait_ms > 0) await new Promise<void>((r) => setTimeout(r, wait_ms));
         if (active_token !== my_token) throw ABORT;
@@ -86,15 +92,20 @@ function build_instrument(
     for (const [name, fn] of Object.entries(raw_fns)) {
         wrapped[name] = async (...args: unknown[]) => {
             const my_token = {};
+            const my_spawn_ctx = spawn_ctx_ref.current;
             active_token = my_token;
             const prev = active_ctx;
-            active_ctx = { v: get_orch_time() };
+            const start = Math.max(cursor ?? get_task_time(), get_task_time());
+            active_ctx = { v: start };
+            cursor = start;
             try {
                 return await fn(...args);
             } catch (e) {
                 if (e !== ABORT) throw e;
             } finally {
+                spawn_ctx_ref.current = my_spawn_ctx;
                 if (active_token === my_token) {
+                    cursor = active_ctx?.v ?? cursor;
                     if (active_ctx) sync_orch_time(active_ctx.v);
                     active_token = null;
                 }
@@ -120,24 +131,51 @@ self.onmessage = async (event: MessageEvent) => {
     const real_time = () => audioCurrentTime + (performance.now() - perf_origin) / 1000;
 
     const orch_scheduled = { v: audioCurrentTime + LOOKAHEAD };
-
     const get_orch_time = () => orch_scheduled.v;
 
-    const instruments_map = new Map<string, Record<string, (...args: unknown[]) => unknown>[]>();
+    const spawn_ctx_ref: SpawnCtxRef = { current: null };
+
+    const instruments_raw = new Map<string, InstrumentInit[]>();
     for (const instr of instruments) {
-        const built = build_instrument(instr, bpm, sampleRate, get_orch_time, real_time, (t) => {
-            if (t > orch_scheduled.v) orch_scheduled.v = t;
-        });
-        const arr = instruments_map.get(instr.name);
-        if (arr) arr.push(built);
-        else instruments_map.set(instr.name, [built]);
+        const arr = instruments_raw.get(instr.name);
+        if (arr) arr.push(instr);
+        else instruments_raw.set(instr.name, [instr]);
     }
 
+    const instrument_counters = new Map<string, number>();
+    const instrument = (name: string) => {
+        const arr = instruments_raw.get(name) ?? [];
+        const idx = instrument_counters.get(name) ?? 0;
+        instrument_counters.set(name, idx + 1);
+        const instr_data = arr[idx];
+        if (!instr_data) return {};
+        const ctx = spawn_ctx_ref.current;
+        return build_instrument(
+            instr_data,
+            bpm,
+            sampleRate,
+            ctx ? () => ctx.task_time.v : get_orch_time,
+            real_time,
+            (t) => {
+                if (t > orch_scheduled.v) orch_scheduled.v = t;
+            },
+            spawn_ctx_ref,
+        );
+    };
+
     const sleep = async (s: number) => {
-        orch_scheduled.v += s;
-        const wake_at = orch_scheduled.v - LOOKAHEAD;
-        const wait_ms = (wake_at - real_time()) * 1000;
-        if (wait_ms > 0) await new Promise<void>((r) => setTimeout(r, wait_ms));
+        const ctx = spawn_ctx_ref.current;
+        if (ctx) {
+            ctx.task_time.v += s;
+            const wait_ms = (ctx.task_time.v - LOOKAHEAD - real_time()) * 1000;
+            if (wait_ms > 0) await new Promise<void>((r) => setTimeout(r, wait_ms));
+            spawn_ctx_ref.current = ctx;
+            if (ctx.task_time.v > orch_scheduled.v) orch_scheduled.v = ctx.task_time.v;
+        } else {
+            orch_scheduled.v += s;
+            const wait_ms = (orch_scheduled.v - LOOKAHEAD - real_time()) * 1000;
+            if (wait_ms > 0) await new Promise<void>((r) => setTimeout(r, wait_ms));
+        }
     };
 
     const sleep_beats = (beats: number) => sleep((beats * 60) / bpm);
@@ -157,13 +195,23 @@ self.onmessage = async (event: MessageEvent) => {
 
     const current_time = real_time;
 
-    const instrument_counters = new Map<string, number>();
-    const instrument = (name: string) => {
-        const arr = instruments_map.get(name) ?? [];
-        const idx = instrument_counters.get(name) ?? 0;
-        instrument_counters.set(name, idx + 1);
-        return arr[idx] ?? {};
+    const spawn = (fn: () => Promise<void>) => {
+        const task_time = { v: orch_scheduled.v };
+        spawn_ctx_ref.current = { task_time };
+        fn();
+        spawn_ctx_ref.current = null;
     };
+
+    const async_fn_names = [...orchestra_code.matchAll(/^[ \t]*async\s+function\s+(\w+)/gm)].map(
+        (m) => m[1],
+    );
+    if (async_fn_names.length > 0) {
+        self.postMessage({
+            type: 'error',
+            message: `Async functions must be defined as: const f = async () => { ... }\nFound: ${async_fn_names.join(', ')}`,
+        });
+        return;
+    }
 
     try {
         const fn = new async_function(
@@ -172,9 +220,10 @@ self.onmessage = async (event: MessageEvent) => {
             'sleep_beats',
             'on_beat',
             'current_time',
+            'spawn',
             orchestra_code,
         );
-        await fn(instrument, sleep, sleep_beats, on_beat, current_time);
+        await fn(instrument, sleep, sleep_beats, on_beat, current_time, spawn);
     } catch (e) {
         self.postMessage({ type: 'error', message: String(e) });
     }

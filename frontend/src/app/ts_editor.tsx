@@ -24,6 +24,7 @@ declare function sleep(seconds: number): Promise<void>;
 declare function sleep_beats(beats: number): Promise<void>;
 declare function on_beat(fn: (beat: number) => void): void;
 declare function current_time(): number;
+declare function spawn(fn: () => Promise<void>): void;
 `;
 
 const INSTRUMENT_DEFS = `

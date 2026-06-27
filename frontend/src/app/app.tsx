@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import { ReactFlowProvider } from '@xyflow/react';
 import workletUrl from '../audio/processor.worklet.js?url';
 import WasmWasm, { type PatchParams } from '../audio/compiler';
-import WWEditor, { type WWWWEditorHandle } from './ww_editor';
+import WWEditor, { type WWEditorHandle } from './ww_editor';
 import { Sidebar } from './sidebar';
 import { LeftPane } from './left_pane';
 import { PatchEditor } from '../patch/patch_editor';
