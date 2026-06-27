@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { VirtualTypeScriptEnvironment } from '@typescript/vfs';
-import { TsEditor, get_orchestra_env, ORCHESTRA_FALLBACK } from './ts_editor';
+import { TsEditor } from './ts_editor';
+import { get_orchestra_env, ORCHESTRA_FALLBACK } from './ts_env';
 import './instrument.scss';
 
 interface Props {

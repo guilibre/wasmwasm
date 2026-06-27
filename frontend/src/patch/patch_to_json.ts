@@ -8,7 +8,7 @@ export function patch_to_json(nodes: Node[], edges: Edge[]): string {
     for (const node of nodes) {
         if (node.type === 'block') {
             const data = node.data as { name: string; code: string };
-            modules[data.name] = data.code;
+            modules[node.id] = data.code;
         }
     }
 
@@ -18,14 +18,10 @@ export function patch_to_json(nodes: Node[], edges: Edge[]): string {
         if (!src_node || !tgt_node || !edge.sourceHandle || !edge.targetHandle) continue;
 
         const src_key =
-            src_node.type === 'capture'
-                ? edge.sourceHandle
-                : `${(src_node.data as { name: string }).name}_${edge.sourceHandle}`;
+            src_node.type === 'capture' ? edge.sourceHandle : `${src_node.id}_${edge.sourceHandle}`;
 
         const sink_key =
-            tgt_node.type === 'dac'
-                ? edge.targetHandle
-                : `${(tgt_node.data as { name: string }).name}_${edge.targetHandle}`;
+            tgt_node.type === 'dac' ? edge.targetHandle : `${tgt_node.id}_${edge.targetHandle}`;
 
         patch[sink_key] = src_key;
     }

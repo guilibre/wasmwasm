@@ -65,26 +65,25 @@ body,
         position: relative;
     }
 
-    &__modal-backdrop {
-        position: fixed;
-        inset: 0;
-        background: rgba(0, 0, 0, 0.5);
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        z-index: 1000;
-    }
-
     &__modal {
+        position: fixed;
         display: flex;
         flex-direction: column;
         width: 600px;
         height: 420px;
+        min-width: 320px;
+        min-height: 240px;
         border: 1px solid #2a2d40;
         border-radius: 8px;
         background: #1a1d2e;
         box-shadow: 0 16px 48px rgba(0, 0, 0, 0.6);
-        overflow: hidden;
+        overflow: auto;
+        resize: both;
+        z-index: 1000;
+
+        .app__panel-header {
+            cursor: move;
+        }
     }
 
     &__panel-name {

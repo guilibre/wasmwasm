@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { ReactFlowProvider } from '@xyflow/react';
 import workletUrl from '../audio/processor.worklet.js?url';
 import WasmWasm, { type PatchParams } from '../audio/compiler';
@@ -65,6 +65,19 @@ export default function App() {
     const [sidebar_visible, set_sidebar_visible] = useState(true);
     const [editing_block_id, set_editing_block_id] = useState<string | null>(null);
     const [name_draft, set_name_draft] = useState('');
+    const [modal_drag_pos, set_modal_drag_pos] = useState<{
+        block_id: string;
+        x: number;
+        y: number;
+    } | null>(null);
+    const modal_drag_offset = useRef<{ dx: number; dy: number } | null>(null);
+    const modal_pos = useMemo(
+        () =>
+            modal_drag_pos?.block_id === selected_block?.id && modal_drag_pos != null
+                ? { x: modal_drag_pos.x, y: modal_drag_pos.y }
+                : { x: window.innerWidth / 2 - 300, y: window.innerHeight / 2 - 210 },
+        [modal_drag_pos, selected_block?.id],
+    );
 
     const editing_name = editing_block_id === selected_block?.id;
 
@@ -78,6 +91,34 @@ export default function App() {
         if (trimmed && selected_block) update_name(selected_block.id, trimmed);
         set_editing_block_id(null);
     }, [name_draft, selected_block, update_name]);
+
+    const on_modal_header_mouse_down = useCallback(
+        (e: React.MouseEvent) => {
+            if ((e.target as HTMLElement).closest('input, button')) return;
+            const block_id = selected_block?.id;
+            if (!block_id) return;
+            modal_drag_offset.current = {
+                dx: e.clientX - modal_pos.x,
+                dy: e.clientY - modal_pos.y,
+            };
+            const on_move = (ev: MouseEvent) => {
+                if (!modal_drag_offset.current) return;
+                set_modal_drag_pos({
+                    block_id,
+                    x: ev.clientX - modal_drag_offset.current.dx,
+                    y: ev.clientY - modal_drag_offset.current.dy,
+                });
+            };
+            const on_up = () => {
+                modal_drag_offset.current = null;
+                document.removeEventListener('mousemove', on_move);
+                document.removeEventListener('mouseup', on_up);
+            };
+            document.addEventListener('mousemove', on_move);
+            document.addEventListener('mouseup', on_up);
+        },
+        [modal_pos, selected_block?.id],
+    );
 
     const on_name_key_down = useCallback(
         (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -379,36 +420,34 @@ export default function App() {
             </div>
 
             {selected_block && (
-                <div className="app__modal-backdrop" onClick={() => select(null)}>
-                    <div className="app__modal" onClick={(e) => e.stopPropagation()}>
-                        <div className="app__panel-header">
-                            {editing_name ? (
-                                <input
-                                    className="app__name-input"
-                                    autoFocus
-                                    value={name_draft}
-                                    onChange={(e) => set_name_draft(e.target.value)}
-                                    onKeyDown={on_name_key_down}
-                                    onBlur={commit_name}
-                                />
-                            ) : (
-                                <span
-                                    className="app__panel-name"
-                                    onClick={start_name_edit}
-                                    title="Click to rename"
-                                >
-                                    {(selected_block.data as { name: string }).name}
-                                </span>
-                            )}
-                            <button onClick={() => select(null)}>×</button>
-                        </div>
-                        <WWEditor
-                            ref={editor_ref}
-                            key={selected_block.id}
-                            initial_value={(selected_block.data as { code: string }).code}
-                            on_change={(code) => update_code(selected_block.id, code)}
-                        />
+                <div className="app__modal" style={{ left: modal_pos.x, top: modal_pos.y }}>
+                    <div className="app__panel-header" onMouseDown={on_modal_header_mouse_down}>
+                        {editing_name ? (
+                            <input
+                                className="app__name-input"
+                                autoFocus
+                                value={name_draft}
+                                onChange={(e) => set_name_draft(e.target.value)}
+                                onKeyDown={on_name_key_down}
+                                onBlur={commit_name}
+                            />
+                        ) : (
+                            <span
+                                className="app__panel-name"
+                                onClick={start_name_edit}
+                                title="Click to rename"
+                            >
+                                {(selected_block.data as { name: string }).name}
+                            </span>
+                        )}
+                        <button onClick={() => select(null)}>×</button>
                     </div>
+                    <WWEditor
+                        ref={editor_ref}
+                        key={selected_block.id}
+                        initial_value={(selected_block.data as { code: string }).code}
+                        on_change={(code) => update_code(selected_block.id, code)}
+                    />
                 </div>
             )}
         </div>
