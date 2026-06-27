@@ -49,7 +49,7 @@ declare function sleep_beats(beats: number): Promise<void>;
 
 const ORCHESTRA_FALLBACK = `const i = instrument('instrument1');
 while (true) {
-  i.note(440, 0.4);
+  i.note(0.2, 440);
   await sleep_beats(1);
 }`;
 

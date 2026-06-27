@@ -5,14 +5,18 @@ A wasmwasm program runs once per audio frame. Each line is either a binding or a
 ## Variables
 
 ```
+param amp = 0
+param amp_ = 0
 param freq = 440
-param amp = 0.2
+param freq_ = 440
 static two_pi = 2 * PI
 static t = 0
 static dt_base = two_pi / SAMPLE_RATE
-OUT[0] <- amp * sin t
-dt = freq * dt_base
+OUT[0] <- amp_ * sin t
+dt = freq_ * dt_base
 t = t < two_pi ? t + dt : t + dt - two_pi
+amp_ = amp_ + 0.1*(amp - amp_)
+freq_ = freq_ + 0.1*(freq - freq_)
 ```
 
 `OUT[i]` writes to audio output channel `i`. The expected range is `[-1, 1]`.
@@ -40,8 +44,10 @@ t = t + 1
 Functions are defined with `{params. body}` and applied by juxtaposition. Multiple parameters are curried automatically.
 
 ```
+param amp = 0
+param amp_ = 0
 param freq = 440
-param amp = 0.2
+param freq_ = 440
 
 sin_osc = {amp freq.
   static two_pi = 2 * PI
@@ -52,7 +58,9 @@ sin_osc = {amp freq.
   amp * sin t
 }
 
-OUT[0] <- sin_osc amp freq
+OUT[0] <- sin_osc amp_ freq_
+amp_ = amp_ + 0.1*(amp - amp_)
+freq_ = freq_ + 0.1*(freq - freq_)
 
 ```
 
@@ -75,8 +83,8 @@ sum = {n. n < 1 ? 0 : n + sum (n - 1)}
 `param` declares a named parameter with a default value. Params are exposed as controllable inputs in the UI and can be overwritten from the orchestra.
 
 ```
-param freq = 440
 param amp = 0.2
+param freq = 440
 ```
 
 ## Delays

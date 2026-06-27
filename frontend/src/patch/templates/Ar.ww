@@ -1,0 +1,20 @@
+param gate = 0
+static gate_ = 0
+
+static t = 0
+static dt = 1/SAMPLE_RATE
+
+static atk = 0.01
+static rel = 1
+static atk_inc = 1/(atk*SAMPLE_RATE)
+static rel_inc = -1/(rel*SAMPLE_RATE)
+
+static env = 0
+
+OUT[0] <- env
+
+denv = t < atk ? atk_inc : rel_inc
+env = min 1 (max 0 (env + denv))
+
+t = gate > gate_ ? 0 : t + dt
+gate_ = gate

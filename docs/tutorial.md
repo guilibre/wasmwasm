@@ -62,8 +62,8 @@ Functions are defined with `{params. body}` and applied by juxtaposition. Multip
 `param` exposes a value as a controllable input in the UI. It has a default and can be overwritten from the orchestra or the patch editor.
 
 ```
-param freq = 440
 param amp = 0.2
+param freq = 440
 static two_pi = 2 * PI
 static t = 0
 static dt_base = two_pi / SAMPLE_RATE
@@ -138,11 +138,11 @@ The orchestra is a JavaScript sequencer that controls instrument params over tim
 **Instrument "synth" — wasmwasm code:**
 
 ```
-param freq = 0
 param amp = 0
+param freq = 440
 
-static freq_ = 0
 static amp_ = 0
+static freq_ = 440
 
 static two_pi = 2 * PI
 static t = 0
@@ -150,11 +150,10 @@ static dt_base = two_pi / SAMPLE_RATE
 
 OUT[0] <- amp_ * sin t
 
-freq_ = freq_ + 0.1*(freq - freq_)
-amp_ = amp_ + 0.01*(amp - amp_)
-
 dt = freq_ * dt_base
 t = t < two_pi ? t + dt : t + dt - two_pi
+freq_ = freq_ + 0.1*(freq - freq_)
+amp_ = amp_ + 0.01*(amp - amp_)
 ```
 
 **Instrument "synth" — orchestra code (JavaScript):**

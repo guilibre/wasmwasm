@@ -1,0 +1,34 @@
+buffer = delay 4096 {_. 0}
+static idx = 0
+
+static aLow  = 1 - exp(-2*PI/SAMPLE_RATE)
+static aHigh = 1 - exp(-2*PI*5000/SAMPLE_RATE)
+static k = 0.01
+filter = {x.
+  static low = 0
+  static band = 0
+  static xm1 = 0
+  static ap = 0
+  low = low + aLow*(x - low)
+  high = x - low
+  band = band + aHigh*(high - band)
+  ap = -k*band + xm1 + k*ap
+  xm1 = band
+  ap
+}
+gd = {f.
+  static bL = 1 - aLow
+  static bH = 1 - aHigh
+  c = cos(2*PI*f/SAMPLE_RATE)
+  lp = bH*(c - bH)/(1 - 2*bH*c + bH*bH)
+  hp = bL*(c - bL)/(1 - 2*bL*c + bL*bL)
+  ap = (1 - k*k)/(1 + 2*k*c + k*k)
+  (hp + lp + ap)
+}
+
+y = filter(@[idx]buffer)
+OUT[0] <- 0.1 * y
+@[idx]buffer = IN[1] + y
+
+del = SAMPLE_RATE/IN[0] - gd(IN[0])
+idx = idx < del ? idx + 1 : 0

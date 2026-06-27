@@ -1,4 +1,5 @@
 import { useCallback, useReducer } from 'react';
+import { get_default_code } from './block_templates';
 import { applyNodeChanges, applyEdgeChanges } from '@xyflow/react';
 import type { Node, Edge, NodeChange, EdgeChange, Connection } from '@xyflow/react';
 
@@ -129,7 +130,12 @@ function reducer(state: PatchState, action: PatchAction): PatchState {
                 edges:
                     removed_ids.size > 0
                         ? i.edges.filter(
-                              (e) => !removed_ids.has(e.source) && !removed_ids.has(e.target),
+                              (e) =>
+                                  (!removed_ids.has(e.source) && !removed_ids.has(e.target)) ||
+                                  e.source === 'capture' ||
+                                  e.source === 'dac' ||
+                                  e.target === 'capture' ||
+                                  e.target === 'dac',
                           )
                         : i.edges,
             }));
@@ -137,22 +143,9 @@ function reducer(state: PatchState, action: PatchAction): PatchState {
         }
         case 'edges_change': {
             if (!get_active(state)) return state;
-            const active = get_active(state)!;
-            const edge_map = new Map(active.edges.map((e) => [e.id, e]));
-            const filtered_edge_changes = action.changes.filter((c) => {
-                if (c.type !== 'remove') return true;
-                const e = edge_map.get(c.id);
-                return !(
-                    e &&
-                    (e.source === 'capture' ||
-                        e.source === 'dac' ||
-                        e.target === 'capture' ||
-                        e.target === 'dac')
-                );
-            });
             next = map_active(state, (i) => ({
                 ...i,
-                edges: applyEdgeChanges(filtered_edge_changes, i.edges),
+                edges: applyEdgeChanges(action.changes, i.edges),
             }));
             break;
         }
@@ -321,6 +314,9 @@ export function usePatchStore() {
     const select = useCallback((id: string | null) => dispatch({ type: 'select', id }), []);
     const add_block = useCallback((name: string, position: { x: number; y: number }) => {
         const id = `block_${Date.now()}`;
+        const code = get_default_code(name);
+        const arity = scan_arity(code);
+        const params = scan_params(code);
         dispatch({
             type: 'add_node',
             node: {
@@ -329,10 +325,9 @@ export function usePatchStore() {
                 position,
                 data: {
                     name,
-                    code: '',
-                    num_inputs: 0,
-                    num_outputs: 0,
-                    params: [],
+                    code,
+                    ...arity,
+                    params,
                 } satisfies BlockData,
             },
         });
