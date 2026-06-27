@@ -11,6 +11,20 @@ auto make_builtin_env()
     const auto float_to_float = Type::make<TypeFun>(float_type, float_type);
     const auto float_to_float_to_float =
         Type::make<TypeFun>(float_type, float_to_float);
+    const auto array_type = Type::make<TypeArray>();
+    // foldr : Float -> (Float -> Float -> Float) -> Array -> Float
+    const auto foldr_type = Type::make<TypeFun>(
+        float_type,
+        Type::make<TypeFun>(float_to_float_to_float,
+                            Type::make<TypeFun>(array_type, float_type)));
+    // map : (Float -> Float) -> Array -> Array
+    const auto map_type = Type::make<TypeFun>(
+        float_to_float, Type::make<TypeFun>(array_type, array_type));
+    // zip : (Float -> Float -> Float) -> Array -> Array -> Array
+    const auto zip_type = Type::make<TypeFun>(
+        float_to_float_to_float,
+        Type::make<TypeFun>(array_type,
+                            Type::make<TypeFun>(array_type, array_type)));
     return {{
         {"PI", float_type},
         {"SAMPLE_RATE", float_type},
@@ -31,6 +45,9 @@ auto make_builtin_env()
         {"tanh", float_to_float},
         {"min", float_to_float_to_float},
         {"max", float_to_float_to_float},
+        {"foldr", foldr_type},
+        {"map", map_type},
+        {"zip", zip_type},
         {"delay", Type::make<TypeFun>(
                       float_type, Type::make<TypeFun>(
                                       int_type, Type::make<TypeFun>(

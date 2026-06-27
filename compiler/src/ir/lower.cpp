@@ -52,6 +52,8 @@ struct Lowerer {
     std::unordered_set<std::string> param_names;
     std::unordered_map<std::string, IRType> locals;
     std::vector<IRInstr> static_init_body;
+    std::unordered_map<std::string, std::vector<std::string>> array_env;
+    std::unordered_set<std::string> static_arrays;
 
     size_t tmp_n = 0;
 
@@ -63,7 +65,19 @@ struct Lowerer {
         return std::ranges::contains(language_globals, name) ||
                std::ranges::contains(math_builtins, name) ||
                fns.contains(name) || bufs.contains(name) ||
-               param_names.contains(name);
+               param_names.contains(name) || array_env.contains(name) ||
+               name == "foldr" || name == "zip" || name == "map";
+    }
+
+    auto read_array_elem(const std::string &arr_name, size_t i) -> IRValue {
+        const auto &elem = array_env.at(arr_name).at(i);
+        if (static_arrays.contains(arr_name)) {
+            auto r = tmp();
+            define(r, IRType::Float);
+            emit(IRStaticRead{.result = r, .name = elem});
+            return IRLocalRef{r};
+        }
+        return IRLocalRef{elem};
     }
 
     auto emit_global_read(const std::string &name, IRType type) -> IRValue {
@@ -150,6 +164,16 @@ struct Lowerer {
                     return free_vars_of(node.value, bound);
                 if constexpr (std::is_same_v<T, StaticBind>) return {};
                 if constexpr (std::is_same_v<T, ParamBind>) return {};
+                if constexpr (std::is_same_v<T, ArrayLiteral>) {
+                    std::unordered_set<std::string> result;
+                    for (const auto &elem : node.elements) {
+                        const auto fv = free_vars_of(elem, bound);
+                        result.insert(fv.begin(), fv.end());
+                    }
+                    return result;
+                }
+                if constexpr (std::is_same_v<T, ArrayCtor>)
+                    return free_vars_of(node.init_fn, bound);
 
                 return {};
             },
@@ -210,6 +234,210 @@ struct Lowerer {
         return {node, args};
     }
 
+    void lower_bind_map(const std::string &dest_name, const ExprPtr &value) {
+        const auto [callee_node, arg_ptrs] = flatten_calls(value);
+        if (arg_ptrs.size() != 2)
+            throw std::runtime_error("map expects 2 arguments");
+
+        std::string fn_name;
+        if (const auto *fn_var = std::get_if<Variable>(&(*arg_ptrs[0])->node)) {
+            fn_name = fn_var->name.lexeme;
+            if (!fns.contains(fn_name))
+                throw std::runtime_error("map: '" + fn_name +
+                                         "' is not a function");
+        } else if (std::holds_alternative<Lambda>((*arg_ptrs[0])->node)) {
+            fn_name = "$map_fn$" + std::to_string(tmp_n++);
+            lift(fn_name, *arg_ptrs[0]);
+        } else {
+            throw std::runtime_error(
+                "map: first argument must be a function or lambda");
+        }
+
+        const auto *arr_var = std::get_if<Variable>(&(*arg_ptrs[1])->node);
+        if (arr_var == nullptr)
+            throw std::runtime_error("map: array argument must be a variable");
+        const auto &arr = arr_var->name.lexeme;
+        if (!array_env.contains(arr))
+            throw std::runtime_error("map: '" + arr + "' is not an array");
+
+        const auto n = array_env.at(arr).size();
+        const auto &fn_info = fns.at(fn_name);
+
+        std::vector<IRValue> results;
+        results.reserve(n);
+        for (size_t i = 0; i < n; ++i) {
+            auto v = read_array_elem(arr, i);
+            auto r = tmp();
+            define(r, IRType::Float);
+            std::vector<IRValue> call_args = {v};
+            for (const auto &fv : fn_info.free_vars)
+                call_args.emplace_back(IRLocalRef{fv});
+            emit(IRCall{
+                .result = r,
+                .callee = fn_name,
+                .args = call_args,
+                .result_type = IRType::Float,
+            });
+            results.emplace_back(IRLocalRef{r});
+        }
+
+        if (static_arrays.contains(dest_name)) {
+            const auto &elem_names = array_env.at(dest_name);
+            for (size_t i = 0; i < n; ++i)
+                emit(IRStaticWrite{.name = elem_names[i], .value = results[i]});
+        } else {
+            std::vector<std::string> elem_names;
+            elem_names.reserve(n);
+            for (size_t i = 0; i < n; ++i) {
+                const auto &ref = std::get<IRLocalRef>(results[i]);
+                elem_names.push_back(ref.name);
+            }
+            array_env[dest_name] = std::move(elem_names);
+        }
+    }
+
+    void lower_bind_zip(const std::string &dest_name, const ExprPtr &value) {
+        const auto [callee_node, arg_ptrs] = flatten_calls(value);
+        if (arg_ptrs.size() != 3)
+            throw std::runtime_error("zip expects 3 arguments");
+
+        // fn argument: variable or inline lambda
+        std::string fn_name;
+        if (const auto *fn_var = std::get_if<Variable>(&(*arg_ptrs[0])->node)) {
+            fn_name = fn_var->name.lexeme;
+            if (!fns.contains(fn_name))
+                throw std::runtime_error("zip: '" + fn_name +
+                                         "' is not a function");
+        } else if (std::holds_alternative<Lambda>((*arg_ptrs[0])->node)) {
+            fn_name = "$zip_fn$" + std::to_string(tmp_n++);
+            lift(fn_name, *arg_ptrs[0]);
+        } else {
+            throw std::runtime_error(
+                "zip: first argument must be a function or lambda");
+        }
+
+        // both array arguments must be variables in array_env
+        const auto *arr1_var = std::get_if<Variable>(&(*arg_ptrs[1])->node);
+        const auto *arr2_var = std::get_if<Variable>(&(*arg_ptrs[2])->node);
+        if ((arr1_var == nullptr) || (arr2_var == nullptr))
+            throw std::runtime_error("zip: array arguments must be variables");
+        const auto &arr1 = arr1_var->name.lexeme;
+        const auto &arr2 = arr2_var->name.lexeme;
+        if (!array_env.contains(arr1))
+            throw std::runtime_error("zip: '" + arr1 + "' is not an array");
+        if (!array_env.contains(arr2))
+            throw std::runtime_error("zip: '" + arr2 + "' is not an array");
+        const auto n = array_env.at(arr1).size();
+        if (n != array_env.at(arr2).size())
+            throw std::runtime_error("zip: arrays must have the same size");
+
+        const auto &fn_info = fns.at(fn_name);
+
+        // Read all elements first (safe even when dest_name == arr1 or arr2)
+        std::vector<IRValue> results;
+        results.reserve(n);
+        for (size_t i = 0; i < n; ++i) {
+            auto v1 = read_array_elem(arr1, i);
+            auto v2 = read_array_elem(arr2, i);
+            auto r = tmp();
+            define(r, IRType::Float);
+            std::vector<IRValue> call_args = {v1, v2};
+            for (const auto &fv : fn_info.free_vars)
+                call_args.emplace_back(IRLocalRef{fv});
+            emit(IRCall{
+                .result = r,
+                .callee = fn_name,
+                .args = call_args,
+                .result_type = IRType::Float,
+            });
+            results.emplace_back(IRLocalRef{r});
+        }
+
+        // Write results
+        if (static_arrays.contains(dest_name)) {
+            // Update existing static array elements
+            const auto &elem_names = array_env.at(dest_name);
+            for (size_t i = 0; i < n; ++i)
+                emit(IRStaticWrite{.name = elem_names[i], .value = results[i]});
+        } else {
+            // New non-static array
+            std::vector<std::string> elem_names;
+            elem_names.reserve(n);
+            for (size_t i = 0; i < n; ++i) {
+                const auto &ref = std::get<IRLocalRef>(results[i]);
+                elem_names.push_back(ref.name);
+            }
+            array_env[dest_name] = std::move(elem_names);
+        }
+    }
+
+    auto lower_foldr(const std::vector<const ExprPtr *> &arg_ptrs)
+        -> std::optional<IRValue> {
+        if (arg_ptrs.size() != 3)
+            throw std::runtime_error("foldr expects 3 arguments");
+
+        auto init_v = lower_expr(*arg_ptrs[0]);
+        if (!init_v) throw std::runtime_error("foldr: void init value");
+
+        // fn argument: variable or inline lambda
+        std::string fn_name;
+        if (const auto *fn_var = std::get_if<Variable>(&(*arg_ptrs[1])->node)) {
+            fn_name = fn_var->name.lexeme;
+            if (!fns.contains(fn_name))
+                throw std::runtime_error("foldr: '" + fn_name +
+                                         "' is not a function");
+        } else if (std::holds_alternative<Lambda>((*arg_ptrs[1])->node)) {
+            fn_name = "$foldr_fn$" + std::to_string(tmp_n++);
+            lift(fn_name, *arg_ptrs[1]);
+        } else {
+            throw std::runtime_error(
+                "foldr: second argument must be a function or lambda");
+        }
+
+        // array argument must be a variable in array_env
+        const auto *arr_var = std::get_if<Variable>(&(*arg_ptrs[2])->node);
+        if (arr_var == nullptr)
+            throw std::runtime_error("foldr: array must be a variable");
+        const auto &arr_name = arr_var->name.lexeme;
+        if (!array_env.contains(arr_name))
+            throw std::runtime_error("foldr: '" + arr_name +
+                                     "' is not an array");
+
+        const auto n = array_env.at(arr_name).size();
+        const auto &fn_info = fns.at(fn_name);
+
+        auto acc = tmp();
+        define(acc, IRType::Float);
+        emit(IRAssign{
+            .result = acc,
+            .value = *init_v,
+            .type = IRType::Float,
+        });
+
+        // right fold: last element first
+        for (int i = static_cast<int>(n) - 1; i >= 0; --i) {
+            auto elem_v = read_array_elem(arr_name, static_cast<size_t>(i));
+            auto r = tmp();
+            define(r, IRType::Float);
+            std::vector<IRValue> call_args = {elem_v, IRLocalRef{acc}};
+            for (const auto &fv : fn_info.free_vars)
+                call_args.emplace_back(IRLocalRef{fv});
+            emit(IRCall{
+                .result = r,
+                .callee = fn_name,
+                .args = call_args,
+                .result_type = IRType::Float,
+            });
+            emit(IRAssign{
+                .result = acc,
+                .value = IRLocalRef{r},
+                .type = IRType::Float,
+            });
+        }
+
+        return IRLocalRef{acc};
+    }
+
     auto lower_expr(const ExprPtr &e) -> std::optional<IRValue> {
         return std::visit(
             [&](const auto &node) -> std::optional<IRValue> {
@@ -238,10 +466,16 @@ struct Lowerer {
                         return IRLocalRef{r};
                     }
 
+                    if (array_env.contains(name))
+                        throw std::runtime_error(
+                            "'" + name +
+                            "' is an array; use foldr to operate on it");
+
                     if (fns.contains(name)) {
                         const auto &info = fns.at(name);
                         if (info.arity == 0) {
                             std::vector<IRValue> call_args;
+                            call_args.reserve(info.free_vars.size());
                             for (const auto &fv : info.free_vars)
                                 call_args.emplace_back(IRLocalRef{fv});
                             if (info.return_type == IRType::Void) {
@@ -340,8 +574,12 @@ struct Lowerer {
                     if (!val) throw std::runtime_error("unary op on void");
                     if (node.op == Operation::Not) {
                         auto ca = tmp();
-                        emit(
-                            IRCall{ca, "wasmwasm_clip", {*val}, IRType::Float});
+                        emit(IRCall{
+                            ca,
+                            "wasmwasm_clip",
+                            {*val},
+                            IRType::Float,
+                        });
                         auto r = tmp();
                         emit(IRBinOp{
                             .result = r,
@@ -362,9 +600,19 @@ struct Lowerer {
                     if (!l || !r) throw std::runtime_error("binary op on void");
                     if (node.op == Operation::And) {
                         auto ca = tmp();
-                        emit(IRCall{ca, "wasmwasm_clip", {*l}, IRType::Float});
+                        emit(IRCall{
+                            ca,
+                            "wasmwasm_clip",
+                            {*l},
+                            IRType::Float,
+                        });
                         auto cb = tmp();
-                        emit(IRCall{cb, "wasmwasm_clip", {*r}, IRType::Float});
+                        emit(IRCall{
+                            cb,
+                            "wasmwasm_clip",
+                            {*r},
+                            IRType::Float,
+                        });
                         auto res = tmp();
                         emit(IRBinOp{
                             .result = res,
@@ -376,9 +624,19 @@ struct Lowerer {
                     }
                     if (node.op == Operation::Or) {
                         auto ca = tmp();
-                        emit(IRCall{ca, "wasmwasm_clip", {*l}, IRType::Float});
+                        emit(IRCall{
+                            ca,
+                            "wasmwasm_clip",
+                            {*l},
+                            IRType::Float,
+                        });
                         auto cb = tmp();
-                        emit(IRCall{cb, "wasmwasm_clip", {*r}, IRType::Float});
+                        emit(IRCall{
+                            cb,
+                            "wasmwasm_clip",
+                            {*r},
+                            IRType::Float,
+                        });
                         auto one_minus_cb = tmp();
                         emit(IRBinOp{
                             .result = one_minus_cb,
@@ -405,7 +663,11 @@ struct Lowerer {
                     if (node.op == Operation::Pow) {
                         auto res = tmp();
                         emit(IRCall{
-                            res, "wasmwasm_pow", {*l, *r}, IRType::Float});
+                            res,
+                            "wasmwasm_pow",
+                            {*l, *r},
+                            IRType::Float,
+                        });
                         return IRLocalRef{res};
                     }
                     auto res = tmp();
@@ -415,6 +677,72 @@ struct Lowerer {
 
                 if constexpr (std::is_same_v<T, Bind>) {
                     const auto &name = node.name.lexeme;
+
+                    if (std::holds_alternative<ArrayLiteral>(
+                            node.value->node)) {
+                        const auto &arr =
+                            std::get<ArrayLiteral>(node.value->node);
+                        std::vector<std::string> elems;
+                        elems.reserve(arr.elements.size());
+                        for (const auto &elem_expr : arr.elements) {
+                            auto v = lower_expr(elem_expr);
+                            if (!v)
+                                throw std::runtime_error(
+                                    "void element in array literal");
+                            auto t = tmp();
+                            define(t, IRType::Float);
+                            emit(IRAssign{
+                                t,
+                                *v,
+                                IRType::Float,
+                            });
+                            elems.push_back(t);
+                        }
+                        array_env[name] = std::move(elems);
+                        return std::nullopt;
+                    }
+
+                    if (std::holds_alternative<ArrayCtor>(node.value->node)) {
+                        const auto &ctor =
+                            std::get<ArrayCtor>(node.value->node);
+                        const std::string fn_name = name + "$array_init";
+                        lift(fn_name, ctor.init_fn);
+                        const auto &fn_info = fns.at(fn_name);
+                        std::vector<std::string> elems;
+                        elems.reserve(ctor.size);
+                        for (size_t i = 0; i < ctor.size; ++i) {
+                            auto t = tmp();
+                            define(t, IRType::Float);
+                            std::vector<IRValue> call_args = {
+                                IRLiteral{static_cast<double>(i)}};
+                            for (const auto &fv : fn_info.free_vars)
+                                call_args.emplace_back(IRLocalRef{fv});
+                            emit(IRCall{
+                                .result = t,
+                                .callee = fn_name,
+                                .args = call_args,
+                                .result_type = IRType::Float,
+                            });
+                            elems.push_back(t);
+                        }
+                        array_env[name] = std::move(elems);
+                        return std::nullopt;
+                    }
+
+                    // Detect zip / map calls
+                    {
+                        const auto [cn, ap] = flatten_calls(node.value);
+                        if (const auto *cv = std::get_if<Variable>(&cn->node)) {
+                            if (cv->name.lexeme == "zip") {
+                                lower_bind_zip(name, node.value);
+                                return std::nullopt;
+                            }
+                            if (cv->name.lexeme == "map") {
+                                lower_bind_map(name, node.value);
+                                return std::nullopt;
+                            }
+                        }
+                    }
 
                     if (std::holds_alternative<Lambda>(node.value->node)) {
                         lift(name, node.value);
@@ -438,7 +766,11 @@ struct Lowerer {
                         init_fn.return_type = IRType::Float;
                         init_fn.params.emplace_back(param_name, IRType::Float);
 
-                        lower_fn_body(init_fn, {{param_name, IRType::Float}},
+                        lower_fn_body(init_fn,
+                                      {{
+                                          param_name,
+                                          IRType::Float,
+                                      }},
                                       lam.body);
 
                         mod.functions.emplace_back(std::move(init_fn));
@@ -477,8 +809,72 @@ struct Lowerer {
 
                 if constexpr (std::is_same_v<T, StaticBind>) {
                     const auto &name = node.name.lexeme;
+
+                    if (std::holds_alternative<ArrayCtor>(node.init->node)) {
+                        const auto &ctor = std::get<ArrayCtor>(node.init->node);
+                        const std::string fn_name = name + "$array_init";
+                        lift(fn_name, ctor.init_fn);
+                        const auto &fn_info = fns.at(fn_name);
+                        std::vector<std::string> elem_names;
+                        elem_names.reserve(ctor.size);
+                        for (size_t i = 0; i < ctor.size; ++i) {
+                            const std::string en =
+                                name + "__" + std::to_string(i);
+                            elem_names.push_back(en);
+                            mod.static_vars.push_back(
+                                {.name = en, .type = IRType::Float});
+                            std::vector<IRValue> call_args = {
+                                IRLiteral{static_cast<double>(i)}};
+                            for (const auto &fv : fn_info.free_vars)
+                                call_args.emplace_back(IRLocalRef{fv});
+                            auto r = "$sinit$" + std::to_string(tmp_n++);
+                            static_init_body.emplace_back(IRCall{
+                                .result = r,
+                                .callee = fn_name,
+                                .args = call_args,
+                                .result_type = IRType::Float,
+                            });
+                            static_init_body.emplace_back(IRStaticWrite{
+                                .name = en,
+                                .value = IRLocalRef{r},
+                            });
+                        }
+                        static_arrays.insert(name);
+                        array_env[name] = std::move(elem_names);
+                        return std::nullopt;
+                    }
+
+                    if (std::holds_alternative<ArrayLiteral>(node.init->node)) {
+                        const auto &arr =
+                            std::get<ArrayLiteral>(node.init->node);
+                        std::vector<std::string> elem_names;
+                        elem_names.reserve(arr.elements.size());
+                        auto *saved = cur;
+                        cur = &static_init_body;
+                        for (size_t i = 0; i < arr.elements.size(); ++i) {
+                            const std::string en =
+                                name + "__" + std::to_string(i);
+                            elem_names.push_back(en);
+                            mod.static_vars.push_back({
+                                .name = en,
+                                .type = IRType::Float,
+                            });
+                            const auto v = lower_expr(arr.elements[i]);
+                            if (v)
+                                static_init_body.emplace_back(
+                                    IRStaticWrite{en, *v});
+                        }
+                        cur = saved;
+                        static_arrays.insert(name);
+                        array_env[name] = std::move(elem_names);
+                        return std::nullopt;
+                    }
+
                     statics.insert(name);
-                    mod.static_vars.push_back({name, IRType::Float});
+                    mod.static_vars.push_back({
+                        name,
+                        IRType::Float,
+                    });
                     auto *saved = cur;
                     cur = &static_init_body;
                     const auto val = lower_expr(node.init);
@@ -512,6 +908,13 @@ struct Lowerer {
 
                 if constexpr (std::is_same_v<T, Call>) {
                     const auto [callee_node, arg_ptrs] = flatten_calls(e);
+
+                    // Special case: foldr
+                    if (const auto *cv =
+                            std::get_if<Variable>(&callee_node->node)) {
+                        if (cv->name.lexeme == "foldr")
+                            return lower_foldr(arg_ptrs);
+                    }
 
                     std::vector<IRValue> arg_vals;
                     arg_vals.reserve(arg_ptrs.size());
@@ -633,8 +1036,11 @@ struct Lowerer {
                         auto res = tmp();
                         define(res, IRType::Float);
                         if (then_val)
-                            then_instrs.emplace_back(
-                                IRAssign{res, *then_val, IRType::Float});
+                            then_instrs.emplace_back(IRAssign{
+                                res,
+                                *then_val,
+                                IRType::Float,
+                            });
                         if (else_val)
                             else_instrs.emplace_back(IRAssign{
                                 .result = res,

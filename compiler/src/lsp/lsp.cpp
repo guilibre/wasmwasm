@@ -161,6 +161,16 @@ auto find_node_at(const ExprPtr &expr, size_t line, size_t col)
                     return find_node_at(*node.else_branch, line, col);
                 return nullptr;
             }
+            if constexpr (std::is_same_v<T, ArrayLiteral>) {
+                for (const auto &elem : node.elements) {
+                    const auto *hit = find_node_at(elem, line, col);
+                    if (hit) return hit;
+                }
+                return nullptr;
+            }
+            if constexpr (std::is_same_v<T, ArrayCtor>) {
+                return find_node_at(node.init_fn, line, col);
+            }
             return nullptr;
         },
         expr->node);
@@ -205,6 +215,13 @@ void collect_user_defs(const ExprPtr &expr, std::vector<std::string> &defs) {
                 collect_user_defs(node.then_branch, defs);
                 if (node.else_branch)
                     collect_user_defs(*node.else_branch, defs);
+            }
+            if constexpr (std::is_same_v<T, ArrayLiteral>) {
+                for (const auto &elem : node.elements)
+                    collect_user_defs(elem, defs);
+            }
+            if constexpr (std::is_same_v<T, ArrayCtor>) {
+                collect_user_defs(node.init_fn, defs);
             }
         },
         expr->node);
@@ -296,6 +313,9 @@ auto lsp_tokens(const std::string &src) -> std::string {
         std::unordered_set<std::string> s(math_builtins.begin(),
                                           math_builtins.end());
         for (const auto &g : language_globals) s.insert(std::string(g));
+        s.insert("foldr");
+        s.insert("map");
+        s.insert("zip");
         return s;
     }();
 
@@ -335,6 +355,7 @@ auto lsp_tokens(const std::string &src) -> std::string {
             emit(t.line, t.column, len, "number");
             break;
         case TokenKind::Delay:
+        case TokenKind::Array:
             emit(t.line, t.column, len, "keyword");
             break;
         case TokenKind::Identifier:
@@ -374,7 +395,7 @@ auto lsp_completions(const std::string &src, size_t /*line*/, size_t /*col*/)
         const char *detail;
         const char *kind;
     };
-    static const std::array<BuiltinItem, 22> builtins = {{
+    static const std::array<BuiltinItem, 25> builtins = {{
         {.label = "sin", .detail = "Float -> Float", .kind = "function"},
         {.label = "cos", .detail = "Float -> Float", .kind = "function"},
         {.label = "sign", .detail = "Float -> Float", .kind = "function"},
@@ -406,6 +427,18 @@ auto lsp_completions(const std::string &src, size_t /*line*/, size_t /*col*/)
         {.label = "delay",
          .detail = "Int -> (Int -> Float) -> Delay",
          .kind = "keyword"},
+        {.label = "array",
+         .detail = "Int -> (Float -> Float) -> Array",
+         .kind = "keyword"},
+        {.label = "foldr",
+         .detail = "Float -> (Float -> Float -> Float) -> Array -> Float",
+         .kind = "function"},
+        {.label = "map",
+         .detail = "(Float -> Float) -> Array -> Array",
+         .kind = "function"},
+        {.label = "zip",
+         .detail = "(Float -> Float -> Float) -> Array -> Array -> Array",
+         .kind = "function"},
     }};
 
     std::vector<std::string> user_defs;

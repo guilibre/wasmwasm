@@ -24,6 +24,15 @@ struct DelayCtor {
     ExprPtr init_fn;
 };
 
+struct ArrayLiteral {
+    std::vector<ExprPtr> elements;
+};
+
+struct ArrayCtor {
+    size_t size;
+    ExprPtr init_fn;
+};
+
 struct DelayRead {
     Token name;
     std::optional<ExprPtr> delay;
@@ -126,7 +135,7 @@ struct Expr {
         std::variant<Bind, CodeBlock, BinaryOp, DelayCtor, DelayRead,
                      DelayWrite, DelayWriteQuiet, Call, Conditional, InputRead,
                      Lambda, Literal, OutputWrite, ParamBind, StaticBind,
-                     UnaryOp, Variable>;
+                     UnaryOp, Variable, ArrayLiteral, ArrayCtor>;
 
     ExprNode node;
     TypePtr type;
@@ -178,6 +187,10 @@ class ASTPrinter {
     auto dispatch(const ExprPtr &expr, ParamBind &pb, size_t indent)
         -> std::string;
     auto dispatch(const ExprPtr &expr, StaticBind &sb, size_t indent)
+        -> std::string;
+    auto dispatch(const ExprPtr &expr, ArrayLiteral &al, size_t indent)
+        -> std::string;
+    auto dispatch(const ExprPtr &expr, ArrayCtor &ac, size_t indent)
         -> std::string;
 
     static auto tokenkind_to_string(TokenKind kind) -> std::string;

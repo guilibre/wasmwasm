@@ -23,7 +23,9 @@ struct TypeVar {
     size_t id;
 };
 
-using TypeNode = std::variant<TypeBase, TypeFun, TypeVar>;
+struct TypeArray {};
+
+using TypeNode = std::variant<TypeBase, TypeFun, TypeVar, TypeArray>;
 
 struct Type {
     TypeNode node;

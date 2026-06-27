@@ -204,6 +204,26 @@ auto ASTPrinter::dispatch(const ExprPtr &expr, OutputWrite &ow, size_t indent)
     return out.str();
 }
 
+auto ASTPrinter::dispatch(const ExprPtr &expr, ArrayLiteral &al, size_t indent)
+    -> std::string {
+    std::ostringstream out;
+    out << indent_str(indent)
+        << attach_type("ArrayLiteral[" + std::to_string(al.elements.size()) +
+                           "]",
+                       expr);
+    for (const auto &e : al.elements) out << print(e, indent + 2);
+    return out.str();
+}
+
+auto ASTPrinter::dispatch(const ExprPtr &expr, ArrayCtor &ac, size_t indent)
+    -> std::string {
+    std::ostringstream out;
+    out << indent_str(indent)
+        << attach_type("ArrayCtor(" + std::to_string(ac.size) + ")", expr);
+    out << print(ac.init_fn, indent + 2);
+    return out.str();
+}
+
 auto ASTPrinter::tokenkind_to_string(TokenKind kind) -> std::string {
     switch (kind) {
     case TokenKind::Eq:
@@ -270,6 +290,8 @@ auto ASTPrinter::type_to_string(const TypePtr &type) -> std::string {
 
     if (const auto *var = std::get_if<TypeVar>(&type->node))
         return "t" + std::to_string(var->id);
+
+    if (std::holds_alternative<TypeArray>(type->node)) return "Array";
 
     return "<?>";
 }

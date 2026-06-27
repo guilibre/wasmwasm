@@ -87,6 +87,44 @@ param amp = 0.2
 param freq = 440
 ```
 
+## Arrays
+
+Fixed-size arrays of floats. Elements are re-evaluated every frame.
+
+### Declaration
+
+```
+a = [1, 2, 3]                    # array literal
+b = array 3 {i. i + 1}          # constructor: index lambda, size must be >= 1
+```
+
+### Static arrays
+
+A `static` array behaves like N individual static variables — each element persists across frames.
+
+```
+static ts = array 5 {_. 0}
+```
+
+### Array functions
+
+| Function           | Type                                                   | Description                                    |
+| ------------------ | ------------------------------------------------------ | ---------------------------------------------- |
+| `foldr init f arr` | `Float -> (Float -> Float -> Float) -> Array -> Float` | Right fold. Lambda receives `{elem acc. ...}`  |
+| `map f arr`        | `(Float -> Float) -> Array -> Array`                   | Apply `f` to each element, produce new array   |
+| `zip f arr1 arr2`  | `(Float -> Float -> Float) -> Array -> Array -> Array` | Apply `f` element-wise to two same-size arrays |
+
+### Example — additive synthesis with phase accumulation
+
+```
+static two_pi = 2 * PI
+static ts  = array 5 {_. 0}
+static dts = array 5 {i. (i + 1) * two_pi / SAMPLE_RATE}
+
+OUT[0] <- foldr 0 {t acc. acc + sin t} ts
+ts = zip {x y. x + y} ts dts
+```
+
 ## Delays
 
 Delays hold arrays of values that persist across frames — essential for filters, delays, and feedback.

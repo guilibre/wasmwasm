@@ -40,7 +40,7 @@ export function Sidebar({ analyser_l, analyser_r }: Props) {
     const on_waveform_wheel = useCallback((e: React.WheelEvent) => {
         e.preventDefault();
         const dir = e.deltaY > 0 ? -1 : 1;
-        zoom_ref.current = Math.max(1, Math.min(32, zoom_ref.current * (dir > 0 ? 2 : 0.5)));
+        zoom_ref.current = Math.max(1, Math.min(32, zoom_ref.current * (dir > 0 ? 1.2 : 1 / 1.2)));
     }, []);
 
     useEffect(() => {
@@ -138,7 +138,7 @@ export function Sidebar({ analyser_l, analyser_r }: Props) {
             if (zoom > 1) {
                 wctx.fillStyle = '#6272a4';
                 wctx.font = '9px monospace';
-                wctx.fillText(`${zoom}×`, 4, WH - 4);
+                wctx.fillText(`${zoom.toFixed(1)}×`, 4, WH - 4);
             }
 
             for (let y = 0; y < SH; y++) {
@@ -170,7 +170,6 @@ export function Sidebar({ analyser_l, analyser_r }: Props) {
     return (
         <div className="app__sidebar" style={{ width }}>
             <div className="app__sidebar-handle" onMouseDown={on_handle_mousedown} />
-
             <span className="app__sidebar-label">waveform</span>
             <canvas
                 ref={waveform_ref}

@@ -35,6 +35,7 @@ enum class TokenKind : uint8_t {
     Static,
     Param,
     Caret,
+    Array,
 };
 
 struct Token {

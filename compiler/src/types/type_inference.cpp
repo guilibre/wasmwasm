@@ -105,6 +105,19 @@ void unify(const TypePtr &a, const TypePtr &b, Substitution &subst) {
             } else if constexpr (std::is_same_v<A, TypeVar>) {
                 if (occurs_in(na.id, tb)) error("Occurs check failed (left)");
                 subst.emplace(na.id, tb);
+            } else if constexpr (std::is_same_v<A, TypeArray>) {
+                std::visit(
+                    [&](const auto &nb) -> void {
+                        using B = std::decay_t<decltype(nb)>;
+                        if constexpr (std::is_same_v<B, TypeArray>) {
+                            // compatible
+                        } else if constexpr (std::is_same_v<B, TypeVar>) {
+                            subst.emplace(nb.id, ta);
+                        } else {
+                            error("Cannot unify array type with non-array");
+                        }
+                    },
+                    tb->node);
             }
         },
         ta->node);
@@ -233,6 +246,29 @@ void infer_expr(const ExprPtr &expr,
                           subst);
                 }
                 return apply_subst(subst, node.then_branch->type);
+            }
+
+            if constexpr (std::is_same_v<T, ArrayLiteral>) {
+                if (node.elements.empty())
+                    throw std::runtime_error(
+                        "Array literal must have at least one element");
+                const auto float_type =
+                    Type::make<TypeBase>(BaseTypeKind::Float);
+                for (const auto &elem : node.elements) {
+                    infer_expr(elem, env, subst, gen);
+                    unify(elem->type, float_type, subst);
+                }
+                return Type::make<TypeArray>();
+            }
+
+            if constexpr (std::is_same_v<T, ArrayCtor>) {
+                const auto float_type =
+                    Type::make<TypeBase>(BaseTypeKind::Float);
+                const auto float_to_float =
+                    Type::make<TypeFun>(float_type, float_type);
+                infer_expr(node.init_fn, env, subst, gen);
+                unify(node.init_fn->type, float_to_float, subst);
+                return Type::make<TypeArray>();
             }
 
             if constexpr (std::is_same_v<T, Literal>) {

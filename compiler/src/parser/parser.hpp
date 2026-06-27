@@ -35,6 +35,8 @@ class Parser {
     auto parse_lambda() -> ParseResult;
     auto parse_block() -> ParseResult;
     auto parse_delay_ctor() -> ParseResult;
+    auto parse_array_ctor() -> ParseResult;
+    auto parse_array_literal() -> ParseResult;
 
   public:
     explicit Parser(Tokenizer tokenizer);

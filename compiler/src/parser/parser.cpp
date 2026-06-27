@@ -388,6 +388,10 @@ auto Parser::parse_factor() -> ParseResult {
 
     if (match(TokenKind::Delay)) { return parse_delay_ctor(); }
 
+    if (match(TokenKind::Array)) { return parse_array_ctor(); }
+
+    if (match(TokenKind::LBracket)) { return parse_array_literal(); }
+
     if (match(TokenKind::Identifier)) {
         advance();
         auto e = Expr::make<Variable>(tok);
@@ -494,6 +498,65 @@ auto Parser::parse_block() -> ParseResult {
         });
 
     return Expr::make<CodeBlock>(std::move(expressions));
+}
+
+auto Parser::parse_array_literal() -> ParseResult {
+    advance(); // consume '['
+    std::vector<ExprPtr> elements;
+    while (!match(TokenKind::RBracket)) {
+        if (match(TokenKind::Eof))
+            return std::unexpected(ParseError{
+                .msg = "Unterminated array literal",
+                .line = current.line,
+                .col = current.column,
+            });
+        auto elem = parse_logical_or();
+        if (!elem) return elem;
+        elements.emplace_back(std::move(*elem));
+        if (match(TokenKind::Comma)) advance();
+    }
+    if (elements.empty())
+        return std::unexpected(ParseError{
+            .msg = "Array literal must have at least one element",
+            .line = current.line,
+            .col = current.column,
+        });
+    advance(); // consume ']'
+    return Expr::make<ArrayLiteral>(std::move(elements));
+}
+
+auto Parser::parse_array_ctor() -> ParseResult {
+    advance(); // consume 'array'
+    if (!match(TokenKind::Number))
+        return std::unexpected(ParseError{
+            .msg = "Expected a size after 'array': " + current.to_string(),
+            .line = current.line,
+            .col = current.column,
+        });
+    const auto size = std::stoul(current.lexeme);
+    if (size < 1)
+        return std::unexpected(ParseError{
+            .msg = "Array size must be at least 1",
+            .line = current.line,
+            .col = current.column,
+        });
+    advance();
+    if (!match(TokenKind::LBrace))
+        return std::unexpected(ParseError{
+            .msg = "Expected a lambda after size in 'array': " +
+                   current.to_string(),
+            .line = current.line,
+            .col = current.column,
+        });
+    advance();
+    auto init_fn = parse_lambda();
+    if (!init_fn)
+        return std::unexpected(ParseError{
+            .msg = "Invalid lambda in 'array': " + current.to_string(),
+            .line = current.line,
+            .col = current.column,
+        });
+    return Expr::make<ArrayCtor>(size, std::move(*init_fn));
 }
 
 auto Parser::parse_delay_ctor() -> ParseResult {
