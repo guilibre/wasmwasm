@@ -137,7 +137,7 @@ const editor_theme = EditorView.theme(
     { dark: true },
 );
 
-export interface EditorHandle {
+export interface WWEditorHandle {
     set_value(code: string): void;
     refresh(): void;
 }
@@ -147,7 +147,10 @@ interface Props {
     on_change: (v: string) => void;
 }
 
-const Editor = forwardRef<EditorHandle, Props>(function Editor({ initial_value, on_change }, ref) {
+const WWEditor = forwardRef<WWEditorHandle, Props>(function WWEditor(
+    { initial_value, on_change },
+    ref,
+) {
     const container_ref = useRef<HTMLDivElement>(null);
     const view_ref = useRef<EditorView | null>(null);
     const initial_value_ref = useRef(initial_value);
@@ -337,4 +340,4 @@ const Editor = forwardRef<EditorHandle, Props>(function Editor({ initial_value, 
     );
 });
 
-export default Editor;
+export default WWEditor;

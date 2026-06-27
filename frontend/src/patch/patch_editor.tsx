@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import './patch_editor.scss';
 import { ReactFlow, Background, Controls, useReactFlow } from '@xyflow/react';
 import type {
     NodeMouseHandler,

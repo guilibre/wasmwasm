@@ -1,0 +1,166 @@
+.ww-canvas {
+    flex: 1;
+    min-width: 0;
+    position: relative;
+
+    .react-flow__background {
+        background: #1a1d2e;
+    }
+
+    .react-flow__controls button {
+        background: #263238;
+        border-color: #37474f;
+        color: #cdd6f4;
+        fill: #cdd6f4;
+    }
+}
+
+.ww-node {
+    padding: 0.5rem 0;
+    border-radius: 6px;
+    border: 1px solid #37474f;
+    background: #263238;
+    min-width: 100px;
+    text-align: center;
+    font-size: 0.6rem;
+    cursor: grab;
+    position: relative;
+
+    &--block {
+        border-color: #82aaff;
+    }
+
+    &--system {
+        border-color: #546e7a;
+        color: #89ddff;
+    }
+
+    &--selected {
+        border-color: #ffcb6b;
+    }
+
+    &__label {
+        user-select: none;
+    }
+
+    &__params {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.25rem;
+        justify-content: center;
+        margin-bottom: 0.4rem;
+    }
+
+    &__param {
+        font-size: 0.5rem;
+        color: #c3e88d;
+        background: rgba(195, 232, 141, 0.1);
+        border: 1px solid rgba(195, 232, 141, 0.3);
+        border-radius: 3px;
+        padding: 0 0.35rem;
+        user-select: none;
+    }
+
+    &__name-input {
+        background: transparent;
+        border: none;
+        border-bottom: 1px solid #82aaff;
+        color: inherit;
+        font: inherit;
+        text-align: center;
+        width: 100%;
+        outline: none;
+        padding: 0;
+    }
+}
+
+.ww-handle {
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    border: 1px solid;
+
+    &--in {
+        background: #1a1d2e;
+        border-color: #82aaff;
+        cursor: crosshair;
+    }
+
+    &--out {
+        background: #82aaff;
+        border-color: #82aaff;
+        cursor: crosshair;
+    }
+}
+
+.ww-ctx-menu {
+    position: fixed;
+    z-index: 200;
+    background: #1e2732;
+    border: 1px solid #37474f;
+    border-radius: 4px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+    overflow: hidden;
+
+    button {
+        display: block;
+        width: 100%;
+        padding: 0.4rem 1rem;
+        background: none;
+        border: none;
+        color: #f07178;
+        font-family: monospace;
+        font-size: 0.85rem;
+        text-align: left;
+        cursor: pointer;
+
+        &:hover {
+            background: #263238;
+        }
+    }
+}
+
+.ww-name-input {
+    position: absolute;
+    z-index: 100;
+    padding: 0.25rem 0.5rem;
+    background: #1e2732;
+    border: 1px solid #89ddff;
+    border-radius: 4px;
+    color: #cdd6f4;
+    font-family: monospace;
+    font-size: 0.85rem;
+    outline: none;
+    width: 120px;
+    transform: translate(-50%, -50%);
+}
+
+.ww-keyword {
+    color: #c792ea;
+    font-weight: bold;
+}
+
+.ww-number {
+    color: #f78c6c;
+}
+
+.ww-function {
+    color: #89ddff;
+}
+
+.ww-variable {
+    color: #82aaff;
+}
+
+.ww-operator {
+    color: #89ddff;
+}
+
+.ww-comment {
+    color: #546e7a;
+    font-style: italic;
+}
+
+.ww-error {
+    text-decoration: underline wavy red;
+}

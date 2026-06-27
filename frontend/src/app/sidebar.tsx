@@ -1,4 +1,5 @@
 import { useRef, useEffect, useState, useCallback } from 'react';
+import './sidebar.scss';
 
 interface Props {
     analyser_l: AnalyserNode | null;

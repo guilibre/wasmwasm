@@ -1,0 +1,38 @@
+.app__instrument-pane {
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    position: relative;
+    background: #13151f;
+    border-right: 1px solid #2a2d3e;
+    min-width: 20vw;
+    max-width: 50vw;
+}
+
+.app__orch-handle {
+    position: absolute;
+    right: 0;
+    top: 0;
+    width: 5px;
+    height: 100%;
+    cursor: ew-resize;
+    background: transparent;
+    z-index: 10;
+
+    &:hover {
+        background: #89b4fa44;
+    }
+}
+
+.app__panel-divider {
+    height: 5px;
+    background: transparent;
+    flex-shrink: 0;
+    cursor: ns-resize;
+    border-top: 1px solid #2a2d40;
+    border-bottom: 1px solid #2a2d40;
+
+    &:hover {
+        background: #89b4fa44;
+    }
+}

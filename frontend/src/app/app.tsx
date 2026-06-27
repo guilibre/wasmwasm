@@ -2,18 +2,14 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import { ReactFlowProvider } from '@xyflow/react';
 import workletUrl from '../audio/processor.worklet.js?url';
 import WasmWasm, { type PatchParams } from '../audio/compiler';
-import Editor, { type EditorHandle } from './editor';
+import WWEditor, { type WWWWEditorHandle } from './ww_editor';
 import { Sidebar } from './sidebar';
-import { OrchestraPanel } from './instrument_panel';
+import { LeftPane } from './left_pane';
 import { PatchEditor } from '../patch/patch_editor';
 import { usePatchStore } from '../patch/use_patch_store';
 import { patch_to_json } from '../patch/patch_to_json';
 import { patch_to_hash, hash_to_patch } from '../patch/share';
 import './app.scss';
-
-const MIN_INSTR_WIDTH = 200;
-const MAX_INSTR_WIDTH = 900;
-const DEFAULT_INSTR_WIDTH = 380;
 
 export default function App() {
     const audio_context_ref = useRef<AudioContext | null>(null);
@@ -26,13 +22,8 @@ export default function App() {
     const [analysers, set_analysers] = useState<{ l: AnalyserNode; r: AnalyserNode } | null>(null);
     const [is_playing, set_is_playing] = useState(false);
     const [error, set_error] = useState<string | null>(null);
-    const [instr_width, set_instr_width] = useState(DEFAULT_INSTR_WIDTH);
-    const instr_width_ref = useRef(DEFAULT_INSTR_WIDTH);
-    useEffect(() => {
-        instr_width_ref.current = instr_width;
-    }, [instr_width]);
     const import_ref = useRef<HTMLInputElement>(null);
-    const editor_ref = useRef<EditorHandle>(null);
+    const editor_ref = useRef<WWEditorHandle>(null);
 
     const store = usePatchStore();
     const {
@@ -337,22 +328,6 @@ export default function App() {
         set_analysers(null);
     };
 
-    const on_instr_handle_mousedown = useCallback((e: React.MouseEvent) => {
-        e.preventDefault();
-        const start_x = e.clientX;
-        const start_w = instr_width_ref.current;
-        const on_move = (ev: MouseEvent) => {
-            const delta = ev.clientX - start_x;
-            set_instr_width(Math.max(MIN_INSTR_WIDTH, Math.min(MAX_INSTR_WIDTH, start_w + delta)));
-        };
-        const on_up = () => {
-            window.removeEventListener('mousemove', on_move);
-            window.removeEventListener('mouseup', on_up);
-        };
-        window.addEventListener('mousemove', on_move);
-        window.addEventListener('mouseup', on_up);
-    }, []);
-
     return (
         <div className="app">
             <div className="app__toolbar">
@@ -379,19 +354,16 @@ export default function App() {
             </div>
 
             <div className="app__workspace">
-                <div className="app__instrument-pane" style={{ width: instr_width }}>
-                    <OrchestraPanel
-                        orchestra={orchestra}
-                        on_bpm_change={set_orchestra_bpm}
-                        on_add={add_instrument}
-                        on_remove={remove_instrument}
-                        on_rename={rename_instrument}
-                        on_instrument_code_change={set_instrument_code}
-                        on_orchestra_code_change={set_orchestra_code}
-                        on_set_active={set_active_instrument}
-                    />
-                    <div className="app__orch-handle" onMouseDown={on_instr_handle_mousedown} />
-                </div>
+                <LeftPane
+                    orchestra={orchestra}
+                    on_bpm_change={set_orchestra_bpm}
+                    on_add={add_instrument}
+                    on_remove={remove_instrument}
+                    on_rename={rename_instrument}
+                    on_instrument_code_change={set_instrument_code}
+                    on_orchestra_code_change={set_orchestra_code}
+                    on_set_active={set_active_instrument}
+                />
 
                 <div className="app__patch-pane">
                     <ReactFlowProvider>
@@ -430,7 +402,7 @@ export default function App() {
                             )}
                             <button onClick={() => select(null)}>×</button>
                         </div>
-                        <Editor
+                        <WWEditor
                             ref={editor_ref}
                             key={selected_block.id}
                             initial_value={(selected_block.data as { code: string }).code}
