@@ -146,6 +146,45 @@
         }
     }
 
+    &__compile-actions {
+        display: flex;
+        align-items: center;
+        gap: 0.4rem;
+        padding: 0.25rem 0.6rem;
+        border-top: 1px solid #1e2030;
+    }
+
+    &__compile-btn {
+        background: #1a1d2e;
+        border: 1px solid #37474f;
+        border-radius: 3px;
+        color: #89b4fa;
+        cursor: pointer;
+        font-family: monospace;
+        font-size: 0.75rem;
+        padding: 0.15rem 0.5rem;
+
+        &:hover:not(:disabled) {
+            background: #252840;
+            border-color: #89b4fa;
+        }
+
+        &:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+    }
+
+    &__compile-ok {
+        color: #a6e3a1;
+        font-size: 0.75rem;
+    }
+
+    &__compile-err {
+        color: #f07178;
+        font-size: 0.75rem;
+    }
+
     &__editor {
         flex: 1;
         min-height: 0;

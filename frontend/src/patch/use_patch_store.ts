@@ -1,4 +1,5 @@
-import { useCallback, useReducer } from 'react';
+import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
+import ELK from 'elkjs/lib/elk.bundled.js';
 import { get_default_code } from './block_templates';
 import { applyNodeChanges, applyEdgeChanges } from '@xyflow/react';
 import type { Node, Edge, NodeChange, EdgeChange, Connection } from '@xyflow/react';
@@ -59,18 +60,151 @@ type PatchAction =
     | { type: 'rename_instrument'; id: string; name: string }
     | { type: 'set_active_instrument'; id: string }
     | { type: 'set_orchestra_code'; code: string }
-    | { type: 'load'; orchestra: OrchestraState };
+    | { type: 'load'; orchestra: OrchestraState }
+    | { type: 'apply_layout'; instrument_id: string; nodes: Node[] }
+    | { type: 'undo' }
+    | { type: 'redo' };
+
+const NO_HISTORY = new Set<PatchAction['type']>([
+    'select',
+    'set_active_instrument',
+    'set_instrument_code',
+    'set_orchestra_code',
+    'apply_layout',
+    'load',
+    'undo',
+    'redo',
+]);
+
+interface HistoryState {
+    past: PatchState[];
+    present: PatchState;
+    future: PatchState[];
+}
 
 const STORAGE_KEY = 'wasmwasm_patch';
 
+const elk = new ELK();
+
+const NODE_W = 200;
+const NODE_H = 40;
+
+function spaced(count: number, width: number): number[] {
+    return Array.from({ length: count }, (_, i) => (width * (i + 1)) / (count + 1));
+}
+
+function node_ports(node: Node) {
+    if (node.type === 'capture') {
+        const [xl, xr] = spaced(2, NODE_W);
+        return [
+            { id: `${node.id}__capture_l`, x: xl, y: NODE_H },
+            { id: `${node.id}__capture_r`, x: xr, y: NODE_H },
+        ];
+    }
+    if (node.type === 'dac') {
+        const [xl, xr] = spaced(2, NODE_W);
+        return [
+            { id: `${node.id}__dac_l`, x: xl, y: 0 },
+            { id: `${node.id}__dac_r`, x: xr, y: 0 },
+        ];
+    }
+    const data = node.data as Partial<BlockData>;
+    const num_in = data.num_inputs ?? 0;
+    const num_out = data.num_outputs ?? 0;
+    const ports = [];
+    for (const [i, x] of spaced(num_in, NODE_W).entries())
+        ports.push({ id: `${node.id}__in_${i}`, x, y: 0 });
+    for (const [i, x] of spaced(num_out, NODE_W).entries())
+        ports.push({ id: `${node.id}__out_${i}`, x, y: NODE_H });
+    return ports;
+}
+
+async function elk_layout(nodes: Node[], edges: Edge[]): Promise<Node[]> {
+    const children = nodes.map((n) => ({
+        width: 160,
+        height: 40,
+        ports: node_ports(n),
+        layoutOptions: { 'elk.portConstraints': 'FIXED_POS' },
+        x: 0,
+        y: 0,
+        ...n,
+    }));
+    const capture_node_idx = children.findIndex((x) => x.type === 'capture');
+    const capture_node = children[capture_node_idx];
+    children.splice(capture_node_idx, 1);
+    const dac_node_idx = children.findIndex((x) => x.type === 'dac');
+    const dac_node = children[dac_node_idx];
+    children.splice(dac_node_idx, 1);
+    const graph = {
+        id: 'root',
+        layoutOptions: {
+            'elk.algorithm': 'layered',
+            'elk.direction': 'DOWN',
+            'elk.layered.spacing.nodeNodeBetweenLayers': '20',
+            'elk.spacing.nodeNode': '10',
+            'elk.spacing.edgeNode': '5',
+            'elk.spacing.edgeEdge': '5',
+            'elk.layered.spacing.edgeNodeBetweenLayers': '5',
+            'elk.separateConnectedComponents': 'false',
+            'elk.layered.crossingMinimization.strategy': 'LAYER_SWEEP',
+            'elk.layered.crossingMinimization.greedySwitch.type': 'TWO_SIDED',
+            'elk.layered.nodePlacement.strategy': 'BRANDES_KOEPF',
+            'elk.layered.nodePlacement.bk.fixedAlignment': 'BALANCED',
+            'elk.layered.compaction.postCompaction.strategy': 'EDGE_LENGTH',
+            'elk.layered.compaction.postCompaction.constraints': 'QUADRATIC',
+            'elk.edgeRouting': 'SPLINES',
+        },
+        children: children,
+        edges: edges
+            .filter(
+                (e) =>
+                    e.source !== e.target &&
+                    e.sourceHandle &&
+                    e.targetHandle &&
+                    e.source != 'capture' &&
+                    e.target != 'dac',
+            )
+            .map((e) => ({
+                id: e.id,
+                sources: [`${e.source}__${e.sourceHandle}`],
+                targets: [`${e.target}__${e.targetHandle}`],
+            })),
+    };
+    const laid_out = await elk.layout(graph);
+
+    const all_lefts = children.map((c) => c.x ?? 0);
+    const all_rights = children.map((c) => c.x ?? 0);
+    const all_tops = children.map((c) => c.y ?? 0);
+    const all_bottoms = children.map((c) => (c.y ?? 0) + (c.height ?? NODE_H));
+
+    const min_x = all_lefts.length > 0 ? Math.min(...all_lefts) : 0;
+    const max_x = all_rights.length > 0 ? Math.max(...all_rights) : 0;
+    const min_y = all_tops.length > 0 ? Math.min(...all_tops) : 0;
+    const max_y = all_bottoms.length > 0 ? Math.max(...all_bottoms) : 0;
+
+    const margin = 20;
+
+    capture_node.x = (max_x + min_x) / 2;
+    capture_node.y = min_y - NODE_H - margin;
+    dac_node.x = (max_x + min_x) / 2;
+    dac_node.y = max_y + margin;
+
+    return nodes.map((n) => {
+        const child = [capture_node, dac_node, ...(laid_out.children ?? [])].find(
+            (c) => c.id === n.id,
+        );
+        return child ? { ...n, position: { x: child.x ?? 0, y: child.y ?? 0 } } : n;
+    });
+}
+
 const default_nodes = (): Node[] => [
-    { id: 'capture', type: 'capture', position: { x: 100, y: 50 }, data: {} },
-    { id: 'dac', type: 'dac', position: { x: 100, y: 400 }, data: {} },
+    { id: 'capture', type: 'capture', position: { x: 0, y: 0 }, data: {} },
+    { id: 'dac', type: 'dac', position: { x: 0, y: 0 }, data: {} },
 ];
 
 const DEFAULT_ORCHESTRA: OrchestraState = { bpm: 120, active_id: null, instruments: [], code: '' };
 
-function load_initial(): PatchState {
+function load_initial_patch(): PatchState {
     try {
         const saved = localStorage.getItem(STORAGE_KEY);
         if (saved) {
@@ -79,7 +213,10 @@ function load_initial(): PatchState {
                 orchestra.instruments = (orchestra.instruments ?? []).map(
                     (i: Partial<InstrumentState>) => ({
                         ...i,
-                        nodes: i.nodes ?? default_nodes(),
+                        nodes: (i.nodes ?? default_nodes()).map((n) => ({
+                            ...n,
+                            position: { x: 0, y: 0 },
+                        })),
                         edges: i.edges ?? [],
                         code: i.code ?? '',
                     }),
@@ -92,6 +229,10 @@ function load_initial(): PatchState {
         console.error(_e);
     }
     return { orchestra: DEFAULT_ORCHESTRA, selected_id: null };
+}
+
+function load_initial(): HistoryState {
+    return { past: [], present: load_initial_patch(), future: [] };
 }
 
 function get_active(state: PatchState): InstrumentState | undefined {
@@ -110,8 +251,7 @@ function map_active(state: PatchState, fn: (i: InstrumentState) => InstrumentSta
     };
 }
 
-function reducer(state: PatchState, action: PatchAction): PatchState {
-    let next: PatchState;
+function patch_reducer(state: PatchState, action: PatchAction): PatchState {
     switch (action.type) {
         case 'nodes_change': {
             const active = get_active(state);
@@ -124,7 +264,7 @@ function reducer(state: PatchState, action: PatchAction): PatchState {
                     .filter((c): c is NodeChange & { type: 'remove' } => c.type === 'remove')
                     .map((c) => c.id),
             );
-            next = map_active(state, (i) => ({
+            return map_active(state, (i) => ({
                 ...i,
                 nodes: applyNodeChanges(filtered_changes, i.nodes),
                 edges:
@@ -139,15 +279,17 @@ function reducer(state: PatchState, action: PatchAction): PatchState {
                           )
                         : i.edges,
             }));
-            break;
         }
         case 'edges_change': {
-            if (!get_active(state)) return state;
-            next = map_active(state, (i) => ({
+            const active = get_active(state);
+            if (!active) return state;
+            const edge_ids = new Set(active.edges.map((e) => e.id));
+            const relevant = action.changes.filter((c) => c.type !== 'add' && edge_ids.has(c.id));
+            if (relevant.length === 0) return state;
+            return map_active(state, (i) => ({
                 ...i,
-                edges: applyEdgeChanges(action.changes, i.edges),
+                edges: applyEdgeChanges(relevant, i.edges),
             }));
-            break;
         }
         case 'connect': {
             const active = get_active(state);
@@ -163,22 +305,20 @@ function reducer(state: PatchState, action: PatchAction): PatchState {
                 sourceHandle: sourceHandle ?? null,
                 target,
                 targetHandle: targetHandle ?? null,
-                type: source === target ? 'self_loop' : undefined,
+                type: undefined,
             };
-            next = map_active(state, (i) => ({ ...i, edges: [...i.edges, new_edge] }));
-            break;
+            return map_active(state, (i) => ({ ...i, edges: [...i.edges, new_edge] }));
         }
         case 'select':
             return { ...state, selected_id: action.id };
         case 'add_node':
             if (!get_active(state)) return state;
-            next = map_active(state, (i) => ({ ...i, nodes: [...i.nodes, action.node] }));
-            break;
+            return map_active(state, (i) => ({ ...i, nodes: [...i.nodes, action.node] }));
         case 'update_code': {
             if (!get_active(state)) return state;
             const arity = scan_arity(action.code);
             const params = scan_params(action.code);
-            next = map_active(state, (i) => ({
+            return map_active(state, (i) => ({
                 ...i,
                 edges: i.edges.filter((e) => {
                     if (e.source === action.id) {
@@ -197,20 +337,17 @@ function reducer(state: PatchState, action: PatchAction): PatchState {
                         : n,
                 ),
             }));
-            break;
         }
         case 'update_name':
             if (!get_active(state)) return state;
-            next = map_active(state, (i) => ({
+            return map_active(state, (i) => ({
                 ...i,
                 nodes: i.nodes.map((n) =>
                     n.id === action.id ? { ...n, data: { ...n.data, name: action.name } } : n,
                 ),
             }));
-            break;
         case 'set_orchestra_bpm':
-            next = { ...state, orchestra: { ...state.orchestra, bpm: action.bpm } };
-            break;
+            return { ...state, orchestra: { ...state.orchestra, bpm: action.bpm } };
         case 'add_instrument': {
             const n = state.orchestra.instruments.length + 1;
             const instr: InstrumentState = {
@@ -220,7 +357,7 @@ function reducer(state: PatchState, action: PatchAction): PatchState {
                 edges: [],
                 code: '',
             };
-            next = {
+            return {
                 ...state,
                 selected_id: null,
                 orchestra: {
@@ -229,7 +366,6 @@ function reducer(state: PatchState, action: PatchAction): PatchState {
                     instruments: [...state.orchestra.instruments, instr],
                 },
             };
-            break;
         }
         case 'remove_instrument': {
             const remaining = state.orchestra.instruments.filter((i) => i.id !== action.id);
@@ -237,15 +373,14 @@ function reducer(state: PatchState, action: PatchAction): PatchState {
                 state.orchestra.active_id === action.id
                     ? (remaining[remaining.length - 1]?.id ?? null)
                     : state.orchestra.active_id;
-            next = {
+            return {
                 ...state,
                 selected_id: null,
                 orchestra: { ...state.orchestra, active_id, instruments: remaining },
             };
-            break;
         }
         case 'set_instrument_code':
-            next = {
+            return {
                 ...state,
                 orchestra: {
                     ...state.orchestra,
@@ -254,9 +389,8 @@ function reducer(state: PatchState, action: PatchAction): PatchState {
                     ),
                 },
             };
-            break;
         case 'rename_instrument':
-            next = {
+            return {
                 ...state,
                 orchestra: {
                     ...state.orchestra,
@@ -265,38 +399,134 @@ function reducer(state: PatchState, action: PatchAction): PatchState {
                     ),
                 },
             };
-            break;
         case 'set_active_instrument':
-            next = {
+            return {
                 ...state,
                 selected_id: null,
                 orchestra: { ...state.orchestra, active_id: action.id },
             };
-            break;
         case 'set_orchestra_code':
-            next = { ...state, orchestra: { ...state.orchestra, code: action.code } };
-            break;
+            return { ...state, orchestra: { ...state.orchestra, code: action.code } };
         case 'load':
-            next = { orchestra: action.orchestra, selected_id: null };
-            break;
+            return { orchestra: action.orchestra, selected_id: null };
+        case 'apply_layout':
+            return {
+                ...state,
+                orchestra: {
+                    ...state.orchestra,
+                    instruments: state.orchestra.instruments.map((i) =>
+                        i.id === action.instrument_id ? { ...i, nodes: action.nodes } : i,
+                    ),
+                },
+            };
         default:
             return state;
     }
+}
+
+function serialize_orchestra(orchestra: OrchestraState) {
+    return {
+        bpm: orchestra.bpm,
+        active_id: orchestra.active_id,
+        code: orchestra.code,
+        instruments: orchestra.instruments.map((i) => ({
+            id: i.id,
+            name: i.name,
+            code: i.code,
+            nodes: i.nodes.map((n) => ({
+                id: n.id,
+                type: n.type,
+                data: n.data,
+            })),
+            edges: i.edges.map((e) => ({
+                id: e.id,
+                type: e.type,
+                source: e.source,
+                sourceHandle: e.sourceHandle,
+                target: e.target,
+                targetHandle: e.targetHandle,
+            })),
+        })),
+    };
+}
+
+function save(state: PatchState): void {
     try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify({ orchestra: next.orchestra }));
+        localStorage.setItem(
+            STORAGE_KEY,
+            JSON.stringify({ orchestra: serialize_orchestra(state.orchestra) }),
+        );
     } catch (_e) {
         console.error(_e);
     }
-    return next;
+}
+
+function reducer(history: HistoryState, action: PatchAction): HistoryState {
+    if (action.type === 'undo') {
+        if (history.past.length === 0) return history;
+        const prev = history.past[history.past.length - 1];
+        save(prev);
+        return {
+            past: history.past.slice(0, -1),
+            present: prev,
+            future: [history.present, ...history.future],
+        };
+    }
+    if (action.type === 'redo') {
+        if (history.future.length === 0) return history;
+        const next = history.future[0];
+        save(next);
+        return {
+            past: [...history.past, history.present],
+            present: next,
+            future: history.future.slice(1),
+        };
+    }
+
+    const next_present = patch_reducer(history.present, action);
+    if (next_present === history.present) return history;
+
+    save(next_present);
+
+    const only_selection =
+        (action.type === 'nodes_change' && action.changes.every((c) => c.type === 'select')) ||
+        (action.type === 'edges_change' && action.changes.every((c) => c.type === 'select'));
+
+    if (NO_HISTORY.has(action.type) || only_selection) {
+        return { ...history, present: next_present };
+    }
+    return {
+        past: [...history.past, history.present],
+        present: next_present,
+        future: [],
+    };
 }
 
 export function usePatchStore() {
-    const [state, dispatch] = useReducer(reducer, undefined, load_initial);
+    const [history, dispatch] = useReducer(reducer, undefined, load_initial);
+    const state = history.present;
 
     const active_instrument =
         state.orchestra.instruments.find((i) => i.id === state.orchestra.active_id) ?? null;
     const nodes = active_instrument?.nodes ?? [];
     const edges = active_instrument?.edges ?? [];
+
+    const [layout_serial, set_layout_serial] = useState(0);
+
+    const active_instrument_ref = useRef(active_instrument);
+    useEffect(() => {
+        active_instrument_ref.current = active_instrument;
+    });
+
+    useEffect(() => {
+        const instrument = active_instrument_ref.current;
+        if (!instrument) return;
+        const id = instrument.id;
+        elk_layout(instrument.nodes, instrument.edges).then((laid_out) => {
+            dispatch({ type: 'apply_layout', instrument_id: id, nodes: laid_out });
+            set_layout_serial((s) => s + 1);
+        });
+    }, [state.orchestra.active_id]);
     const selected_node = nodes.find((n) => n.id === state.selected_id) ?? null;
 
     const on_nodes_change = useCallback(
@@ -367,6 +597,9 @@ export function usePatchStore() {
         [],
     );
 
+    const undo = useCallback(() => dispatch({ type: 'undo' }), []);
+    const redo = useCallback(() => dispatch({ type: 'redo' }), []);
+
     const export_patch = useCallback(() => {
         const blob = new Blob([JSON.stringify({ orchestra: state.orchestra }, null, 2)], {
             type: 'application/json',
@@ -403,6 +636,10 @@ export function usePatchStore() {
         edges,
         selected_id: state.selected_id,
         selected_node,
+        can_undo: history.past.length > 0,
+        can_redo: history.future.length > 0,
+        undo,
+        redo,
         on_nodes_change,
         on_edges_change,
         on_connect,
@@ -420,5 +657,6 @@ export function usePatchStore() {
         export_patch,
         import_patch,
         load_patch,
+        layout_serial,
     };
 }

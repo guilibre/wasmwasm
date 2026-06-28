@@ -9,7 +9,8 @@
         "deploy": "gh-pages -d dist",
         "lint": "eslint .",
         "predeploy": "npm run build",
-        "preview": "vite preview"
+        "preview": "vite preview",
+        "update-coi": "curl -o public/coi-serviceworker.js https://raw.githubusercontent.com/gzuidhof/coi-serviceworker/master/coi-serviceworker.js"
     },
     "dependencies": {
         "@codemirror/autocomplete": "^6.20.3",
@@ -23,6 +24,8 @@
         "@wasmer/wasi": "^1.2.2",
         "@xyflow/react": "^12.11.1",
         "coi-serviceworker": "^0.1.7",
+        "dagre": "^0.8.5",
+        "elkjs": "^0.11.1",
         "react": "^19.2.7",
         "react-dom": "^19.2.7"
     },

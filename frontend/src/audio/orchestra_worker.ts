@@ -1,3 +1,5 @@
+import { HELPERS } from './helpers';
+
 const async_function = Object.getPrototypeOf(async function () {}).constructor as new (
     ...args: string[]
 ) => (...args: unknown[]) => Promise<void>;
@@ -12,6 +14,12 @@ interface InstrumentInit {
     state_sab: SharedArrayBuffer;
     event_sab: SharedArrayBuffer;
 }
+
+let next_request_id = 0;
+const pending_instances = new Map<
+    number,
+    { resolve: (data: InstrumentInit) => void; reject: (msg: string) => void }
+>();
 
 interface SpawnCtxRef {
     current: { task_time: { v: number } } | null;
@@ -56,8 +64,8 @@ function build_instrument(
         if (indices.length > 0) Atomics.store(ev_write_head, 0, (wh + indices.length) >>> 0);
     };
 
-    const set_param = (name: string, value: number, delay = 0) => {
-        const t = (active_ctx?.v ?? get_task_time()) + delay;
+    const set_param = (name: string, value: number) => {
+        const t = active_ctx?.v ?? get_task_time();
         write_events(name, value, t);
     };
 
@@ -73,22 +81,37 @@ function build_instrument(
     };
 
     const sleep_beats = (beats: number) => sleep((beats * 60) / bpm);
+    const from_beats = (beats: number) => (beats * 60) / bpm;
+    const to_beats = (seconds: number) => (seconds * bpm) / 60;
 
     const fn_names = [...instr.code.matchAll(/^(?:async\s+)?function\s+(\w+)/gm)].map((m) => m[1]);
     if (fn_names.length === 0) return {};
+
+    const unique_params = [...new Set(param_names)];
+    const setter_names = unique_params.map((p) => `set_${p}`);
+    const setter_fns = unique_params.map((p) => (value: number) => set_param(p, value));
 
     const factory = new Function(
         'set_param',
         'sleep',
         'sleep_beats',
+        'from_beats',
+        'to_beats',
+        ...setter_names,
+        ...Object.keys(HELPERS),
         `${instr.code}\nreturn { ${fn_names.join(', ')} };`,
     );
-    const raw_fns = factory(set_param, sleep, sleep_beats) as Record<
-        string,
-        (...args: unknown[]) => Promise<void>
-    >;
+    const raw_fns = factory(
+        set_param,
+        sleep,
+        sleep_beats,
+        from_beats,
+        to_beats,
+        ...setter_fns,
+        ...Object.values(HELPERS),
+    ) as Record<string, (...args: unknown[]) => Promise<void>>;
 
-    const wrapped: Record<string, (...args: unknown[]) => Promise<void>> = {};
+    const wrapped: Record<string, (...args: unknown[]) => unknown> = {};
     for (const [name, fn] of Object.entries(raw_fns)) {
         wrapped[name] = async (...args: unknown[]) => {
             const my_token = {};
@@ -117,14 +140,30 @@ function build_instrument(
 }
 
 self.onmessage = async (event: MessageEvent) => {
-    if (event.data.type !== 'run') return;
+    const { type } = event.data as { type: string };
 
-    const { orchestra_code, bpm, sampleRate, audioCurrentTime, instruments } = event.data as {
+    if (type === 'instance-ready') {
+        const { request_id, ...data } = event.data as { request_id: number } & InstrumentInit;
+        pending_instances.get(request_id)?.resolve(data);
+        pending_instances.delete(request_id);
+        return;
+    }
+
+    if (type === 'instance-error') {
+        const { request_id, message } = event.data as { request_id: number; message: string };
+        pending_instances.get(request_id)?.reject(message);
+        pending_instances.delete(request_id);
+        return;
+    }
+
+    if (type !== 'run') return;
+
+    const { orchestra_code, bpm, sampleRate, audioCurrentTime, instrument_names } = event.data as {
         orchestra_code: string;
         bpm: number;
         sampleRate: number;
         audioCurrentTime: number;
-        instruments: InstrumentInit[];
+        instrument_names: string[];
     };
 
     const perf_origin = performance.now();
@@ -135,32 +174,30 @@ self.onmessage = async (event: MessageEvent) => {
 
     const spawn_ctx_ref: SpawnCtxRef = { current: null };
 
-    const instruments_raw = new Map<string, InstrumentInit[]>();
-    for (const instr of instruments) {
-        const arr = instruments_raw.get(instr.name);
-        if (arr) arr.push(instr);
-        else instruments_raw.set(instr.name, [instr]);
-    }
-
-    const instrument_counters = new Map<string, number>();
     const instrument = (name: string) => {
-        const arr = instruments_raw.get(name) ?? [];
-        const idx = instrument_counters.get(name) ?? 0;
-        instrument_counters.set(name, idx + 1);
-        const instr_data = arr[idx];
-        if (!instr_data) return {};
         const ctx = spawn_ctx_ref.current;
-        return build_instrument(
-            instr_data,
-            bpm,
-            sampleRate,
-            ctx ? () => ctx.task_time.v : get_orch_time,
-            real_time,
-            (t) => {
-                if (t > orch_scheduled.v) orch_scheduled.v = t;
-            },
-            spawn_ctx_ref,
-        );
+        return new Promise<Record<string, (...args: unknown[]) => unknown>>((resolve, reject) => {
+            const id = next_request_id++;
+            pending_instances.set(id, {
+                resolve: (data: InstrumentInit) => {
+                    resolve(
+                        build_instrument(
+                            data,
+                            bpm,
+                            sampleRate,
+                            ctx ? () => ctx.task_time.v : get_orch_time,
+                            real_time,
+                            (t) => {
+                                if (t > orch_scheduled.v) orch_scheduled.v = t;
+                            },
+                            spawn_ctx_ref,
+                        ),
+                    );
+                },
+                reject: (msg: string) => reject(new Error(msg)),
+            });
+            self.postMessage({ type: 'request-instance', name, request_id: id });
+        });
     };
 
     const sleep = async (s: number) => {
@@ -179,6 +216,8 @@ self.onmessage = async (event: MessageEvent) => {
     };
 
     const sleep_beats = (beats: number) => sleep((beats * 60) / bpm);
+    const from_beats = (beats: number) => (beats * 60) / bpm;
+    const to_beats = (seconds: number) => (seconds * bpm) / 60;
 
     let on_beat_version = 0;
     const on_beat = (fn: (beat: number) => void) => {
@@ -213,17 +252,38 @@ self.onmessage = async (event: MessageEvent) => {
         return;
     }
 
+    const instrument_fns = instrument_names.map((name) => () => instrument(name));
+
     try {
+        const stop = (dur: number = 1) => self.postMessage({ type: 'stop', dur });
+
         const fn = new async_function(
             'instrument',
             'sleep',
             'sleep_beats',
+            'from_beats',
+            'to_beats',
             'on_beat',
             'current_time',
             'spawn',
+            'stop',
+            ...instrument_names,
+            ...Object.keys(HELPERS),
             orchestra_code,
         );
-        await fn(instrument, sleep, sleep_beats, on_beat, current_time, spawn);
+        await fn(
+            instrument,
+            sleep,
+            sleep_beats,
+            from_beats,
+            to_beats,
+            on_beat,
+            current_time,
+            spawn,
+            stop,
+            ...instrument_fns,
+            ...Object.values(HELPERS),
+        );
     } catch (e) {
         self.postMessage({ type: 'error', message: String(e) });
     }

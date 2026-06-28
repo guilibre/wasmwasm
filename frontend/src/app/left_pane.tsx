@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import type { VirtualTypeScriptEnvironment } from '@typescript/vfs';
 import type { OrchestraState } from '../patch/use_patch_store';
+
 import { OrchestraPanel } from './orchestra';
 import { InstrumentPanel } from './instruments';
 import './left_pane.scss';
@@ -18,6 +20,12 @@ interface Props {
     on_instrument_code_change: (id: string, code: string) => void;
     on_orchestra_code_change: (code: string) => void;
     on_set_active: (id: string) => void;
+    on_compile_patch: () => void;
+    on_compile_instrument: () => void;
+    on_compile_orchestra: () => void;
+    compile_status: Map<string, 'idle' | 'compiling' | 'ok' | 'error'>;
+    orchestra_env: VirtualTypeScriptEnvironment | null;
+    instrument_envs: Map<string, VirtualTypeScriptEnvironment>;
 }
 
 export function LeftPane({
@@ -29,6 +37,12 @@ export function LeftPane({
     on_instrument_code_change,
     on_orchestra_code_change,
     on_set_active,
+    on_compile_patch,
+    on_compile_instrument,
+    on_compile_orchestra,
+    compile_status,
+    orchestra_env,
+    instrument_envs,
 }: Props) {
     const [width, set_width] = useState(() => window.innerWidth * 0.4);
     const width_ref = useRef(width);
@@ -36,7 +50,7 @@ export function LeftPane({
         width_ref.current = width;
     }, [width]);
 
-    const [orch_height, set_orch_height] = useState(() => window.innerHeight * 0.7);
+    const [orch_height, set_orch_height] = useState(() => window.innerHeight * 0.6);
     const orch_height_ref = useRef(orch_height);
     useEffect(() => {
         orch_height_ref.current = orch_height;
@@ -82,6 +96,9 @@ export function LeftPane({
                 height={orch_height}
                 on_bpm_change={on_bpm_change}
                 on_code_change={on_orchestra_code_change}
+                on_compile={on_compile_orchestra}
+                compile_status={compile_status.get('orchestra') ?? 'idle'}
+                env={orchestra_env}
             />
             <div className="app__panel-divider" onMouseDown={on_height_mousedown} />
             <InstrumentPanel
@@ -91,6 +108,10 @@ export function LeftPane({
                 on_rename={on_rename}
                 on_code_change={on_instrument_code_change}
                 on_set_active={on_set_active}
+                on_compile_patch={on_compile_patch}
+                on_compile_instrument={on_compile_instrument}
+                compile_status={compile_status}
+                instrument_envs={instrument_envs}
             />
             <div className="app__orch-handle" onMouseDown={on_width_mousedown} />
         </div>

@@ -6,7 +6,7 @@ import { autocompletion } from '@codemirror/autocomplete';
 import { javascript } from '@codemirror/lang-javascript';
 import { HighlightStyle, syntaxHighlighting } from '@codemirror/language';
 import { tags } from '@lezer/highlight';
-import { tsFacet, tsSync, tsHover, tsAutocomplete, tsLinter } from '@valtown/codemirror-ts';
+import { tsFacet, tsSync, tsHover, tsLinter } from '@valtown/codemirror-ts';
 import type { VirtualTypeScriptEnvironment } from '@typescript/vfs';
 
 const TS_FILE = '/index.ts';
@@ -41,6 +41,21 @@ const editor_theme = EditorView.theme(
     { dark: true },
 );
 
+function make_ts_autocomplete(env: VirtualTypeScriptEnvironment) {
+    return async (ctx: import('@codemirror/autocomplete').CompletionContext) => {
+        const doc = ctx.state.doc.toString();
+        env.updateFile(TS_FILE, doc);
+        const completions = env.languageService.getCompletionsAtPosition(TS_FILE, ctx.pos, {}, {});
+        if (!completions) return null;
+        const word = ctx.matchBefore(/\w*/);
+        if (!word && !ctx.explicit) return null;
+        const options = completions.entries
+            .filter((e) => e.sortText <= '15')
+            .map((e) => ({ label: e.name, type: e.kind }));
+        return { from: word ? word.from : ctx.pos, options };
+    };
+}
+
 interface TsEditorProps {
     initial_value: string;
     on_change: (v: string) => void;
@@ -55,12 +70,14 @@ export function TsEditor({ initial_value, on_change, env }: TsEditorProps) {
     });
 
     useEffect(() => {
+        if (env) env.updateFile(TS_FILE, initial_value);
+
         const ts_extensions = env
             ? [
                   tsFacet.of({ env, path: TS_FILE }),
                   tsSync(),
                   tsHover(),
-                  autocompletion({ override: [tsAutocomplete()] }),
+                  autocompletion({ override: [make_ts_autocomplete(env)] }),
                   tsLinter({ diagnosticCodesToIgnore: [1308, 1375] }),
               ]
             : [];
@@ -83,7 +100,9 @@ export function TsEditor({ initial_value, on_change, env }: TsEditorProps) {
             parent: container_ref.current!,
         });
         return () => view.destroy();
-    }, [env, initial_value]);
+        // initial_value intentionally excluded: key prop handles re-init on instrument switch
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [env]);
 
     return <div ref={container_ref} style={{ height: '100%' }} />;
 }

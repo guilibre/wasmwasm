@@ -16,6 +16,7 @@ export function Sidebar({ analyser_l, analyser_r }: Props) {
     const raf_ref = useRef<number>(0);
     const zoom_ref = useRef(1);
     const [width, set_width] = useState(DEFAULT_WIDTH);
+    const [collapsed, set_collapsed] = useState(false);
     const width_ref = useRef(width);
     useEffect(() => {
         width_ref.current = width;
@@ -167,9 +168,30 @@ export function Sidebar({ analyser_l, analyser_r }: Props) {
         return () => cancelAnimationFrame(raf_ref.current);
     }, [analyser_l, analyser_r, width]);
 
+    if (collapsed) {
+        return (
+            <button
+                className="app__sidebar-open"
+                onClick={() => set_collapsed(false)}
+                title="Abrir sidebar"
+            >
+                ‹
+            </button>
+        );
+    }
+
     return (
         <div className="app__sidebar" style={{ width }}>
             <div className="app__sidebar-handle" onMouseDown={on_handle_mousedown} />
+            <div className="app__sidebar-header">
+                <button
+                    className="app__sidebar-close"
+                    onClick={() => set_collapsed(true)}
+                    title="Fechar sidebar"
+                >
+                    ×
+                </button>
+            </div>
             <span className="app__sidebar-label">waveform</span>
             <canvas
                 ref={waveform_ref}

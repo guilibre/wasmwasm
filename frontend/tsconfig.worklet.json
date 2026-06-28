@@ -1,29 +1,21 @@
 {
     "compilerOptions": {
-        "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.app.tsbuildinfo",
-        "target": "ES2025",
+        "target": "ES2022",
         "useDefineForClassFields": true,
-        "lib": ["ES2025", "DOM", "DOM.Iterable"],
+        "lib": ["ES2022"],
         "module": "ESNext",
         "skipLibCheck": true,
-
-        /* Bundler mode */
         "moduleResolution": "bundler",
         "allowImportingTsExtensions": true,
         "verbatimModuleSyntax": true,
         "moduleDetection": "force",
+        "composite": true,
         "noEmit": true,
-        "jsx": "react-jsx",
-
-        /* Linting */
         "strict": true,
         "noUnusedLocals": true,
         "noUnusedParameters": true,
         "erasableSyntaxOnly": true,
-        "noFallthroughCasesInSwitch": true,
-        "noUncheckedSideEffectImports": true,
-        "types": []
+        "types": ["audioworklet"]
     },
-    "include": ["src"],
-    "exclude": ["src/audio/processor.worklet.ts"]
+    "include": ["src/audio/processor.worklet.ts"]
 }

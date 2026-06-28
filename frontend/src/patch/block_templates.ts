@@ -1,4 +1,4 @@
-const raw = import.meta.glob('./templates/*.ww', {
+const raw = import.meta.glob('../templates/*.ww', {
     query: '?raw',
     import: 'default',
     eager: true,
@@ -6,7 +6,7 @@ const raw = import.meta.glob('./templates/*.ww', {
 
 const TEMPLATES: Record<string, string> = Object.fromEntries(
     Object.entries(raw).map(([path, code]) => [
-        path.replace('./templates/', '').replace('.ww', ''),
+        path.replace('../templates/', '').replace('.ww', ''),
         code,
     ]),
 );

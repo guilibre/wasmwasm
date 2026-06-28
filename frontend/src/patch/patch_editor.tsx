@@ -15,14 +15,14 @@ import { DacNode } from './dac_node';
 import { SelfLoopEdge } from './self_loop_edge';
 import type { usePatchStore } from './use_patch_store';
 
+const EDGE_TYPES = {
+    self_loop: SelfLoopEdge,
+};
+
 const NODE_TYPES = {
     block: BlockNode,
     capture: CaptureNode,
     dac: DacNode,
-};
-
-const EDGE_TYPES = {
-    self_loop: SelfLoopEdge,
 };
 
 interface ContextMenu {
@@ -42,8 +42,9 @@ export function PatchEditor({ store }: Props) {
     const rf = useReactFlow();
 
     useEffect(() => {
-        requestAnimationFrame(() => rf.fitView());
-    }, [store.orchestra.active_id, rf]);
+        const id = setTimeout(() => rf.fitView({ duration: 200 }), 50);
+        return () => clearTimeout(id);
+    }, [store.layout_serial, rf]);
 
     const [name_input, set_name_input] = useState<{
         x: number;
@@ -146,6 +147,7 @@ export function PatchEditor({ store }: Props) {
                 edges={edges}
                 nodeTypes={NODE_TYPES}
                 edgeTypes={EDGE_TYPES}
+
                 onNodesChange={on_nodes_change}
                 onEdgesChange={on_edges_change}
                 onConnect={on_connect}
