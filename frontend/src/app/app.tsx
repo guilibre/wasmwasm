@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { ReactFlowProvider } from '@xyflow/react';
 import type { VirtualTypeScriptEnvironment } from '@typescript/vfs';
 import workletUrl from '../audio/processor.worklet.ts?worker&url';
-import WasmWasm, { type PatchParams } from '../audio/compiler';
+import WasmWasm, { type PatchParams, type CompiledPatch } from '../audio/compiler';
 import WWEditor, { type WWEditorHandle } from './ww_editor';
 import { Sidebar } from './sidebar';
 import { LeftPane } from './left_pane';
@@ -15,7 +15,33 @@ import {
     get_orchestra_env,
     type CompiledInstrument,
 } from './ts_env';
+import { setup_midi, add_on_midi_event, remove_on_midi_event } from '../audio/helpers';
 import './app.scss';
+
+function parse_fn_sigs(
+    ts: typeof import('typescript'),
+    code: string,
+): { fn_names: string[]; fn_sigs: string[] } {
+    const source = ts.createSourceFile('instr.ts', code, ts.ScriptTarget.ES2025);
+    const fn_names: string[] = [];
+    const fn_sigs: string[] = [];
+    for (const stmt of source.statements) {
+        if (ts.isFunctionDeclaration(stmt) && stmt.name) {
+            fn_names.push(stmt.name.text);
+            fn_sigs.push(
+                stmt.parameters
+                    .map((p) => {
+                        const name = ts.isIdentifier(p.name) ? p.name.text : '_';
+                        const type_str = p.type ? p.type.getText(source) : 'unknown';
+                        const opt = p.initializer || p.questionToken ? '?' : '';
+                        return `${name}${opt}: ${type_str}`;
+                    })
+                    .join(', '),
+            );
+        }
+    }
+    return { fn_names, fn_sigs };
+}
 
 export default function App() {
     const audio_context_ref = useRef<AudioContext | null>(null);
@@ -25,11 +51,12 @@ export default function App() {
     const analyser_l_ref = useRef<AnalyserNode | null>(null);
     const analyser_r_ref = useRef<AnalyserNode | null>(null);
     const orchestra_worker_ref = useRef<Worker | null>(null);
+    const midi_fwd_ref = useRef<string | null>(null);
     const play_session_ref = useRef(0);
-    const patch_cache_ref = useRef<
-        Map<string, { json: string; wasm: Uint8Array; param_names: string[] }>
-    >(new Map());
-    const instr_code_cache_ref = useRef<Map<string, string>>(new Map());
+    const patch_cache_ref = useRef<Map<string, { json: string; compiled: CompiledPatch }>>(
+        new Map(),
+    );
+    const ts_ref = useRef<typeof import('typescript') | null>(null);
     const [analysers, set_analysers] = useState<{ l: AnalyserNode; r: AnalyserNode } | null>(null);
     const [is_playing, set_is_playing] = useState(false);
     const [error, set_error] = useState<string | null>(null);
@@ -72,6 +99,7 @@ export default function App() {
         redo,
     } = store;
     const selected_block = selected_node?.type === 'block' ? selected_node : null;
+    const initial_instruments_ref = useRef(orchestra.instruments);
 
     useEffect(() => {
         const on_key = (e: KeyboardEvent) => {
@@ -107,15 +135,46 @@ export default function App() {
         }
     }, [orchestra.instruments]);
 
+    const sig_parse_timers_ref = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+
     const handle_instrument_code_change = useCallback(
         (id: string, code: string) => {
             set_instrument_code(id, code);
-            instr_code_cache_ref.current.delete(id);
             set_compile_status((s) => {
                 const m = new Map(s);
                 m.delete(`instr:${id}`);
                 return m;
             });
+            if (ts_ref.current) {
+                const existing_timer = sig_parse_timers_ref.current.get(id);
+                if (existing_timer !== undefined) clearTimeout(existing_timer);
+                const timer = setTimeout(() => {
+                    sig_parse_timers_ref.current.delete(id);
+                    if (!ts_ref.current) return;
+                    const { fn_names, fn_sigs } = parse_fn_sigs(ts_ref.current, code);
+                    set_compiled_instrument_info((prev) => {
+                        const existing = prev.get(id);
+                        const new_map = new Map(prev).set(id, {
+                            name: existing?.name ?? id,
+                            param_names: existing?.param_names ?? [],
+                            fn_names,
+                            fn_sigs,
+                        });
+                        const sigs_changed =
+                            !existing ||
+                            existing.fn_names.length !== fn_names.length ||
+                            existing.fn_names.some((f, i) => f !== fn_names[i]) ||
+                            existing.fn_sigs.some((s, i) => s !== fn_sigs[i]);
+                        if (sigs_changed) {
+                            set_orchestra_env(
+                                make_orchestra_env_with_instruments([...new_map.values()]),
+                            );
+                        }
+                        return new_map;
+                    });
+                }, 2000);
+                sig_parse_timers_ref.current.set(id, timer);
+            }
         },
         [set_instrument_code],
     );
@@ -133,7 +192,21 @@ export default function App() {
     );
 
     useEffect(() => {
-        import('typescript');
+        import('typescript').then((ts) => {
+            ts_ref.current = ts;
+            const new_map = new Map<string, CompiledInstrument>();
+            for (const instr of initial_instruments_ref.current) {
+                const { fn_names, fn_sigs } = parse_fn_sigs(ts, instr.code);
+                new_map.set(instr.id, {
+                    name: instr.name,
+                    param_names: [],
+                    fn_names,
+                    fn_sigs,
+                });
+            }
+            set_compiled_instrument_info(new_map);
+            set_orchestra_env(make_orchestra_env_with_instruments([...new_map.values()]));
+        });
     }, []);
 
     useEffect(() => {
@@ -258,16 +331,12 @@ export default function App() {
                 set_status(key, 'compiling');
                 try {
                     const json = patch_to_json(instr.nodes, instr.edges);
-                    const { wasm, params } = await WasmWasm.init_patch(sample_rate, json);
-                    patch_cache_ref.current.set(instr.id, {
-                        json,
-                        wasm,
-                        param_names: params.param_names,
-                    });
+                    const compiled = await WasmWasm.compile_patch(sample_rate, json);
+                    patch_cache_ref.current.set(instr.id, { json, compiled });
                     set_compiled_patch_params((prev) =>
-                        new Map(prev).set(instr.id, params.param_names),
+                        new Map(prev).set(instr.id, compiled.param_names),
                     );
-                    const env = make_instrument_env_with_params(params.param_names);
+                    const env = make_instrument_env_with_params(compiled.param_names);
                     set_instrument_envs((prev) => new Map(prev).set(instr.id, env));
                     set_status(key, 'ok');
                 } catch (e) {
@@ -287,18 +356,13 @@ export default function App() {
                 const key = `instr:${instr.id}`;
                 set_status(key, 'compiling');
                 try {
-                    const compiled_code = ts.transpileModule(instr.code, {
-                        compilerOptions: { target: ts.ScriptTarget.ES2025, module: 0 },
-                    }).outputText;
-                    instr_code_cache_ref.current.set(instr.id, compiled_code);
-                    const fn_names = [
-                        ...instr.code.matchAll(/^(?:async\s+)?function\s+(\w+)/gm),
-                    ].map((m) => m[1]);
+                    const { fn_names, fn_sigs } = parse_fn_sigs(ts, instr.code);
                     const param_names = compiled_patch_params.get(instr.id) ?? [];
                     new_info_map = new Map(new_info_map).set(instr.id, {
                         name: instr.name,
                         param_names,
                         fn_names,
+                        fn_sigs,
                     });
                     set_status(key, 'ok');
                 } catch (e) {
@@ -318,7 +382,10 @@ export default function App() {
         try {
             const ts = await import('typescript');
             ts.transpileModule(orchestra.code, {
-                compilerOptions: { target: ts.ScriptTarget.ES2025, module: 0 },
+                compilerOptions: {
+                    target: ts.ScriptTarget.ES2025,
+                    module: ts.ModuleKind.ESNext,
+                },
             });
             set_status('orchestra', 'ok');
         } catch (e) {
@@ -367,6 +434,10 @@ export default function App() {
         worklet_nodes_ref.current.clear();
         orchestra_worker_ref.current?.terminate();
         orchestra_worker_ref.current = null;
+        if (midi_fwd_ref.current) {
+            remove_on_midi_event(midi_fwd_ref.current);
+            midi_fwd_ref.current = null;
+        }
 
         const context = audio_context_ref.current!;
         const merger = merger_ref.current!;
@@ -378,7 +449,10 @@ export default function App() {
         if (orchestra.code.trim()) {
             try {
                 compiled_orchestra = ts.transpileModule(orchestra.code, {
-                    compilerOptions: { target: ts.ScriptTarget.ES2025, module: 0 },
+                    compilerOptions: {
+                        target: ts.ScriptTarget.ES2025,
+                        module: ts.ModuleKind.ESNext,
+                    },
                 }).outputText;
             } catch (e) {
                 set_error(`[orchestra] ${String(e)}`);
@@ -386,55 +460,50 @@ export default function App() {
         }
 
         const instr_json = new Map<string, string>();
-        const instr_wasm = new Map<string, Uint8Array>();
         const instr_compiled_code = new Map<string, string>();
         const instr_instance_counters = new Map<string, number>();
+
+        const instr_compiled = new Map<string, CompiledPatch>();
 
         for (const instr of orchestra.instruments) {
             const cached_patch = patch_cache_ref.current.get(instr.id);
             let json: string;
-            let wasm: Uint8Array;
+            let compiled: CompiledPatch;
             if (cached_patch) {
-                ({ json, wasm } = cached_patch);
+                ({ json, compiled } = cached_patch);
             } else {
                 json = patch_to_json(instr.nodes, instr.edges);
                 try {
-                    ({ wasm } = await WasmWasm.init_patch(context.sampleRate, json));
+                    compiled = await WasmWasm.compile_patch(context.sampleRate, json);
                 } catch (e) {
                     set_error(`[${instr.name}] ${String(e)}`);
                     continue;
                 }
             }
-            const compiled_code =
-                instr_code_cache_ref.current.get(instr.id) ??
-                (instr.code.trim()
-                    ? ts.transpileModule(instr.code, {
-                          compilerOptions: { target: ts.ScriptTarget.ES2025, module: 0 },
-                      }).outputText
-                    : '');
+            const compiled_code = instr.code.trim()
+                ? ts.transpileModule(instr.code, {
+                      compilerOptions: {
+                          target: ts.ScriptTarget.ES2025,
+                          module: ts.ModuleKind.ESNext,
+                      },
+                  }).outputText
+                : '';
             instr_json.set(instr.name, json);
-            instr_wasm.set(instr.name, wasm);
+            instr_compiled.set(instr.name, compiled);
             instr_compiled_code.set(instr.name, compiled_code);
         }
 
         const create_instance = async (
             instr: (typeof orchestra.instruments)[number],
             json: string,
-            wasm: Uint8Array,
+            compiled: CompiledPatch,
             instance_idx: number,
             session: number,
         ): Promise<{
-            state_sab: SharedArrayBuffer;
             event_sab: SharedArrayBuffer;
             param_names: string[];
         } | null> => {
-            let params: PatchParams;
-            try {
-                ({ params } = await WasmWasm.init_patch(context.sampleRate, json));
-            } catch (e) {
-                set_error(`[${instr.name}] ${String(e)}`);
-                return null;
-            }
+            const params: PatchParams = WasmWasm.make_params(compiled);
 
             const node = new AudioWorkletNode(context, 'wasm-processor', {
                 numberOfInputs: 1,
@@ -452,25 +521,13 @@ export default function App() {
                 }
             }
 
-            node.port.postMessage({ type: 'clear' });
-
-            await new Promise<void>((resolve) => {
-                const handler = (e: MessageEvent) => {
-                    if (e.data.type === 'ready') {
-                        node.port.removeEventListener('message', handler);
-                        resolve();
-                    }
-                };
-                node.port.addEventListener('message', handler);
-                node.port.start();
-                node.port.postMessage({ type: 'load-wasm', buffer: wasm });
-                node.port.postMessage({
-                    type: 'load-params-sab',
-                    input_sab: params.input_sab,
-                    state_sab: params.state_sab,
-                    event_sab: params.event_sab,
-                    param_export_names: params.param_export_names,
-                });
+            node.port.start();
+            node.port.postMessage({ type: 'load-wasm', module: compiled.wasm_module });
+            node.port.postMessage({
+                type: 'load-params-sab',
+                input_sab: params.input_sab,
+                event_sab: params.event_sab,
+                param_export_names: params.param_export_names,
             });
 
             if (play_session_ref.current !== session) {
@@ -480,7 +537,6 @@ export default function App() {
             }
 
             return {
-                state_sab: params.state_sab,
                 event_sab: params.event_sab,
                 param_names: params.param_names,
             };
@@ -490,6 +546,16 @@ export default function App() {
             type: 'module',
         });
         worker.onmessage = async (e) => {
+            if (e.data.type === 'setup-midi') {
+                await setup_midi();
+                if (!midi_fwd_ref.current) {
+                    midi_fwd_ref.current = add_on_midi_event(async (params) => {
+                        worker.postMessage({ type: 'midi-event', params });
+                    });
+                }
+                worker.postMessage({ type: 'midi-ready' });
+                return;
+            }
             if (e.data.type === 'error') {
                 set_error(`[orchestra] ${e.data.message}`);
                 return;
@@ -501,9 +567,9 @@ export default function App() {
             if (e.data.type === 'request-instance') {
                 const { name, request_id } = e.data as { name: string; request_id: number };
                 const json = instr_json.get(name);
-                const wasm = instr_wasm.get(name);
+                const compiled = instr_compiled.get(name);
                 const instr = orchestra.instruments.find((i) => i.name === name);
-                if (!json || !wasm || !instr) {
+                if (!json || !compiled || !instr) {
                     worker.postMessage({
                         type: 'instance-error',
                         request_id,
@@ -513,7 +579,13 @@ export default function App() {
                 }
                 const instance_idx = instr_instance_counters.get(name) ?? 0;
                 instr_instance_counters.set(name, instance_idx + 1);
-                const result = await create_instance(instr, json, wasm, instance_idx, my_session);
+                const result = await create_instance(
+                    instr,
+                    json,
+                    compiled,
+                    instance_idx,
+                    my_session,
+                );
                 if (!result) {
                     worker.postMessage({
                         type: 'instance-error',
@@ -525,11 +597,21 @@ export default function App() {
                 worker.postMessage({
                     type: 'instance-ready',
                     request_id,
-                    state_sab: result.state_sab,
+                    instance_id: `${instr.id}:${instance_idx}`,
                     event_sab: result.event_sab,
                     param_names: result.param_names,
                     code: instr_compiled_code.get(name) ?? '',
                 });
+                return;
+            }
+            if (e.data.type === 'destroy-instance') {
+                const node = worklet_nodes_ref.current.get(e.data.instance_id);
+                if (node) {
+                    node.port.postMessage({ type: 'stop' });
+                    node.disconnect();
+                    worklet_nodes_ref.current.delete(e.data.instance_id);
+                }
+                return;
             }
         };
         worker.postMessage({
@@ -556,6 +638,10 @@ export default function App() {
         }
         orchestra_worker_ref.current?.terminate();
         orchestra_worker_ref.current = null;
+        if (midi_fwd_ref.current) {
+            remove_on_midi_event(midi_fwd_ref.current);
+            midi_fwd_ref.current = null;
+        }
         if (mic_source_ref.current) {
             mic_source_ref.current.mediaStream.getTracks().forEach((t) => t.stop());
             mic_source_ref.current.disconnect();

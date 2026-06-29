@@ -1,0 +1,17 @@
+param pw = 0.5
+static t = 0
+
+dt = IN[1] / SAMPLE_RATE
+
+t1 = t / dt
+t2 = (t - 1) / dt
+blep0 = t < dt ? -((1 - t1) * (1 - t1)) : (t > 1 - dt ? (t2 + 1) * (t2 + 1) : 0)
+
+tp = t < pw ? t - pw + 1 : t - pw
+tp1 = tp / dt
+tp2 = (tp - 1) / dt
+blepp = tp < dt ? -(1 - tp1) * (1 - tp1) : (tp > 1 - dt ? (tp2 + 1) * (tp2 + 1) : 0)
+
+OUT[0] <- IN[0] * ((t < pw ? 1 : -1) - blep0 + blepp)
+
+t = t < 1 ? t + dt : t + dt - 1

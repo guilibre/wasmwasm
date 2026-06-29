@@ -1,5 +1,7 @@
 param gate = 0
 param atk = 0.01
+param dec = 0.1
+param sus = 0.8
 param rel = 1
 
 static t = 0
@@ -9,7 +11,7 @@ static env = 0
 
 OUT[0] <- env
 
-denv = gate ? (t < atk ? 1/(atk*SAMPLE_RATE) : 0) : -1/(rel*SAMPLE_RATE)
+denv = gate ? (t < atk ? 1/(atk*SAMPLE_RATE) : (t < atk + dec ? -1/(dec*SAMPLE_RATE) : 0)) : -1/(rel*SAMPLE_RATE)
 env = min 1 (max 0 (env + denv))
 
 t = gate > gate_ ? 0 : t + dt

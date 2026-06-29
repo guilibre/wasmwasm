@@ -2,13 +2,9 @@ param amp = 0
 static amp_ = 0
 param freq = 440
 static freq_ = 440
-param gate = 0
-static gate_ = 0
 
 OUT[0] <- amp_
 OUT[1] <- freq_
-OUT[2] <- gate_
 
 amp_ = amp_ + 0.1*(amp - amp_)
 freq_ = freq_ + 0.1*(freq - freq_)
-gate_ = gate_ + 0.1*(gate - gate_)

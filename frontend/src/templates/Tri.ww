@@ -1,0 +1,6 @@
+static t = 0
+
+OUT[0] <- IN[0] * (4 * (t < 0.5 ? t : 1 - t) - 1)
+
+dt = IN[1] / SAMPLE_RATE
+t = t < 1 ? t + dt : t + dt - 1

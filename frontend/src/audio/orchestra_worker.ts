@@ -1,18 +1,46 @@
 import { HELPERS } from './helpers';
+import type { MidiParams } from './helpers';
+
+const worker_midi_listeners = new Map<string, (params: MidiParams) => Promise<void>>();
+let midi_setup_resolve: (() => void) | null = null;
+
+function worker_setup_midi(): Promise<void> {
+    return new Promise((resolve) => {
+        midi_setup_resolve = resolve;
+        self.postMessage({ type: 'setup-midi' });
+    });
+}
+
+function worker_add_on_midi_event(f: (params: MidiParams) => Promise<void>): string {
+    const id = crypto.randomUUID();
+    worker_midi_listeners.set(id, f);
+    return id;
+}
+
+function worker_remove_on_midi_event(id: string) {
+    worker_midi_listeners.delete(id);
+}
+
+const HELPERS_WITH_MIDI = {
+    ...HELPERS,
+    setup_midi: worker_setup_midi,
+    add_on_midi_event: worker_add_on_midi_event,
+    remove_on_midi_event: worker_remove_on_midi_event,
+};
 
 const async_function = Object.getPrototypeOf(async function () {}).constructor as new (
     ...args: string[]
 ) => (...args: unknown[]) => Promise<void>;
 
 const EVENT_CAPACITY = 256;
-const LOOKAHEAD = 0.2;
+const LOOKAHEAD = 0.1;
 
 interface InstrumentInit {
     name: string;
     code: string;
     param_names: string[];
-    state_sab: SharedArrayBuffer;
     event_sab: SharedArrayBuffer;
+    instance_id: string;
 }
 
 let next_request_id = 0;
@@ -30,7 +58,6 @@ function build_instrument(
     sample_rate: number,
     get_task_time: () => number,
     real_time: () => number,
-    sync_orch_time: (t: number) => void,
     spawn_ctx_ref: SpawnCtxRef,
 ) {
     const ev_write_head = new Int32Array(instr.event_sab, 0, 1);
@@ -45,7 +72,6 @@ function build_instrument(
     }
 
     let active_ctx: { v: number } | null = null;
-    let active_token: object | null = null;
     let cursor: number | null = null;
     const ABORT = Symbol();
 
@@ -69,24 +95,25 @@ function build_instrument(
     };
 
     const sleep = async (s: number) => {
-        const my_token = active_token;
         const my_ctx = active_ctx;
         if (my_ctx) my_ctx.v += s;
         const target = my_ctx ? my_ctx.v : get_task_time() + s;
         const wait_ms = (target - LOOKAHEAD - real_time()) * 1000;
         if (wait_ms > 0) await new Promise<void>((r) => setTimeout(r, wait_ms));
-        if (active_token !== my_token) throw ABORT;
         active_ctx = my_ctx;
     };
 
+    const die = () =>
+        self.postMessage({ type: 'destroy-instance', instance_id: instr.instance_id });
+
     const fn_names = [...instr.code.matchAll(/^(?:async\s+)?function\s+(\w+)/gm)].map((m) => m[1]);
-    if (fn_names.length === 0) return {};
+    if (fn_names.length === 0) return { kill: die };
 
     const unique_params = [...new Set(param_names)];
     const setter_names = unique_params.map((p) => `set_${p}`);
     const setter_fns = unique_params.map((p) => (value: number) => set_param(p, value));
 
-    const builtins = { set_param, sleep };
+    const builtins = { set_param, sleep, die };
     const factory = new Function(
         ...Object.keys(builtins),
         ...setter_names,
@@ -102,9 +129,7 @@ function build_instrument(
     const wrapped: Record<string, (...args: unknown[]) => unknown> = {};
     for (const [name, fn] of Object.entries(raw_fns)) {
         wrapped[name] = async (...args: unknown[]) => {
-            const my_token = {};
             const my_spawn_ctx = spawn_ctx_ref.current;
-            active_token = my_token;
             const prev = active_ctx;
             const start = Math.max(cursor ?? get_task_time(), get_task_time());
             active_ctx = { v: start };
@@ -115,16 +140,11 @@ function build_instrument(
                 if (e !== ABORT) throw e;
             } finally {
                 spawn_ctx_ref.current = my_spawn_ctx;
-                if (active_token === my_token) {
-                    cursor = active_ctx?.v ?? cursor;
-                    if (active_ctx) sync_orch_time(active_ctx.v);
-                    active_token = null;
-                }
                 active_ctx = prev;
             }
         };
     }
-    return wrapped;
+    return { ...wrapped, kill: die };
 }
 
 self.onmessage = async (event: MessageEvent) => {
@@ -144,6 +164,18 @@ self.onmessage = async (event: MessageEvent) => {
         return;
     }
 
+    if (type === 'midi-ready') {
+        midi_setup_resolve?.();
+        midi_setup_resolve = null;
+        return;
+    }
+
+    if (type === 'midi-event') {
+        const { params } = event.data as { params: MidiParams };
+        for (const f of worker_midi_listeners.values()) f(params);
+        return;
+    }
+
     if (type !== 'run') return;
 
     const { orchestra_code, bpm, sampleRate, audioCurrentTime, instrument_names } = event.data as {
@@ -158,7 +190,7 @@ self.onmessage = async (event: MessageEvent) => {
     const real_time = () => audioCurrentTime + (performance.now() - perf_origin) / 1000;
 
     const orch_scheduled = { v: audioCurrentTime + LOOKAHEAD };
-    const get_orch_time = () => orch_scheduled.v;
+    const get_orch_time = () => Math.max(orch_scheduled.v, real_time() + LOOKAHEAD);
 
     const spawn_ctx_ref: SpawnCtxRef = { current: null };
 
@@ -168,15 +200,13 @@ self.onmessage = async (event: MessageEvent) => {
             const id = next_request_id++;
             pending_instances.set(id, {
                 resolve: (data: InstrumentInit) => {
+                    spawn_ctx_ref.current = ctx;
                     resolve(
                         build_instrument(
                             data,
                             sampleRate,
                             ctx ? () => ctx.task_time.v : get_orch_time,
                             real_time,
-                            (t) => {
-                                if (t > orch_scheduled.v) orch_scheduled.v = t;
-                            },
                             spawn_ctx_ref,
                         ),
                     );
@@ -257,10 +287,14 @@ self.onmessage = async (event: MessageEvent) => {
         const fn = new async_function(
             ...Object.keys(builtins),
             ...instrument_names,
-            ...Object.keys(HELPERS),
+            ...Object.keys(HELPERS_WITH_MIDI),
             orchestra_code,
         );
-        await fn(...Object.values(builtins), ...instrument_fns, ...Object.values(HELPERS));
+        await fn(
+            ...Object.values(builtins),
+            ...instrument_fns,
+            ...Object.values(HELPERS_WITH_MIDI),
+        );
     } catch (e) {
         self.postMessage({ type: 'error', message: String(e) });
     }

@@ -1,0 +1,10 @@
+static t = 0
+
+dt = IN[1] / SAMPLE_RATE
+t1 = t / dt
+t2 = (t - 1) / dt
+blep = t < dt ? t1 + t1 - t1*t1 - 1 : (t > 1 - dt ? t2*t2 + t2 + t2 + 1 : 0)
+
+OUT[0] <- IN[0] * ((2*t - 1) - blep)
+
+t = t < 1 ? t + dt : t + dt - 1

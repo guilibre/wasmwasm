@@ -4,8 +4,15 @@ export interface PatchParams {
     param_names: string[];
     param_export_names: string[];
     input_sab: SharedArrayBuffer;
-    state_sab: SharedArrayBuffer;
     event_sab: SharedArrayBuffer;
+}
+
+export interface CompiledPatch {
+    wasm: Uint8Array;
+    wasm_module: WebAssembly.Module;
+    param_names: string[];
+    param_export_names: string[];
+    defaults_by_export: Record<string, number>;
 }
 
 export default class WasmWasm {
@@ -42,10 +49,7 @@ export default class WasmWasm {
         return this.math_bin;
     }
 
-    static async init_patch(
-        sample_rate: number,
-        patch_json: string,
-    ): Promise<{ wasm: Uint8Array; params: PatchParams }> {
+    static async compile_patch(sample_rate: number, patch_json: string): Promise<CompiledPatch> {
         const mod = await this.getOrInitModule();
         const math_bin = await this.getMathBin();
         let wasm: Uint8Array;
@@ -69,10 +73,6 @@ export default class WasmWasm {
             return e.name.slice(idx + '$param$'.length);
         });
 
-        const input_sab = new SharedArrayBuffer(param_names.length * 8);
-        const state_sab = new SharedArrayBuffer((param_names.length + 1) * 8);
-        const event_sab = new SharedArrayBuffer(8 + 256 * 16);
-        const input_view = new Float64Array(input_sab);
         const parsed = JSON.parse(patch_json) as { modules: Record<string, string> };
         const defaults_by_export: Record<string, number> = {};
         for (const [mod_name, code] of Object.entries(parsed.modules)) {
@@ -80,14 +80,27 @@ export default class WasmWasm {
                 defaults_by_export[`${mod_name}$param$${m[1]}`] = parseFloat(m[2]);
             }
         }
+
+        return { wasm, wasm_module, param_names, param_export_names, defaults_by_export };
+    }
+
+    static make_params(compiled: CompiledPatch): PatchParams {
+        const { param_names, param_export_names, defaults_by_export } = compiled;
+        const input_sab = new SharedArrayBuffer(param_names.length * 8);
+        const event_sab = new SharedArrayBuffer(8 + 256 * 16);
+        const input_view = new Float64Array(input_sab);
         for (let i = 0; i < param_export_names.length; i++) {
             const d = defaults_by_export[param_export_names[i]];
             if (d !== undefined) input_view[i] = d;
         }
+        return { param_names, param_export_names, input_sab, event_sab };
+    }
 
-        return {
-            wasm,
-            params: { param_names, param_export_names, input_sab, state_sab, event_sab },
-        };
+    static async init_patch(
+        sample_rate: number,
+        patch_json: string,
+    ): Promise<{ wasm: Uint8Array; params: PatchParams }> {
+        const compiled = await this.compile_patch(sample_rate, patch_json);
+        return { wasm: compiled.wasm, params: this.make_params(compiled) };
     }
 }

@@ -10,6 +10,12 @@ const TS_COMPILER_OPTIONS: ts.CompilerOptions = {
 };
 
 const HELPER_DEFS = `
+type MidiParams =
+    | { type: 'noteon'; channel: number; note: number; velocity: number; data: Uint8Array }
+    | { type: 'noteoff'; channel: number; note: number; velocity: number; data: Uint8Array }
+    | { type: 'cc'; channel: number; cc: number; value: number; data: Uint8Array }
+    | { type: 'pitchbend'; channel: number; value: number; data: Uint8Array }
+    | { type: 'raw'; channel: number; data: Uint8Array };
 declare function amp_to_db(amp: number): number;
 declare function choose<T>(xs: Array<T>): T;
 declare function clamp(x: number, lo: number, hi: number): number;
@@ -20,6 +26,9 @@ declare function lerp(a: number, b: number, t: number): number;
 declare function midi_to_cps(m: number): number;
 declare function rand_int(lo: number, hi: number): number;
 declare function rand(lo: number, hi: number): number;
+declare async function setup_midi();
+declare function add_on_midi_event(f: (params: MidiParams) => void): string;
+declare function remove_on_midi_event(id: string);
 `;
 
 const ORCHESTRA_DEFS =
@@ -28,18 +37,19 @@ const ORCHESTRA_DEFS =
 declare function instrument(name: string): any;
 declare function sleep(seconds: number): Promise<void>;
 declare function sleep_beats(beats: number): Promise<void>;
-declare function on_beat(fn: (beat: number) => void): void;
+declare function on_beat(fn: (beat: number) => void);
 declare function from_beats(beats: number): number;
 declare function to_beats(num: number): number;
 declare function current_time(): number;
-declare function spawn(fn: () => Promise<void>): void;
+declare function spawn(fn: () => Promise<void>);
 `;
 
 const INSTRUMENT_DEFS =
     HELPER_DEFS +
     `
-declare function set_param(name: string, value: number): void;
+declare function set_param(name: string, value: number);
 declare function sleep(seconds: number): Promise<void>;
+declare function die();
 `;
 
 export const ORCHESTRA_FALLBACK = `const i = instrument('instrument1');
@@ -86,7 +96,7 @@ export function make_instrument_env_with_params(
     param_names: string[],
 ): VirtualTypeScriptEnvironment {
     const unique = [...new Set(param_names)];
-    const setters = unique.map((p) => `declare function set_${p}(value: number): void;`).join('\n');
+    const setters = unique.map((p) => `declare function set_${p}(value: number);`).join('\n');
     return make_env_sync(INSTRUMENT_DEFS + '\n' + setters);
 }
 
@@ -94,6 +104,7 @@ export interface CompiledInstrument {
     name: string;
     param_names: string[];
     fn_names: string[];
+    fn_sigs: string[];
 }
 
 export function make_orchestra_env_with_instruments(
@@ -101,18 +112,14 @@ export function make_orchestra_env_with_instruments(
 ): VirtualTypeScriptEnvironment {
     const overloads: string[] = [];
     for (const instr of instruments) {
-        const unique_params = [...new Set(instr.param_names)];
         const iface_name = `${instr.name}Instance`;
-        const setter_members = unique_params
-            .map((p) => `    set_${p}(value: number): void;`)
-            .join('\n');
         const fn_members = instr.fn_names
-            .map((f) => `    ${f}(...args: any[]): Promise<void>;`)
+            .map((f, i) => `    ${f}(${instr.fn_sigs[i] ?? '...args: any[]'}): Promise<void>;`)
             .join('\n');
         overloads.push(
-            `interface ${iface_name} {\n${setter_members}\n${fn_members}\n}`,
-            `declare function instrument(name: '${instr.name}'): ${iface_name};`,
-            `declare function ${instr.name}(): ${iface_name};`,
+            `interface ${iface_name} {\n${fn_members}\n}`,
+            `declare function instrument(name: '${instr.name}'): Promise<${iface_name}>;`,
+            `declare function ${instr.name}(): Promise<${iface_name}>;`,
         );
     }
     const extra = overloads.join('\n');

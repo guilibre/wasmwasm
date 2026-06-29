@@ -43,12 +43,12 @@ const editor_theme = EditorView.theme(
 
 function make_ts_autocomplete(env: VirtualTypeScriptEnvironment) {
     return async (ctx: import('@codemirror/autocomplete').CompletionContext) => {
+        const word = ctx.matchBefore(/\w+/);
+        if (!word && !ctx.explicit) return null;
         const doc = ctx.state.doc.toString();
         env.updateFile(TS_FILE, doc);
         const completions = env.languageService.getCompletionsAtPosition(TS_FILE, ctx.pos, {}, {});
         if (!completions) return null;
-        const word = ctx.matchBefore(/\w*/);
-        if (!word && !ctx.explicit) return null;
         const options = completions.entries
             .filter((e) => e.sortText <= '15')
             .map((e) => ({ label: e.name, type: e.kind }));

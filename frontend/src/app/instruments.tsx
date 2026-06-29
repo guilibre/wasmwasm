@@ -93,7 +93,7 @@ export function InstrumentPanel({
                 >
                     {any_compiling_patch ? '...' : 'Compile Patches'}
                 </button>
-                {all_patches_ok && <span className="instrument__compile-ok">patches ✓</span>}
+                {all_patches_ok && <span className="instrument__compile-ok">✓</span>}
                 <button
                     className="instrument__compile-btn"
                     disabled={any_compiling_instr || instruments.length === 0}
@@ -101,7 +101,7 @@ export function InstrumentPanel({
                 >
                     {any_compiling_instr ? '...' : 'Compile Instruments'}
                 </button>
-                {all_instrs_ok && <span className="instrument__compile-ok">instruments ✓</span>}
+                {all_instrs_ok && <span className="instrument__compile-ok">✓</span>}
             </div>
             <div className="instrument__header">
                 <div className="instrument__tabs">
