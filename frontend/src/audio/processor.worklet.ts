@@ -15,6 +15,7 @@ class WasmProcessor extends AudioWorkletProcessor {
     main: (...args: number[]) => void = () => {};
     heap: Float32Array | null = null;
     has_capture = false;
+    stopped = false;
 
     _ready_sent = false;
     instance: WebAssembly.Instance | null = null;
@@ -29,6 +30,11 @@ class WasmProcessor extends AudioWorkletProcessor {
         super();
 
         this.port.onmessage = async (event: MessageEvent) => {
+            if (event.data.type === 'stop') {
+                this.stopped = true;
+                return;
+            }
+
             if (event.data.type === 'clear') {
                 if (this.ev_read_head && this.ev_write_head) {
                     Atomics.store(this.ev_read_head, 0, Atomics.load(this.ev_write_head, 0));
@@ -112,6 +118,7 @@ class WasmProcessor extends AudioWorkletProcessor {
     }
 
     process(inputs: Float32Array[][], outputs: Float32Array[][]): boolean {
+        if (this.stopped) return false;
         if (!this.heap) return true;
 
         this.consume_events(currentFrame);

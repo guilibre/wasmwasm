@@ -25,6 +25,7 @@ export default function App() {
     const analyser_l_ref = useRef<AnalyserNode | null>(null);
     const analyser_r_ref = useRef<AnalyserNode | null>(null);
     const orchestra_worker_ref = useRef<Worker | null>(null);
+    const play_session_ref = useRef(0);
     const patch_cache_ref = useRef<
         Map<string, { json: string; wasm: Uint8Array; param_names: string[] }>
     >(new Map());
@@ -44,14 +45,12 @@ export default function App() {
     const [compiled_instrument_info, set_compiled_instrument_info] = useState<
         Map<string, CompiledInstrument>
     >(new Map());
-    const [orchestra_env, set_orchestra_env] = useState<VirtualTypeScriptEnvironment | null>(null);
+    const [orchestra_env, set_orchestra_env] = useState<VirtualTypeScriptEnvironment | null>(() =>
+        get_orchestra_env(),
+    );
     const [instrument_envs, set_instrument_envs] = useState<
         Map<string, VirtualTypeScriptEnvironment>
     >(new Map());
-
-    useEffect(() => {
-        set_orchestra_env(get_orchestra_env());
-    }, []);
 
     const store = usePatchStore();
     const {
@@ -144,7 +143,10 @@ export default function App() {
         const mic_ref = mic_source_ref;
         return () => {
             worker_ref.current?.terminate();
-            nodes_ref.current.forEach((n) => n.disconnect());
+            nodes_ref.current.forEach((n) => {
+                n.port.postMessage({ type: 'stop' });
+                n.disconnect();
+            });
             ctx_ref.current?.close();
             mic_ref.current?.mediaStream.getTracks().forEach((t) => t.stop());
         };
@@ -327,6 +329,7 @@ export default function App() {
 
     const play = async () => {
         set_error(null);
+        const my_session = ++play_session_ref.current;
 
         if (!audio_context_ref.current) {
             const context = new AudioContext({ latencyHint: 'interactive' });
@@ -357,7 +360,10 @@ export default function App() {
                 : null,
         );
 
-        worklet_nodes_ref.current.forEach((n) => n.disconnect());
+        worklet_nodes_ref.current.forEach((n) => {
+            n.port.postMessage({ type: 'stop' });
+            n.disconnect();
+        });
         worklet_nodes_ref.current.clear();
         orchestra_worker_ref.current?.terminate();
         orchestra_worker_ref.current = null;
@@ -416,6 +422,7 @@ export default function App() {
             json: string,
             wasm: Uint8Array,
             instance_idx: number,
+            session: number,
         ): Promise<{
             state_sab: SharedArrayBuffer;
             event_sab: SharedArrayBuffer;
@@ -466,6 +473,12 @@ export default function App() {
                 });
             });
 
+            if (play_session_ref.current !== session) {
+                node.disconnect();
+                worklet_nodes_ref.current.delete(`${instr.id}:${instance_idx}`);
+                return null;
+            }
+
             return {
                 state_sab: params.state_sab,
                 event_sab: params.event_sab,
@@ -500,7 +513,7 @@ export default function App() {
                 }
                 const instance_idx = instr_instance_counters.get(name) ?? 0;
                 instr_instance_counters.set(name, instance_idx + 1);
-                const result = await create_instance(instr, json, wasm, instance_idx);
+                const result = await create_instance(instr, json, wasm, instance_idx, my_session);
                 if (!result) {
                     worker.postMessage({
                         type: 'instance-error',
@@ -548,7 +561,10 @@ export default function App() {
             mic_source_ref.current.disconnect();
             mic_source_ref.current = null;
         }
-        worklet_nodes_ref.current.forEach((n) => n.disconnect());
+        worklet_nodes_ref.current.forEach((n) => {
+            n.port.postMessage({ type: 'stop' });
+            n.disconnect();
+        });
         worklet_nodes_ref.current.clear();
         await context?.suspend();
         set_is_playing(false);
