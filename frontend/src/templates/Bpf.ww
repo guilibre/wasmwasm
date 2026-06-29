@@ -1,0 +1,11 @@
+param cutoff_lo = 200
+param cutoff_hi = 2000
+a_hi = 1 - exp(-cutoff_hi*2*PI/SAMPLE_RATE)
+a_lo = 1 - exp(-cutoff_lo*2*PI/SAMPLE_RATE)
+
+static x_hi = 0
+static x_lo = 0
+
+x_hi = x_hi + a_hi*(IN[0] - x_hi)
+x_lo = x_lo + a_lo*(x_hi - x_lo)
+OUT[0] <- x_hi - x_lo

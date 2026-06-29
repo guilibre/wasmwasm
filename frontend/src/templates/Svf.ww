@@ -1,0 +1,14 @@
+param cf = 1000
+param q = 1
+
+static low = 0
+static band = 0
+
+g = 2*sin(PI*cf/SAMPLE_RATE)
+R = 1/q
+
+low  = low + g*band
+high = IN[0] - low - R*band
+band = band + g*high
+
+OUT[0] <- band

@@ -27,7 +27,6 @@ interface SpawnCtxRef {
 
 function build_instrument(
     instr: InstrumentInit,
-    bpm: number,
     sample_rate: number,
     get_task_time: () => number,
     real_time: () => number,
@@ -80,10 +79,6 @@ function build_instrument(
         active_ctx = my_ctx;
     };
 
-    const sleep_beats = (beats: number) => sleep((beats * 60) / bpm);
-    const from_beats = (beats: number) => (beats * 60) / bpm;
-    const to_beats = (seconds: number) => (seconds * bpm) / 60;
-
     const fn_names = [...instr.code.matchAll(/^(?:async\s+)?function\s+(\w+)/gm)].map((m) => m[1]);
     if (fn_names.length === 0) return {};
 
@@ -91,22 +86,15 @@ function build_instrument(
     const setter_names = unique_params.map((p) => `set_${p}`);
     const setter_fns = unique_params.map((p) => (value: number) => set_param(p, value));
 
+    const builtins = { set_param, sleep };
     const factory = new Function(
-        'set_param',
-        'sleep',
-        'sleep_beats',
-        'from_beats',
-        'to_beats',
+        ...Object.keys(builtins),
         ...setter_names,
         ...Object.keys(HELPERS),
         `${instr.code}\nreturn { ${fn_names.join(', ')} };`,
     );
     const raw_fns = factory(
-        set_param,
-        sleep,
-        sleep_beats,
-        from_beats,
-        to_beats,
+        ...Object.values(builtins),
         ...setter_fns,
         ...Object.values(HELPERS),
     ) as Record<string, (...args: unknown[]) => Promise<void>>;
@@ -183,7 +171,6 @@ self.onmessage = async (event: MessageEvent) => {
                     resolve(
                         build_instrument(
                             data,
-                            bpm,
                             sampleRate,
                             ctx ? () => ctx.task_time.v : get_orch_time,
                             real_time,
@@ -256,22 +243,7 @@ self.onmessage = async (event: MessageEvent) => {
 
     try {
         const stop = (dur: number = 1) => self.postMessage({ type: 'stop', dur });
-
-        const fn = new async_function(
-            'instrument',
-            'sleep',
-            'sleep_beats',
-            'from_beats',
-            'to_beats',
-            'on_beat',
-            'current_time',
-            'spawn',
-            'stop',
-            ...instrument_names,
-            ...Object.keys(HELPERS),
-            orchestra_code,
-        );
-        await fn(
+        const builtins = {
             instrument,
             sleep,
             sleep_beats,
@@ -281,9 +253,14 @@ self.onmessage = async (event: MessageEvent) => {
             current_time,
             spawn,
             stop,
-            ...instrument_fns,
-            ...Object.values(HELPERS),
+        };
+        const fn = new async_function(
+            ...Object.keys(builtins),
+            ...instrument_names,
+            ...Object.keys(HELPERS),
+            orchestra_code,
         );
+        await fn(...Object.values(builtins), ...instrument_fns, ...Object.values(HELPERS));
     } catch (e) {
         self.postMessage({ type: 'error', message: String(e) });
     }

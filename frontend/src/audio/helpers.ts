@@ -43,16 +43,6 @@ export function rand(lo: number, hi: number): number {
     return lo + Math.random() * (hi - lo);
 }
 
-export function scale(
-    x: number,
-    in_lo: number,
-    in_hi: number,
-    out_lo: number,
-    out_hi: number,
-): number {
-    return lerp(out_lo, out_hi, (x - in_lo) / (in_hi - in_lo));
-}
-
 export const HELPERS = {
     amp_to_db,
     choose,
@@ -64,5 +54,4 @@ export const HELPERS = {
     midi_to_cps,
     rand_int,
     rand,
-    scale,
 };

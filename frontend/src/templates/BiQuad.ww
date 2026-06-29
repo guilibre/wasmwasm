@@ -1,0 +1,14 @@
+param b0 = 1
+param b1 = 0
+param b2 = 0
+param a1 = 0
+param a2 = 0
+
+static z1 = 0
+static z2 = 0
+
+y = b0*IN[0] + z1
+z1 = b1*IN[0] - a1*y + z2
+z2 = b2*IN[0] - a2*y
+
+OUT[0] <- y

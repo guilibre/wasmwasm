@@ -20,7 +20,6 @@ declare function lerp(a: number, b: number, t: number): number;
 declare function midi_to_cps(m: number): number;
 declare function rand_int(lo: number, hi: number): number;
 declare function rand(lo: number, hi: number): number;
-declare function scale(x: number, in_lo: number, in_hi: number, out_lo: number, out_hi: number): number;
 `;
 
 const ORCHESTRA_DEFS =
@@ -41,7 +40,6 @@ const INSTRUMENT_DEFS =
     `
 declare function set_param(name: string, value: number): void;
 declare function sleep(seconds: number): Promise<void>;
-declare function sleep_beats(beats: number): Promise<void>;
 `;
 
 export const ORCHESTRA_FALLBACK = `const i = instrument('instrument1');
@@ -78,14 +76,10 @@ function make_env_sync(defs: string): VirtualTypeScriptEnvironment {
     );
 }
 
-function make_env(defs: string): Promise<VirtualTypeScriptEnvironment> {
-    return Promise.resolve(make_env_sync(defs));
-}
+let orchestra_env: VirtualTypeScriptEnvironment | null = null;
 
-let orchestra_env: Promise<VirtualTypeScriptEnvironment> | null = null;
-
-export function get_orchestra_env(): Promise<VirtualTypeScriptEnvironment> {
-    return (orchestra_env ??= make_env(ORCHESTRA_DEFS));
+export function get_orchestra_env(): VirtualTypeScriptEnvironment {
+    return (orchestra_env ??= make_env_sync(ORCHESTRA_DEFS));
 }
 
 export function make_instrument_env_with_params(
@@ -104,7 +98,7 @@ export interface CompiledInstrument {
 
 export function make_orchestra_env_with_instruments(
     instruments: CompiledInstrument[],
-): Promise<VirtualTypeScriptEnvironment> {
+): VirtualTypeScriptEnvironment {
     const overloads: string[] = [];
     for (const instr of instruments) {
         const unique_params = [...new Set(instr.param_names)];
@@ -122,5 +116,5 @@ export function make_orchestra_env_with_instruments(
         );
     }
     const extra = overloads.join('\n');
-    return make_env(extra + '\n' + ORCHESTRA_DEFS);
+    return make_env_sync(extra + '\n' + ORCHESTRA_DEFS);
 }

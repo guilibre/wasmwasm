@@ -50,7 +50,7 @@ export default function App() {
     >(new Map());
 
     useEffect(() => {
-        get_orchestra_env().then(set_orchestra_env);
+        set_orchestra_env(get_orchestra_env());
     }, []);
 
     const store = usePatchStore();
@@ -306,7 +306,7 @@ export default function App() {
             }),
         );
         set_compiled_instrument_info(new_info_map);
-        const env = await make_orchestra_env_with_instruments([...new_info_map.values()]);
+        const env = make_orchestra_env_with_instruments([...new_info_map.values()]);
         set_orchestra_env(env);
     }, [orchestra.instruments, compiled_patch_params, compiled_instrument_info]);
 
