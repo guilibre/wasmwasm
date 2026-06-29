@@ -140,6 +140,9 @@ auto compile_to_binary(float sample_rate, const std::string &patch_json,
     BinaryenSetShrinkLevel(0);
     BinaryenSetFastMath(true);
     BinaryenSetLowMemoryUnused(true);
+    BinaryenSetAlwaysInlineMaxSize(100);
+    BinaryenSetFlexibleInlineMaxSize(250);
+    BinaryenSetOneCallerInlineMaxSize(250);
     BinaryenModuleOptimize(main_module);
 
     auto delay = BinaryenModuleAllocateAndWrite(main_module, nullptr);

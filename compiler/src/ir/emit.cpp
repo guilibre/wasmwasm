@@ -28,6 +28,8 @@ auto to_btype(IRType t) -> BinaryenType {
         return BinaryenTypeInt32();
     case IRType::Void:
         return BinaryenTypeNone();
+    case IRType::Vec:
+        return BinaryenTypeVec128();
     default:
         std::unreachable();
     }
@@ -144,6 +146,16 @@ void prescan(FnCtx &ctx, const std::vector<IRInstr> &body) {
                 if constexpr (std::is_same_v<T, IRStaticRead>)
                     ctx.ensure_var(i.result, IRType::Float);
                 if constexpr (std::is_same_v<T, IRParamRead>)
+                    ctx.ensure_var(i.result, IRType::Float);
+                if constexpr (std::is_same_v<T, IRMemRead>)
+                    ctx.ensure_var(i.result, IRType::Float);
+                if constexpr (std::is_same_v<T, IRVecLoad>)
+                    ctx.ensure_var(i.result, IRType::Vec);
+                if constexpr (std::is_same_v<T, IRVecBinOp>)
+                    ctx.ensure_var(i.result, IRType::Vec);
+                if constexpr (std::is_same_v<T, IRVecSplat>)
+                    ctx.ensure_var(i.result, IRType::Vec);
+                if constexpr (std::is_same_v<T, IRVecExtractLane>)
                     ctx.ensure_var(i.result, IRType::Float);
             },
             instr);
@@ -507,6 +519,62 @@ auto emit_stmts(FnCtx &ctx, const std::vector<IRInstr> &body)
                 }
                 if constexpr (std::is_same_v<T, IRReturn>) {
                     if (i.value) stmts.push_back(ctx.get(*i.value));
+                }
+                if constexpr (std::is_same_v<T, IRMemRead>) {
+                    stmts.push_back(ctx.set(
+                        i.result,
+                        BinaryenLoad(
+                            ctx.mod, 8, false, i.addr, 8, BinaryenTypeFloat64(),
+                            BinaryenConst(ctx.mod, BinaryenLiteralInt32(0)),
+                            "memory")));
+                }
+                if constexpr (std::is_same_v<T, IRMemWrite>) {
+                    stmts.push_back(BinaryenStore(
+                        ctx.mod, 8, i.addr, 8,
+                        BinaryenConst(ctx.mod, BinaryenLiteralInt32(0)),
+                        ctx.get(i.value), BinaryenTypeFloat64(), "memory"));
+                }
+                if constexpr (std::is_same_v<T, IRVecLoad>) {
+                    stmts.push_back(ctx.set(
+                        i.result,
+                        BinaryenLoad(
+                            ctx.mod, 16, false, i.addr, 16,
+                            BinaryenTypeVec128(),
+                            BinaryenConst(ctx.mod, BinaryenLiteralInt32(0)),
+                            "memory")));
+                }
+                if constexpr (std::is_same_v<T, IRVecStore>) {
+                    stmts.push_back(BinaryenStore(
+                        ctx.mod, 16, i.addr, 16,
+                        BinaryenConst(ctx.mod, BinaryenLiteralInt32(0)),
+                        BinaryenLocalGet(ctx.mod, ctx.idx.at(i.value),
+                                         BinaryenTypeVec128()),
+                        BinaryenTypeVec128(), "memory"));
+                }
+                if constexpr (std::is_same_v<T, IRVecBinOp>) {
+                    stmts.push_back(
+                        ctx.set(i.result,
+                                BinaryenBinary(
+                                    ctx.mod, to_bop_vec(i.op),
+                                    BinaryenLocalGet(ctx.mod, ctx.idx.at(i.lhs),
+                                                     BinaryenTypeVec128()),
+                                    BinaryenLocalGet(ctx.mod, ctx.idx.at(i.rhs),
+                                                     BinaryenTypeVec128()))));
+                }
+                if constexpr (std::is_same_v<T, IRVecSplat>) {
+                    stmts.push_back(
+                        ctx.set(i.result,
+                                BinaryenUnary(ctx.mod, BinaryenSplatVecF64x2(),
+                                              ctx.get(i.scalar))));
+                }
+                if constexpr (std::is_same_v<T, IRVecExtractLane>) {
+                    stmts.push_back(
+                        ctx.set(i.result,
+                                BinaryenSIMDExtract(
+                                    ctx.mod, BinaryenExtractLaneVecF64x2(),
+                                    BinaryenLocalGet(ctx.mod, ctx.idx.at(i.vec),
+                                                     BinaryenTypeVec128()),
+                                    i.lane)));
                 }
             },
             instr);
@@ -943,6 +1011,20 @@ auto IRModule::total_delay_bytes() const -> uint32_t {
     for (const auto &b : delays)
         total += static_cast<uint32_t>(b.size_elements * 8);
     return total;
+}
+
+auto IRModule::static_array_base(const std::string &array_name) const
+    -> uint32_t {
+    return static_array_bases.at(array_name);
+}
+
+auto IRModule::alloc_static_array(const std::string &array_name,
+                                  size_t n_elements) -> uint32_t {
+    const auto base =
+        memory_base + total_delay_bytes() + static_array_total_bytes;
+    static_array_bases[array_name] = base;
+    static_array_total_bytes += static_cast<uint32_t>(n_elements * 8);
+    return base;
 }
 
 void emit_ir(const IRModule &ir, BinaryenModuleRef mod,

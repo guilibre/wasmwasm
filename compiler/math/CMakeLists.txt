@@ -11,6 +11,8 @@ add_custom_command(
     --target=wasm32
     --no-standard-libraries
     -Wl,--no-entry
+    -Wl,--export=wasmwasm_abs
+    -Wl,--export=wasmwasm_abs_f64x2
     -Wl,--export=wasmwasm_ceil
     -Wl,--export=wasmwasm_ceil_f64x2
     -Wl,--export=wasmwasm_clip
@@ -27,6 +29,10 @@ add_custom_command(
     -Wl,--export=wasmwasm_gaussian_f64x2
     -Wl,--export=wasmwasm_log
     -Wl,--export=wasmwasm_log_f64x2
+    -Wl,--export=wasmwasm_max
+    -Wl,--export=wasmwasm_max_f64x2
+    -Wl,--export=wasmwasm_min
+    -Wl,--export=wasmwasm_min_f64x2
     -Wl,--export=wasmwasm_pow
     -Wl,--export=wasmwasm_pow_f64x2
     -Wl,--export=wasmwasm_round
@@ -37,16 +43,12 @@ add_custom_command(
     -Wl,--export=wasmwasm_sin_f64x2
     -Wl,--export=wasmwasm_sqrt
     -Wl,--export=wasmwasm_sqrt_f64x2
-    -Wl,--export=wasmwasm_uniform
-    -Wl,--export=wasmwasm_uniform_f64x2
-    -Wl,--export=wasmwasm_abs
-    -Wl,--export=wasmwasm_abs_f64x2
+    -Wl,--export=wasmwasm_tan
+    -Wl,--export=wasmwasm_tan_f64x2
     -Wl,--export=wasmwasm_tanh
     -Wl,--export=wasmwasm_tanh_f64x2
-    -Wl,--export=wasmwasm_min
-    -Wl,--export=wasmwasm_min_f64x2
-    -Wl,--export=wasmwasm_max
-    -Wl,--export=wasmwasm_max_f64x2
+    -Wl,--export=wasmwasm_uniform
+    -Wl,--export=wasmwasm_uniform_f64x2
     -Wl,--lto-O3
     -Wl,--gc-sections
     -isystem ${WASM_SYSROOT}/include/c++/v1

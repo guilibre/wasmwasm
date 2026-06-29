@@ -5,10 +5,11 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <unordered_map>
 #include <variant>
 #include <vector>
 
-enum class IRType : uint8_t { Float, Int, Void };
+enum class IRType : uint8_t { Float, Int, Void, Vec };
 
 struct IRLiteral {
     double value;
@@ -88,6 +89,44 @@ struct IRStaticWrite {
     IRValue value;
 };
 
+struct IRMemRead {
+    std::string result;
+    uint32_t addr;
+};
+
+struct IRMemWrite {
+    uint32_t addr;
+    IRValue value;
+};
+
+struct IRVecLoad {
+    std::string result;
+    uint32_t addr;
+};
+
+struct IRVecStore {
+    uint32_t addr;
+    std::string value;
+};
+
+struct IRVecBinOp {
+    std::string result;
+    Operation op;
+    std::string lhs;
+    std::string rhs;
+};
+
+struct IRVecSplat {
+    std::string result;
+    IRValue scalar;
+};
+
+struct IRVecExtractLane {
+    std::string result;
+    std::string vec;
+    uint8_t lane;
+};
+
 struct IRReturn {
     std::optional<IRValue> value;
 };
@@ -116,7 +155,9 @@ using IRInstr =
     std::variant<IRBinOp, IRUnaryNeg, IRAssign, IRCall, IRDelayRead,
                  IRDelayReadDelayed, IRDelayWrite, IRDelayWriteQuiet,
                  IRGlobalRead, IRIf, IRInputRead, IROutputWrite, IRParamRead,
-                 IRParamWrite, IRStaticRead, IRStaticWrite, IRReturn>;
+                 IRParamWrite, IRStaticRead, IRStaticWrite, IRReturn, IRMemRead,
+                 IRMemWrite, IRVecLoad, IRVecStore, IRVecBinOp, IRVecSplat,
+                 IRVecExtractLane>;
 
 struct IRIfBody {
     std::vector<IRInstr> then_body;
@@ -160,8 +201,14 @@ struct IRModule {
     size_t num_inputs = 0;
     size_t num_outputs = 0;
     uint32_t memory_base = delay_memory_start;
+    std::unordered_map<std::string, uint32_t> static_array_bases;
+    uint32_t static_array_total_bytes = 0;
 
     [[nodiscard]] auto delay_base(const std::string &buf_name) const
         -> uint32_t;
     [[nodiscard]] auto total_delay_bytes() const -> uint32_t;
+    [[nodiscard]] auto static_array_base(const std::string &array_name) const
+        -> uint32_t;
+    auto alloc_static_array(const std::string &array_name, size_t n_elements)
+        -> uint32_t;
 };

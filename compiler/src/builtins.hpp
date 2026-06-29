@@ -8,10 +8,10 @@
 #include <unordered_map>
 #include <vector>
 
-inline constexpr std::array<std::string_view, 17> math_builtins = {
-    "sin",     "cos",      "sign",  "fract", "clip", "exp",
-    "uniform", "gaussian", "floor", "ceil",  "sqrt", "round",
-    "log",     "abs",      "tanh",  "min",   "max",
+inline constexpr std::array<std::string_view, 18> math_builtins = {
+    "sin",   "cos",     "tan",      "sign",  "fract", "clip",
+    "exp",   "uniform", "gaussian", "floor", "ceil",  "sqrt",
+    "round", "log",     "abs",      "tanh",  "min",   "max",
 };
 
 inline constexpr std::array<std::string_view, 3> language_globals = {

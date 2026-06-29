@@ -395,9 +395,10 @@ auto lsp_completions(const std::string &src, size_t /*line*/, size_t /*col*/)
         const char *detail;
         const char *kind;
     };
-    static const std::array<BuiltinItem, 25> builtins = {{
+    static const std::array<BuiltinItem, 26> builtins = {{
         {.label = "sin", .detail = "Float -> Float", .kind = "function"},
         {.label = "cos", .detail = "Float -> Float", .kind = "function"},
+        {.label = "tan", .detail = "Float -> Float", .kind = "function"},
         {.label = "sign", .detail = "Float -> Float", .kind = "function"},
         {.label = "fract", .detail = "Float -> Float", .kind = "function"},
         {.label = "clip", .detail = "Float -> Float", .kind = "function"},

@@ -14,13 +14,11 @@ static hp = array 10 {_. 0}
 static bp = array 10 {_. 0}
 static lp = array 10 {_. 0}
 
-static aux = array 10 {_. 0}
-
 R = 1/q
 
 freqs = map {a. IN[1]*a} harms
-g = map {a. sin(PI*a/SAMPLE_RATE)/cos(PI*a/SAMPLE_RATE)} freqs
-h = map {a. 1/(1 + R*a + a*a)} g
+g = map {a. tan(PI*a/SAMPLE_RATE)} freqs
+h = map {a. 1/(1 + a*(R + a))} g
 
 aux = map {a. R + a} g
 aux = zip {a b. a*b} aux ic1
@@ -43,7 +41,7 @@ ic2 = zip {a b. a + b} aux lp
 aux = zip {a b. a*b} amps bp
 
 static max_y = 1
-static rel = exp(-1/(0.1*SAMPLE_RATE))
+static rel = exp(-1/(0.01*SAMPLE_RATE))
 y = foldr 0 {a acc. a + acc} aux
 max_y = max 0.0001 (max (rel*max_y) (abs(y)))
 OUT[0] <- y/max_y

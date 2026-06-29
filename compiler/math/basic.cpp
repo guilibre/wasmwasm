@@ -129,6 +129,15 @@ auto wasmwasm_cos_f64x2(v128_t x) -> v128_t {
     return wasm_f64x2_mul(sign, poly);
 }
 
+auto wasmwasm_tan(double x) -> double {
+    return wasmwasm_sin(x) / wasmwasm_cos(x);
+}
+
+auto wasmwasm_tan_f64x2(v128_t x) -> v128_t {
+    return wasm_f64x2_make(wasmwasm_tan(wasm_f64x2_extract_lane(x, 0)),
+                           wasmwasm_tan(wasm_f64x2_extract_lane(x, 1)));
+}
+
 auto wasmwasm_sign(double x) -> double {
     if (x >= 0) return 1.0;
     return -1.0;
