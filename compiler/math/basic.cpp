@@ -178,11 +178,9 @@ auto wasmwasm_exp_f64x2(v128_t x) -> v128_t {
 namespace {
 
 [[clang::always_inline]] auto next_u01() -> double {
-    static double random_state = 0.0;
-    unsigned long long s = 0;
-    __builtin_memcpy(&s, &random_state, 8);
-    s += 0x9e3779b97f4a7c15ULL;
-    __builtin_memcpy(&random_state, &s, 8);
+    static unsigned long long random_state = __builtin_readcyclecounter();
+    random_state += 0x9e3779b97f4a7c15ULL;
+    unsigned long long s = random_state;
     s ^= s >> 30;
     s *= 0xbf58476d1ce4e5b9ULL;
     s ^= s >> 27;

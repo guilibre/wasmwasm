@@ -9,9 +9,9 @@ static dt = 1/SAMPLE_RATE
 static gate_ = 0
 static env = 0
 
-OUT[0] <- env
+OUT[0] <- IN[0] * env
 
-denv = gate ? (t < atk ? 1/(atk*SAMPLE_RATE) : (t < atk + dec ? -1/(dec*SAMPLE_RATE) : 0)) : -1/(rel*SAMPLE_RATE)
+denv = gate ? (t < atk ? 1/(atk*SAMPLE_RATE) : (env > sus & t < atk + dec ? -1/(dec*SAMPLE_RATE) : 0)) : -1/(rel*SAMPLE_RATE)
 env = min 1 (max 0 (env + denv))
 
 t = gate > gate_ ? 0 : t + dt

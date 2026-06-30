@@ -95,8 +95,7 @@ auto compile_module(const std::string &name, const std::string &src,
     };
     make_monomorphize(mono_type)(*ast);
 
-    auto ir = lower(*ast, name);
-    ir.memory_base = memory_base;
+    auto ir = lower(*ast, name, memory_base);
 
     emit_ir(ir, main_module, math_module, sample_rate);
     return ir;
@@ -126,7 +125,7 @@ auto compile_to_binary(float sample_rate, const std::string &patch_json,
         auto ir = compile_module(name, src, math_module,
                                  static_cast<double>(sample_rate), main_module,
                                  next_mem);
-        next_mem += ir.total_delay_bytes();
+        next_mem += ir.total_bytes();
         compiled.push_back(std::move(ir));
     }
 

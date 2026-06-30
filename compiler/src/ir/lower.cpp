@@ -1168,6 +1168,7 @@ struct Lowerer {
 
                         mod.functions.emplace_back(std::move(init_fn));
                         bufs.insert(name);
+                        mod.alloc_delay(name, ctor.size);
                         mod.delays.push_back({
                             .name = name,
                             .size_elements = ctor.size,
@@ -1548,9 +1549,11 @@ struct Lowerer {
 
 } // namespace
 
-auto lower(const ExprPtr &program, const std::string &module_name) -> IRModule {
+auto lower(const ExprPtr &program, const std::string &module_name,
+           uint32_t memory_base) -> IRModule {
     Lowerer l;
     l.mod.name = module_name;
+    l.mod.memory_base = memory_base;
     l.mod.init_fn = "init";
     l.pre_register_math_builtins();
     l.pre_register_fns(program);

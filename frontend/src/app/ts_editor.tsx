@@ -1,6 +1,6 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { EditorView, keymap } from '@codemirror/view';
-import { EditorState } from '@codemirror/state';
+import { EditorState, Compartment } from '@codemirror/state';
 import { defaultKeymap, indentWithTab, historyKeymap, history } from '@codemirror/commands';
 import { autocompletion } from '@codemirror/autocomplete';
 import { javascript } from '@codemirror/lang-javascript';
@@ -41,21 +41,6 @@ const editor_theme = EditorView.theme(
     { dark: true },
 );
 
-function make_ts_autocomplete(env: VirtualTypeScriptEnvironment) {
-    return async (ctx: import('@codemirror/autocomplete').CompletionContext) => {
-        const word = ctx.matchBefore(/\w+/);
-        if (!word && !ctx.explicit) return null;
-        const doc = ctx.state.doc.toString();
-        env.updateFile(TS_FILE, doc);
-        const completions = env.languageService.getCompletionsAtPosition(TS_FILE, ctx.pos, {}, {});
-        if (!completions) return null;
-        const options = completions.entries
-            .filter((e) => e.sortText <= '15')
-            .map((e) => ({ label: e.name, type: e.kind }));
-        return { from: word ? word.from : ctx.pos, options };
-    };
-}
-
 interface TsEditorProps {
     initial_value: string;
     on_change: (v: string) => void;
@@ -69,19 +54,10 @@ export function TsEditor({ initial_value, on_change, env }: TsEditorProps) {
         on_change_ref.current = on_change;
     });
 
+    const ts_compartment = useMemo(() => new Compartment(), []);
+    const view_ref = useRef<EditorView | null>(null);
+
     useEffect(() => {
-        if (env) env.updateFile(TS_FILE, initial_value);
-
-        const ts_extensions = env
-            ? [
-                  tsFacet.of({ env, path: TS_FILE }),
-                  tsSync(),
-                  tsHover(),
-                  autocompletion({ override: [make_ts_autocomplete(env)] }),
-                  tsLinter({ diagnosticCodesToIgnore: [1308, 1375] }),
-              ]
-            : [];
-
         const view = new EditorView({
             state: EditorState.create({
                 doc: initial_value,
@@ -90,8 +66,8 @@ export function TsEditor({ initial_value, on_change, env }: TsEditorProps) {
                     keymap.of([indentWithTab, ...historyKeymap, ...defaultKeymap]),
                     javascript({ typescript: true }),
                     syntaxHighlighting(highlight_style),
-                    ...ts_extensions,
                     editor_theme,
+                    ts_compartment.of([]),
                     EditorView.updateListener.of((update) => {
                         if (update.docChanged) on_change_ref.current(update.state.doc.toString());
                     }),
@@ -99,10 +75,49 @@ export function TsEditor({ initial_value, on_change, env }: TsEditorProps) {
             }),
             parent: container_ref.current!,
         });
-        return () => view.destroy();
-        // initial_value intentionally excluded: key prop handles re-init on instrument switch
+        view_ref.current = view;
+        return () => {
+            view.destroy();
+            view_ref.current = null;
+        };
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [env]);
+    }, []);
+
+    useEffect(() => {
+        const view = view_ref.current;
+        if (!view) return;
+        const ts_exts = env
+            ? [
+                  tsFacet.of({ env, path: TS_FILE }),
+                  tsSync(),
+                  tsHover(),
+                  autocompletion({
+                      override: [
+                          async (ctx) => {
+                              const word = ctx.matchBefore(/\w+/);
+                              if (!word && !ctx.explicit) return null;
+                              const doc = ctx.state.doc.toString();
+                              env.updateFile(TS_FILE, doc);
+                              const completions = env.languageService.getCompletionsAtPosition(
+                                  TS_FILE,
+                                  ctx.pos,
+                                  {},
+                                  {},
+                              );
+                              if (!completions) return null;
+                              const options = completions.entries
+                                  .filter((e) => e.sortText <= '15')
+                                  .map((e) => ({ label: e.name, type: e.kind }));
+                              return { from: word ? word.from : ctx.pos, options };
+                          },
+                      ],
+                  }),
+                  tsLinter({ diagnosticCodesToIgnore: [1308, 1375] }),
+              ]
+            : [];
+        view.dispatch({ effects: ts_compartment.reconfigure(ts_exts) });
+        if (env) env.updateFile(TS_FILE, view.state.doc.toString());
+    }, [env, ts_compartment]);
 
     return <div ref={container_ref} style={{ height: '100%' }} />;
 }

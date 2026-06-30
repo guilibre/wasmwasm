@@ -49,7 +49,7 @@ class WasmProcessor extends AudioWorkletProcessor {
             }
 
             if (event.data.type === 'load-wasm') {
-                const memory = new WebAssembly.Memory({ initial: 64, maximum: 64 });
+                const memory = new WebAssembly.Memory({ initial: 128, maximum: 128 });
 
                 const instance = await WebAssembly.instantiate(
                     event.data.module as WebAssembly.Module,

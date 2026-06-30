@@ -47,6 +47,7 @@ export default function App() {
     const audio_context_ref = useRef<AudioContext | null>(null);
     const merger_ref = useRef<GainNode | null>(null);
     const worklet_nodes_ref = useRef<Map<string, AudioWorkletNode>>(new Map());
+    const capture_nodes_ref = useRef<Set<AudioWorkletNode>>(new Set());
     const mic_source_ref = useRef<MediaStreamAudioSourceNode | null>(null);
     const analyser_l_ref = useRef<AnalyserNode | null>(null);
     const analyser_r_ref = useRef<AnalyserNode | null>(null);
@@ -212,14 +213,18 @@ export default function App() {
     useEffect(() => {
         const worker_ref = orchestra_worker_ref;
         const nodes_ref = worklet_nodes_ref;
+        const capture_ref = capture_nodes_ref;
         const ctx_ref = audio_context_ref;
         const mic_ref = mic_source_ref;
         return () => {
             worker_ref.current?.terminate();
             nodes_ref.current.forEach((n) => {
                 n.port.postMessage({ type: 'stop' });
+                n.port.postMessage({ type: 'clear' });
                 n.disconnect();
             });
+            nodes_ref.current.clear();
+            capture_ref.current.clear();
             ctx_ref.current?.close();
             mic_ref.current?.mediaStream.getTracks().forEach((t) => t.stop());
         };
@@ -429,14 +434,23 @@ export default function App() {
 
         worklet_nodes_ref.current.forEach((n) => {
             n.port.postMessage({ type: 'stop' });
+            n.port.postMessage({ type: 'clear' });
+            if (capture_nodes_ref.current.has(n)) mic_source_ref.current?.disconnect(n);
             n.disconnect();
         });
         worklet_nodes_ref.current.clear();
-        orchestra_worker_ref.current?.terminate();
-        orchestra_worker_ref.current = null;
+        capture_nodes_ref.current.clear();
         if (midi_fwd_ref.current) {
             remove_on_midi_event(midi_fwd_ref.current);
             midi_fwd_ref.current = null;
+        }
+        if (!orchestra_worker_ref.current) {
+            orchestra_worker_ref.current = new Worker(
+                new URL('../audio/orchestra_worker.ts', import.meta.url),
+                { type: 'module' },
+            );
+        } else {
+            orchestra_worker_ref.current.postMessage({ type: 'stop' });
         }
 
         const context = audio_context_ref.current!;
@@ -516,6 +530,7 @@ export default function App() {
             if (needs_capture(json)) {
                 try {
                     await setup_capture(context, node);
+                    capture_nodes_ref.current.add(node);
                 } catch (e) {
                     set_error(String(e));
                 }
@@ -531,6 +546,11 @@ export default function App() {
             });
 
             if (play_session_ref.current !== session) {
+                node.port.postMessage({ type: 'stop' });
+                node.port.postMessage({ type: 'clear' });
+                if (capture_nodes_ref.current.delete(node)) {
+                    mic_source_ref.current?.disconnect(node);
+                }
                 node.disconnect();
                 worklet_nodes_ref.current.delete(`${instr.id}:${instance_idx}`);
                 return null;
@@ -542,9 +562,7 @@ export default function App() {
             };
         };
 
-        const worker = new Worker(new URL('../audio/orchestra_worker.ts', import.meta.url), {
-            type: 'module',
-        });
+        const worker = orchestra_worker_ref.current!;
         worker.onmessage = async (e) => {
             if (e.data.type === 'setup-midi') {
                 await setup_midi();
@@ -608,6 +626,10 @@ export default function App() {
                 const node = worklet_nodes_ref.current.get(e.data.instance_id);
                 if (node) {
                     node.port.postMessage({ type: 'stop' });
+                    node.port.postMessage({ type: 'clear' });
+                    if (capture_nodes_ref.current.delete(node)) {
+                        mic_source_ref.current?.disconnect(node);
+                    }
                     node.disconnect();
                     worklet_nodes_ref.current.delete(e.data.instance_id);
                 }
@@ -622,8 +644,6 @@ export default function App() {
             audioCurrentTime: context.currentTime,
             instrument_names: [...instr_json.keys()],
         });
-        orchestra_worker_ref.current = worker;
-
         set_is_playing(true);
     };
 
@@ -636,8 +656,7 @@ export default function App() {
             await new Promise<void>((r) => setTimeout(r, dur * 1000));
             merger.gain.setValueAtTime(1, context.currentTime);
         }
-        orchestra_worker_ref.current?.terminate();
-        orchestra_worker_ref.current = null;
+        orchestra_worker_ref.current?.postMessage({ type: 'stop' });
         if (midi_fwd_ref.current) {
             remove_on_midi_event(midi_fwd_ref.current);
             midi_fwd_ref.current = null;
@@ -649,9 +668,11 @@ export default function App() {
         }
         worklet_nodes_ref.current.forEach((n) => {
             n.port.postMessage({ type: 'stop' });
+            n.port.postMessage({ type: 'clear' });
             n.disconnect();
         });
         worklet_nodes_ref.current.clear();
+        capture_nodes_ref.current.clear();
         await context?.suspend();
         set_is_playing(false);
         set_analysers(null);

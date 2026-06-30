@@ -64,7 +64,6 @@ export function OrchestraPanel({
             </div>
             <div className="instrument__editor">
                 <TsEditor
-                    key={env ? 'orchestra-typed' : 'orchestra'}
                     initial_value={code || ORCHESTRA_FALLBACK}
                     on_change={on_code_change}
                     env={env}

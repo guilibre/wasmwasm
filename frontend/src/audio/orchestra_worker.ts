@@ -3,6 +3,7 @@ import type { MidiParams } from './helpers';
 
 const worker_midi_listeners = new Map<string, (params: MidiParams) => Promise<void>>();
 let midi_setup_resolve: (() => void) | null = null;
+let abort_current: (() => void) | null = null;
 
 function worker_setup_midi(): Promise<void> {
     return new Promise((resolve) => {
@@ -59,6 +60,8 @@ function build_instrument(
     get_task_time: () => number,
     real_time: () => number,
     spawn_ctx_ref: SpawnCtxRef,
+    abort_promise: Promise<void>,
+    is_aborted: () => boolean,
 ) {
     const ev_write_head = new Int32Array(instr.event_sab, 0, 1);
     const ev_data = new DataView(instr.event_sab, 8);
@@ -73,7 +76,6 @@ function build_instrument(
 
     let active_ctx: { v: number } | null = null;
     let cursor: number | null = null;
-    const ABORT = Symbol();
 
     const write_events = (name: string, value: number, t: number) => {
         const indices = name_to_indices.get(name);
@@ -94,13 +96,17 @@ function build_instrument(
         write_events(name, value, t);
     };
 
+    const ABORT = Symbol();
     const sleep = async (s: number) => {
+        if (is_aborted()) throw ABORT;
         const my_ctx = active_ctx;
         if (my_ctx) my_ctx.v += s;
         const target = my_ctx ? my_ctx.v : get_task_time() + s;
         const wait_ms = (target - LOOKAHEAD - real_time()) * 1000;
-        if (wait_ms > 0) await new Promise<void>((r) => setTimeout(r, wait_ms));
+        if (wait_ms > 0)
+            await Promise.race([new Promise<void>((r) => setTimeout(r, wait_ms)), abort_promise]);
         active_ctx = my_ctx;
+        if (is_aborted()) throw ABORT;
     };
 
     const die = () =>
@@ -139,6 +145,12 @@ function build_instrument(
             } catch (e) {
                 if (e !== ABORT) throw e;
             } finally {
+                const end_v = active_ctx?.v;
+                if (end_v != null) {
+                    if (cursor == null || end_v > cursor) cursor = end_v;
+                    if (my_spawn_ctx && end_v > my_spawn_ctx.task_time.v)
+                        my_spawn_ctx.task_time.v = end_v;
+                }
                 spawn_ctx_ref.current = my_spawn_ctx;
                 active_ctx = prev;
             }
@@ -149,6 +161,16 @@ function build_instrument(
 
 self.onmessage = async (event: MessageEvent) => {
     const { type } = event.data as { type: string };
+
+    if (type === 'stop') {
+        abort_current?.();
+        abort_current = null;
+        for (const { reject } of pending_instances.values()) reject('stopped');
+        pending_instances.clear();
+        worker_midi_listeners.clear();
+        midi_setup_resolve = null;
+        return;
+    }
 
     if (type === 'instance-ready') {
         const { request_id, ...data } = event.data as { request_id: number } & InstrumentInit;
@@ -178,6 +200,19 @@ self.onmessage = async (event: MessageEvent) => {
 
     if (type !== 'run') return;
 
+    abort_current?.();
+    let aborted = false;
+    let abort_resolve!: () => void;
+    const abort_promise = new Promise<void>((r) => {
+        abort_resolve = r;
+    });
+    abort_current = () => {
+        aborted = true;
+        abort_resolve();
+    };
+    const is_aborted = () => aborted;
+    const ABORT = Symbol();
+
     const { orchestra_code, bpm, sampleRate, audioCurrentTime, instrument_names } = event.data as {
         orchestra_code: string;
         bpm: number;
@@ -195,6 +230,7 @@ self.onmessage = async (event: MessageEvent) => {
     const spawn_ctx_ref: SpawnCtxRef = { current: null };
 
     const instrument = (name: string) => {
+        if (is_aborted()) return Promise.reject(ABORT);
         const ctx = spawn_ctx_ref.current;
         return new Promise<Record<string, (...args: unknown[]) => unknown>>((resolve, reject) => {
             const id = next_request_id++;
@@ -208,6 +244,8 @@ self.onmessage = async (event: MessageEvent) => {
                             ctx ? () => ctx.task_time.v : get_orch_time,
                             real_time,
                             spawn_ctx_ref,
+                            abort_promise,
+                            is_aborted,
                         ),
                     );
                 },
@@ -218,18 +256,28 @@ self.onmessage = async (event: MessageEvent) => {
     };
 
     const sleep = async (s: number) => {
+        if (is_aborted()) throw ABORT;
         const ctx = spawn_ctx_ref.current;
         if (ctx) {
             ctx.task_time.v += s;
             const wait_ms = (ctx.task_time.v - LOOKAHEAD - real_time()) * 1000;
-            if (wait_ms > 0) await new Promise<void>((r) => setTimeout(r, wait_ms));
+            if (wait_ms > 0)
+                await Promise.race([
+                    new Promise<void>((r) => setTimeout(r, wait_ms)),
+                    abort_promise,
+                ]);
             spawn_ctx_ref.current = ctx;
             if (ctx.task_time.v > orch_scheduled.v) orch_scheduled.v = ctx.task_time.v;
         } else {
             orch_scheduled.v += s;
             const wait_ms = (orch_scheduled.v - LOOKAHEAD - real_time()) * 1000;
-            if (wait_ms > 0) await new Promise<void>((r) => setTimeout(r, wait_ms));
+            if (wait_ms > 0)
+                await Promise.race([
+                    new Promise<void>((r) => setTimeout(r, wait_ms)),
+                    abort_promise,
+                ]);
         }
+        if (is_aborted()) throw ABORT;
     };
 
     const sleep_beats = (beats: number) => sleep((beats * 60) / bpm);
@@ -296,6 +344,6 @@ self.onmessage = async (event: MessageEvent) => {
             ...Object.values(HELPERS_WITH_MIDI),
         );
     } catch (e) {
-        self.postMessage({ type: 'error', message: String(e) });
+        if (e !== ABORT) self.postMessage({ type: 'error', message: String(e) });
     }
 };

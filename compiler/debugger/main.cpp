@@ -26,18 +26,31 @@ auto load_file(const char *path) -> std::vector<char> {
 }
 
 auto frontend_to_patch_json(const Json::Value &root) -> std::string {
-    const auto &nodes = root["nodes"];
-    const auto &edges = root["edges"];
+    std::unordered_map<std::string, const Json::Value *> node_map;
+
+    const Json::Value *nodes_ptr = nullptr;
+    const Json::Value *edges_ptr = nullptr;
+
+    if (root.isMember("orchestra")) {
+        const auto &instr = root["orchestra"]["instruments"][0];
+        nodes_ptr = &instr["nodes"];
+        edges_ptr = &instr["edges"];
+    } else {
+        nodes_ptr = &root["nodes"];
+        edges_ptr = &root["edges"];
+    }
+
+    const auto &nodes = *nodes_ptr;
+    const auto &edges = *edges_ptr;
 
     Json::Value modules{Json::objectValue};
     Json::Value patch{Json::objectValue};
 
-    std::unordered_map<std::string, const Json::Value *> node_map;
     for (const auto &node : nodes) {
         node_map[node["id"].asString()] = &node;
         if (node["type"].asString() == "block") {
             const auto &data = node["data"];
-            modules[data["name"].asString()] = data["code"].asString();
+            modules[data["id"].asString()] = data["code"].asString();
         }
     }
 
@@ -47,8 +60,6 @@ auto frontend_to_patch_json(const Json::Value &root) -> std::string {
 
         const auto src_id = edge["source"].asString();
         const auto tgt_id = edge["target"].asString();
-        const auto src_handle = edge["sourceHandle"].asString();
-        const auto tgt_handle = edge["targetHandle"].asString();
 
         auto it_src = node_map.find(src_id);
         auto it_tgt = node_map.find(tgt_id);
@@ -57,15 +68,17 @@ auto frontend_to_patch_json(const Json::Value &root) -> std::string {
         const auto &src_node = *it_src->second;
         const auto &tgt_node = *it_tgt->second;
 
-        const std::string src_key =
-            src_node["type"].asString() == "capture"
-                ? src_handle
-                : src_node["data"]["name"].asString() + "_" + src_handle;
+        const std::string src_key = src_node["type"].asString() == "capture"
+                                        ? edge["sourceHandle"].asString()
+                                        : src_node["data"]["id"].asString() +
+                                              "_" +
+                                              edge["sourceHandle"].asString();
 
-        const std::string sink_key =
-            tgt_node["type"].asString() == "dac"
-                ? tgt_handle
-                : tgt_node["data"]["name"].asString() + "_" + tgt_handle;
+        const std::string sink_key = tgt_node["type"].asString() == "dac"
+                                         ? edge["targetHandle"].asString()
+                                         : tgt_node["data"]["id"].asString() +
+                                               "_" +
+                                               edge["targetHandle"].asString();
 
         patch[sink_key] = src_key;
     }
@@ -79,28 +92,7 @@ auto frontend_to_patch_json(const Json::Value &root) -> std::string {
     return Json::writeString(wb, out);
 }
 
-auto compile_single_module(const std::string &src, BinaryenModuleRef math_mod,
-                           BinaryenModuleRef main_mod) -> IRModule {
-    const Tokenizer tok(src);
-    Parser parser(tok);
-    const auto result = parser.parse_code();
-    if (!result) throw std::runtime_error("parse error: " + result.error().msg);
-
-    auto env = make_builtin_env();
-    Substitution subst;
-    TypeGenerator gen;
-    infer_expr(*result, env, subst, gen);
-
-    auto ir = lower(*result, "debug");
-    emit_ir(ir, main_mod, math_mod, 44100.0);
-    return ir;
-}
-
 auto run(const char *math_wasm_path) -> int {
-    std::string line;
-    std::string src;
-    while (std::getline(std::cin, line)) src += line + "\n";
-
     auto math_bin = load_file(math_wasm_path);
     auto *math_module = BinaryenModuleReadWithFeatures(
         math_bin.data(), math_bin.size(), BinaryenFeatureAll());
@@ -115,86 +107,74 @@ auto run(const char *math_wasm_path) -> int {
     }
     std::cout << "math.wasm OK\n";
 
+    const auto src = []() -> std::string {
+        std::string line;
+        std::string s;
+        while (std::getline(std::cin, line)) s += line + "\n";
+        return s;
+    }();
+
+    Json::Value root;
+    Json::Reader reader;
+    if (!reader.parse(src, root))
+        throw std::runtime_error("invalid JSON: " +
+                                 reader.getFormattedErrorMessages());
+
+    const auto patch_json = frontend_to_patch_json(root);
+    std::cout << "patch JSON: " << patch_json << "\n";
+
+    auto patch = parse_patch_json(patch_json);
+    std::cout << "parse OK\n";
+
     auto *main_module = BinaryenModuleCreate();
 
-    try {
-        const auto trimmed = src.find_first_not_of(" \t\r\n");
-        const bool is_json =
-            trimmed != std::string::npos && src[trimmed] == '{';
+    std::vector<IRModule> compiled;
+    auto next_mem = delay_memory_start;
+    for (const auto &[name, code] : patch.module_sources) {
+        const Tokenizer tok(code);
+        Parser parser(tok);
+        auto ast = parser.parse_code();
+        if (!ast)
+            throw std::runtime_error("[" + name +
+                                     "] parse error: " + ast.error().msg);
 
-        if (is_json) {
-            Json::Value root;
-            Json::Reader reader;
-            if (!reader.parse(src, root))
-                throw std::runtime_error("invalid JSON: " +
-                                         reader.getFormattedErrorMessages());
+        auto env = make_builtin_env();
+        Substitution subst;
+        TypeGenerator gen;
+        infer_expr(*ast, env, subst, gen);
 
-            std::string patch_json;
-            if (root.isMember("nodes")) {
-                patch_json = frontend_to_patch_json(root);
-                std::cout << "converted frontend JSON to patch JSON\n";
-            } else {
-                Json::StreamWriterBuilder wb;
-                wb["indentation"] = "";
-                patch_json = Json::writeString(wb, root);
-            }
-
-            auto patch = parse_patch_json(patch_json);
-            std::cout << "parse OK\n";
-
-            std::vector<IRModule> compiled;
-            auto next_mem = delay_memory_start;
-            for (const auto &[name, code] : patch.module_sources) {
-                const Tokenizer tok(code);
-                Parser parser(tok);
-                auto ast = parser.parse_code();
-                if (!ast)
-                    throw std::runtime_error(
-                        "[" + name + "] parse error: " + ast.error().msg);
-
-                auto env = make_builtin_env();
-                Substitution subst;
-                TypeGenerator gen;
-                infer_expr(*ast, env, subst, gen);
-
-                auto ir = lower(*ast, name);
-                ir.memory_base = next_mem;
-                emit_ir(ir, main_module, math_module, 44100.0);
-                next_mem += ir.total_delay_bytes();
-                compiled.push_back(std::move(ir));
-            }
-            std::cout << "lower OK\n";
-            std::cout << "emit OK\n";
-
-            auto graph = build_routing_graph(patch, std::move(compiled));
-            emit_main_loop(graph, main_module);
-            std::cout << "routing OK\n";
-        } else {
-            auto ir = compile_single_module(src, math_module, main_module);
-            std::cout << "lower OK\n";
-            std::cout << "emit OK\n";
-            (void)ir;
-        }
-    } catch (const std::exception &e) {
-        std::cout << "compile error: " << e.what() << "\n";
-        BinaryenModuleDispose(math_module);
-        BinaryenModuleDispose(main_module);
-        return 1;
+        auto ir = lower(*ast, name, next_mem);
+        std::cout << "[" << name << "] memory_base=" << ir.memory_base
+                  << " total_bytes=" << ir.total_bytes() << "\n";
+        emit_ir(ir, main_module, math_module, 44100.0);
+        next_mem += ir.total_bytes();
+        compiled.push_back(std::move(ir));
     }
-    std::cout << "compilation OK\n";
+    std::cout << "emit OK\n";
+
+    auto graph = build_routing_graph(patch, std::move(compiled));
+    emit_main_loop(graph, main_module);
+    std::cout << "routing OK\n";
 
     if (!BinaryenModuleValidate(main_module)) {
         std::cout << "INVALID MODULE\n";
+        BinaryenModulePrint(main_module);
         BinaryenModuleDispose(math_module);
         BinaryenModuleDispose(main_module);
         return 1;
     }
     std::cout << "validate OK\n";
 
+    std::cout << "\n=== WAT (pre-optimization) ===\n";
+    BinaryenModulePrint(main_module);
+
     BinaryenSetOptimizeLevel(3);
     BinaryenSetShrinkLevel(0);
     BinaryenSetFastMath(true);
     BinaryenSetLowMemoryUnused(true);
+    BinaryenSetAlwaysInlineMaxSize(100);
+    BinaryenSetFlexibleInlineMaxSize(250);
+    BinaryenSetOneCallerInlineMaxSize(250);
     BinaryenModuleOptimize(main_module);
 
     if (!BinaryenModuleValidate(main_module)) {
@@ -203,10 +183,11 @@ auto run(const char *math_wasm_path) -> int {
         BinaryenModuleDispose(main_module);
         return 1;
     }
-    std::cout << "optimization OK\n";
+    std::cout << "\n=== WAT (post-optimization) ===\n";
+    BinaryenModulePrint(main_module);
 
-    BinaryenModuleDispose(math_module);
     BinaryenModuleDispose(main_module);
+    BinaryenModuleDispose(math_module);
     return 0;
 }
 
@@ -217,7 +198,7 @@ auto main(int argc, char **argv) -> int {
     try {
         return run(math_path);
     } catch (const std::exception &e) {
-        std::cout << "unexpected error: " << e.what() << "\n";
+        std::cout << "error: " << e.what() << "\n";
         return 1;
     } catch (...) {
         std::cout << "unknown error\n";

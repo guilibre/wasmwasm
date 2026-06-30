@@ -1,0 +1,8 @@
+param g = 0.5
+buffer = delay 1000 {_. 0}
+
+x = @buffer
+y = -g*IN[0] + x
+buffer <- IN[0] + g*x
+
+OUT[0] <- y

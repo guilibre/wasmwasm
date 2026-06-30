@@ -182,7 +182,7 @@ struct IRDelayDecl {
     std::string init_fn;
 };
 
-inline constexpr uint32_t delay_memory_start = 4096;
+inline constexpr uint32_t delay_memory_start = 64 * 1024 + 1024;
 
 struct IRStaticVar {
     std::string name;
@@ -201,13 +201,16 @@ struct IRModule {
     size_t num_inputs = 0;
     size_t num_outputs = 0;
     uint32_t memory_base = delay_memory_start;
+    uint32_t next_offset = 0;
+    std::unordered_map<std::string, uint32_t> delay_bases_map;
     std::unordered_map<std::string, uint32_t> static_array_bases;
-    uint32_t static_array_total_bytes = 0;
 
     [[nodiscard]] auto delay_base(const std::string &buf_name) const
         -> uint32_t;
-    [[nodiscard]] auto total_delay_bytes() const -> uint32_t;
+    [[nodiscard]] auto total_bytes() const -> uint32_t;
     [[nodiscard]] auto static_array_base(const std::string &array_name) const
+        -> uint32_t;
+    auto alloc_delay(const std::string &delay_name, size_t n_elements)
         -> uint32_t;
     auto alloc_static_array(const std::string &array_name, size_t n_elements)
         -> uint32_t;

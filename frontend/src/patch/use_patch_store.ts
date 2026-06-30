@@ -182,7 +182,7 @@ async function elk_layout(nodes: Node[], edges: Edge[]): Promise<Node[]> {
     const min_y = all_tops.length > 0 ? Math.min(...all_tops) : 0;
     const max_y = all_bottoms.length > 0 ? Math.max(...all_bottoms) : 0;
 
-    const margin = 20;
+    const margin = 50;
 
     capture_node.x = (max_x + min_x) / 2;
     capture_node.y = min_y - NODE_H - margin;

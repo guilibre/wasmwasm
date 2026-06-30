@@ -262,13 +262,13 @@ auto emit_stmts(FnCtx &ctx, const std::vector<IRInstr> &body)
                 if constexpr (std::is_same_v<T, IRDelayReadDelayed>) {
                     const auto base = ctx.ir->delay_base(i.delay);
                     const auto pname = pfx(*ctx.ir, i.delay);
-                    const auto &buf = [&]() -> const IRDelayDecl & {
+                    const auto &delay = [&]() -> const IRDelayDecl & {
                         for (const auto &b : ctx.ir->delays)
                             if (b.name == i.delay) return b;
                         throw std::runtime_error("Unknown delay: " + i.delay);
                     }();
                     const auto size_bytes =
-                        static_cast<int32_t>(buf.size_elements * 8);
+                        static_cast<int32_t>(delay.size_elements * 8);
                     auto *mod = ctx.mod;
                     const auto didx = ctx.idx.at(i.delay_ref);
 
@@ -389,12 +389,12 @@ auto emit_stmts(FnCtx &ctx, const std::vector<IRInstr> &body)
                 }
                 if constexpr (std::is_same_v<T, IRDelayWrite>) {
                     const auto base = ctx.ir->delay_base(i.delay);
-                    const auto &buf = *std::ranges::find_if(
+                    const auto &delay = *std::ranges::find_if(
                         ctx.ir->delays, [&](const IRDelayDecl &b) -> bool {
                             return b.name == i.delay;
                         });
                     const auto size_bytes =
-                        static_cast<int32_t>(buf.size_elements * 8);
+                        static_cast<int32_t>(delay.size_elements * 8);
                     const auto pname = pfx(*ctx.ir, i.delay);
                     auto *ptr = BinaryenGlobalGet(ctx.mod, pname.c_str(),
                                                   BinaryenTypeInt32());
@@ -416,12 +416,12 @@ auto emit_stmts(FnCtx &ctx, const std::vector<IRInstr> &body)
                 }
                 if constexpr (std::is_same_v<T, IRDelayWriteQuiet>) {
                     const auto base = ctx.ir->delay_base(i.delay);
-                    const auto &buf = *std::ranges::find_if(
+                    const auto &delay = *std::ranges::find_if(
                         ctx.ir->delays, [&](const IRDelayDecl &b) -> bool {
                             return b.name == i.delay;
                         });
                     const auto size_bytes =
-                        static_cast<int32_t>(buf.size_elements * 8);
+                        static_cast<int32_t>(delay.size_elements * 8);
                     const auto pname = pfx(*ctx.ir, i.delay);
                     auto *mod = ctx.mod;
                     auto *ptr = BinaryenGlobalGet(mod, pname.c_str(),
@@ -611,9 +611,9 @@ void emit_init_delays(const IRModule &ir, BinaryenModuleRef mod) {
     std::vector<BinaryenExpressionRef> all_loops;
     std::array<BinaryenType, 1> idx_type = {BinaryenTypeInt32()};
 
-    for (const auto &buf : ir.delays) {
-        const auto base = ir.delay_base(buf.name);
-        const auto n = static_cast<int32_t>(buf.size_elements);
+    for (const auto &delay : ir.delays) {
+        const auto base = ir.delay_base(delay.name);
+        const auto n = static_cast<int32_t>(delay.size_elements);
 
         const auto idx_local = [&]() -> BinaryenExpressionRef {
             return BinaryenLocalGet(mod, 0, BinaryenTypeInt32());
@@ -622,7 +622,7 @@ void emit_init_delays(const IRModule &ir, BinaryenModuleRef mod) {
             BinaryenUnary(mod, BinaryenConvertUInt32ToFloat64(), idx_local());
 
         std::array<BinaryenExpressionRef, 1> call_args = {i_as_f64};
-        const auto init_fn_name = pfx(ir, buf.init_fn);
+        const auto init_fn_name = pfx(ir, delay.init_fn);
         auto *init_val =
             BinaryenCall(mod, init_fn_name.c_str(), call_args.data(), 1,
                          BinaryenTypeFloat64());
@@ -639,7 +639,7 @@ void emit_init_delays(const IRModule &ir, BinaryenModuleRef mod) {
                            BinaryenLocalGet(mod, 0, BinaryenTypeInt32()),
                            BinaryenConst(mod, BinaryenLiteralInt32(1))));
 
-        const auto loop_label = pfx(ir, buf.name + "$init_loop");
+        const auto loop_label = pfx(ir, delay.name + "$init_loop");
         auto *br = BinaryenBreak(
             mod, loop_label.c_str(),
             BinaryenBinary(mod, BinaryenLtUInt32(),
@@ -848,12 +848,12 @@ auto emit_body_vec(FnCtxVec &ctx, const std::vector<IRInstr> &body)
                 }
                 if constexpr (std::is_same_v<T, IRDelayWrite>) {
                     const auto base = ctx.ir->delay_base(i.delay);
-                    const auto &buf = *std::ranges::find_if(
+                    const auto &delay = *std::ranges::find_if(
                         ctx.ir->delays, [&](const IRDelayDecl &b) -> bool {
                             return b.name == i.delay;
                         });
                     const auto size_bytes =
-                        static_cast<int32_t>(buf.size_elements * 8);
+                        static_cast<int32_t>(delay.size_elements * 8);
                     const auto pname = pfx(*ctx.ir, i.delay);
                     auto *ptr = BinaryenGlobalGet(ctx.mod, pname.c_str(),
                                                   BinaryenTypeInt32());
@@ -875,12 +875,12 @@ auto emit_body_vec(FnCtxVec &ctx, const std::vector<IRInstr> &body)
                 }
                 if constexpr (std::is_same_v<T, IRDelayWriteQuiet>) {
                     const auto base = ctx.ir->delay_base(i.delay);
-                    const auto &buf = *std::ranges::find_if(
+                    const auto &delay = *std::ranges::find_if(
                         ctx.ir->delays, [&](const IRDelayDecl &b) -> bool {
                             return b.name == i.delay;
                         });
                     const auto size_bytes =
-                        static_cast<int32_t>(buf.size_elements * 8);
+                        static_cast<int32_t>(delay.size_elements * 8);
                     const auto pname = pfx(*ctx.ir, i.delay);
                     auto *mod = ctx.mod;
                     auto *ptr = BinaryenGlobalGet(mod, pname.c_str(),
@@ -998,32 +998,29 @@ auto is_main_vec_eligible(const IRModule &ir) -> bool {
 } // namespace
 
 auto IRModule::delay_base(const std::string &buf_name) const -> uint32_t {
-    auto addr = memory_base;
-    for (const auto &b : delays) {
-        if (b.name == buf_name) return addr;
-        addr += static_cast<uint32_t>(b.size_elements * 8);
-    }
-    throw std::runtime_error("Unknown delay: " + buf_name);
+    return delay_bases_map.at(buf_name);
 }
 
-auto IRModule::total_delay_bytes() const -> uint32_t {
-    uint32_t total = 0;
-    for (const auto &b : delays)
-        total += static_cast<uint32_t>(b.size_elements * 8);
-    return total;
-}
+auto IRModule::total_bytes() const -> uint32_t { return next_offset; }
 
 auto IRModule::static_array_base(const std::string &array_name) const
     -> uint32_t {
     return static_array_bases.at(array_name);
 }
 
+auto IRModule::alloc_delay(const std::string &delay_name, size_t n_elements)
+    -> uint32_t {
+    const auto base = memory_base + next_offset;
+    delay_bases_map[delay_name] = base;
+    next_offset += static_cast<uint32_t>(n_elements * 8);
+    return base;
+}
+
 auto IRModule::alloc_static_array(const std::string &array_name,
                                   size_t n_elements) -> uint32_t {
-    const auto base =
-        memory_base + total_delay_bytes() + static_array_total_bytes;
+    const auto base = memory_base + next_offset;
     static_array_bases[array_name] = base;
-    static_array_total_bytes += static_cast<uint32_t>(n_elements * 8);
+    next_offset += static_cast<uint32_t>(n_elements * 8);
     return base;
 }
 
@@ -1034,15 +1031,16 @@ void emit_ir(const IRModule &ir, BinaryenModuleRef mod,
         BinaryenAddMemoryImport(mod, "memory", "env", "memory", 0);
 
     if (BinaryenGetFunction(mod, "wasmwasm_sin") == nullptr) {
-        BinaryenAddMemoryImport(mod, "0", "env", "memory", 0);
+        if (BinaryenHasMemory(math_module))
+            BinaryenAddMemoryImport(mod, "0", "env", "memory", 0);
         import_math(mod, math_module);
     }
 
     for (const auto &fn : ir.functions) emit_function(fn, mod, sample_rate, ir);
 
-    for (const auto &buf : ir.delays) {
-        const auto bname = pfx(ir, buf.name);
-        BinaryenAddGlobal(mod, bname.c_str(), BinaryenTypeInt32(), true,
+    for (const auto &delay : ir.delays) {
+        const auto delay_name = pfx(ir, delay.name);
+        BinaryenAddGlobal(mod, delay_name.c_str(), BinaryenTypeInt32(), true,
                           BinaryenConst(mod, BinaryenLiteralInt32(0)));
     }
 
