@@ -33,8 +33,8 @@ const async_function = Object.getPrototypeOf(async function () {}).constructor a
     ...args: string[]
 ) => (...args: unknown[]) => Promise<void>;
 
-const EVENT_CAPACITY = 256;
-const LOOKAHEAD = 0.2;
+const EVENT_CAPACITY = 1024;
+const LOOKAHEAD = 0.1;
 
 interface InstrumentInit {
     name: string;
@@ -63,6 +63,7 @@ function build_instrument(
     abort_promise: Promise<void>,
     is_aborted: () => boolean,
     birth_time: number,
+    abort_sym: symbol,
 ) {
     const ev_write_head = new Int32Array(instr.event_sab, 0, 1);
     const ev_data = new DataView(instr.event_sab, 8);
@@ -97,9 +98,8 @@ function build_instrument(
         write_events(name, value, t);
     };
 
-    const ABORT = Symbol();
     const sleep = async (s: number) => {
-        if (is_aborted()) throw ABORT;
+        if (is_aborted()) throw abort_sym;
         const my_ctx = active_ctx;
         if (my_ctx) my_ctx.v += s;
         const target = my_ctx ? my_ctx.v : get_task_time() + s;
@@ -107,7 +107,7 @@ function build_instrument(
         if (wait_ms > 0)
             await Promise.race([new Promise<void>((r) => setTimeout(r, wait_ms)), abort_promise]);
         active_ctx = my_ctx;
-        if (is_aborted()) throw ABORT;
+        if (is_aborted()) throw abort_sym;
     };
 
     const die = () => {
@@ -145,8 +145,6 @@ function build_instrument(
             cursor = start;
             try {
                 return await fn(...args);
-            } catch (e) {
-                if (e !== ABORT) throw e;
             } finally {
                 const end_v = active_ctx?.v;
                 if (end_v != null) {
@@ -226,6 +224,7 @@ self.onmessage = async (event: MessageEvent) => {
         global_code,
         global_param_names,
         global_event_sab,
+        clock_sab,
     } = event.data as {
         session: number;
         orchestra_code: string;
@@ -236,10 +235,20 @@ self.onmessage = async (event: MessageEvent) => {
         global_code?: string;
         global_param_names?: string[];
         global_event_sab?: SharedArrayBuffer;
+        clock_sab: SharedArrayBuffer;
     };
 
     const perf_origin = performance.now();
-    const real_time = () => audioCurrentTime + (performance.now() - perf_origin) / 1000;
+    const clock_view = new BigInt64Array(clock_sab);
+    let last_valid_frame = Math.round(audioCurrentTime * sampleRate);
+    const real_time = () => {
+        const frame = Number(Atomics.load(clock_view, 0));
+        if (frame > last_valid_frame) {
+            last_valid_frame = frame;
+            return frame / sampleRate;
+        }
+        return audioCurrentTime + (performance.now() - perf_origin) / 1000;
+    };
 
     const orch_scheduled = { v: audioCurrentTime + LOOKAHEAD };
     const get_orch_time = () => Math.max(orch_scheduled.v, real_time() + LOOKAHEAD);
@@ -270,6 +279,7 @@ self.onmessage = async (event: MessageEvent) => {
                 abort_promise,
                 is_aborted,
                 birth_time,
+                ABORT,
             ),
         );
     };
@@ -294,6 +304,7 @@ self.onmessage = async (event: MessageEvent) => {
                             abort_promise,
                             is_aborted,
                             birth_time,
+                            ABORT,
                         ),
                     );
                 },
@@ -370,7 +381,7 @@ self.onmessage = async (event: MessageEvent) => {
     try {
         const stop = (dur: number = 1) => {
             const ctx = spawn_ctx_ref.current;
-            const t = (ctx ? ctx.task_time.v : get_orch_time()) + LOOKAHEAD;
+            const t = ctx ? ctx.task_time.v : get_orch_time();
             self.postMessage({ type: 'stop', dur, time: t, session });
         };
         const builtins = {

@@ -1,4 +1,4 @@
-const EVENT_CAPACITY = 256;
+const EVENT_CAPACITY = 1024;
 const inv_sample_rate = 1 / sampleRate;
 
 interface WasmExports extends WebAssembly.Exports {
@@ -26,6 +26,7 @@ class WasmProcessor extends AudioWorkletProcessor {
     stopped = false;
     start_frame = 0;
     stop_frame = Infinity;
+    clock_view: BigInt64Array | null = null;
 
     _ready_sent = false;
     instance: WebAssembly.Instance | null = null;
@@ -97,6 +98,9 @@ class WasmProcessor extends AudioWorkletProcessor {
                 this.ev_read_head = new Int32Array(event.data.event_sab, 4, 1);
                 this.ev_data = new DataView(event.data.event_sab, 8);
                 this.param_export_names = event.data.param_export_names;
+                if (event.data.clock_sab) {
+                    this.clock_view = new BigInt64Array(event.data.clock_sab);
+                }
                 if (this.instance) {
                     const exports = this.instance.exports as WasmExports;
                     this.param_exports = this.param_export_names.map(
@@ -134,6 +138,15 @@ class WasmProcessor extends AudioWorkletProcessor {
         Atomics.store(this.ev_read_head!, 0, rh);
     }
 
+    private get_next_event_frame(): number {
+        if (!this.ev_data) return Number.MAX_SAFE_INTEGER;
+        const wh = Atomics.load(this.ev_write_head!, 0);
+        const rh = Atomics.load(this.ev_read_head!, 0);
+        if (rh === wh) return Number.MAX_SAFE_INTEGER;
+        const slot = (rh % EVENT_CAPACITY) * 16;
+        return this.ev_data.getInt32(slot, true);
+    }
+
     process(inputs: Float32Array[][], outputs: Float32Array[][]): boolean {
         if (!this.heap) return !this.stopped;
 
@@ -143,29 +156,65 @@ class WasmProcessor extends AudioWorkletProcessor {
 
         const begin = Math.max(0, this.start_frame - currentFrame);
         const end = Math.min(num_samples, this.stop_frame - currentFrame);
-        const n_run = end - begin;
 
-        this.consume_events(currentFrame);
+        if (this.clock_view) Atomics.store(this.clock_view, 0, BigInt(currentFrame));
 
         const heap = this.heap;
 
-        if (this.has_ext) {
-            const ext_base_floats = n_run * this.num_out_channels;
-            let channel_offset = 0;
-            for (let group = 0; group < this.external_inputs.length; group++) {
-                const { channels } = this.external_inputs[group];
-                const pin = this.is_global ? inputs[group] : inputs[0];
-                for (let ch = 0; ch < channels; ch++) {
-                    const dst = ext_base_floats + (channel_offset + ch) * n_run;
-                    const src = pin?.[ch];
-                    if (src) heap.set(src.subarray(begin, end), dst);
-                    else heap.fill(0, dst, dst + n_run);
+        let pos = begin;
+        let frame = currentFrame + begin;
+        while (pos < end) {
+            const next_event_frame = this.get_next_event_frame();
+            const chunk_end = Math.min(end, Math.max(pos, next_event_frame - currentFrame));
+            const chunk_len = chunk_end - pos;
+
+            if (chunk_len > 0) {
+                if (this.has_ext) {
+                    const ext_base_floats = chunk_len * this.num_out_channels;
+                    let channel_offset = 0;
+                    for (let group = 0; group < this.external_inputs.length; group++) {
+                        const { channels } = this.external_inputs[group];
+                        const pin = this.is_global ? inputs[group] : inputs[0];
+                        for (let ch = 0; ch < channels; ch++) {
+                            const dst = ext_base_floats + (channel_offset + ch) * chunk_len;
+                            const src = pin?.[ch];
+                            if (src) heap.set(src.subarray(pos, chunk_end), dst);
+                            else heap.fill(0, dst, dst + chunk_len);
+                        }
+                        channel_offset += channels;
+                    }
+                    this.main(0, ext_base_floats * 4, chunk_len, this.num_out_channels);
+                } else {
+                    this.main(0, chunk_len, this.num_out_channels);
                 }
-                channel_offset += channels;
+
+                for (let ch = 0; ch < this.num_out_channels; ch++) {
+                    const out_ch = outputs[0][ch];
+                    if (out_ch) {
+                        out_ch.set(heap.subarray(ch * chunk_len, (ch + 1) * chunk_len), pos);
+                    }
+                }
             }
-            this.main(0, ext_base_floats * 4, n_run, this.num_out_channels);
-        } else {
-            this.main(0, n_run, this.num_out_channels);
+
+            pos = chunk_end;
+            frame += chunk_len;
+
+            if (frame < end + currentFrame) {
+                this.consume_events(frame);
+            }
+        }
+
+        if (begin > 0) {
+            for (let ch = 0; ch < this.num_out_channels; ch++) {
+                const out_ch = outputs[0][ch];
+                if (out_ch) out_ch.fill(0, 0, begin);
+            }
+        }
+        if (end < num_samples) {
+            for (let ch = 0; ch < this.num_out_channels; ch++) {
+                const out_ch = outputs[0][ch];
+                if (out_ch) out_ch.fill(0, end, num_samples);
+            }
         }
 
         if (!this._ready_sent && this.ev_data) {
@@ -173,19 +222,45 @@ class WasmProcessor extends AudioWorkletProcessor {
             this.port.postMessage({ type: 'ready', startTime: currentFrame * inv_sample_rate });
         }
 
-        for (let ch = 0; ch < this.num_out_channels; ch++) {
-            const out_ch = outputs[0][ch];
-            if (out_ch) {
-                if (begin > 0) out_ch.fill(0, 0, begin);
-                out_ch.set(heap.subarray(ch * n_run, (ch + 1) * n_run), begin);
-                if (end < num_samples) out_ch.fill(0, end);
-            }
-        }
-
         return currentFrame + num_samples < this.stop_frame;
     }
 }
 
+class RecorderProcessor extends AudioWorkletProcessor {
+    stopped = false;
+
+    constructor() {
+        super();
+        this.port.onmessage = (event: MessageEvent) => {
+            if (event.data.type === 'stop') {
+                this.stopped = true;
+            }
+        };
+    }
+
+    process(inputs: Float32Array[][]): boolean {
+        const input = inputs[0];
+        if (input.length >= 1 && input[0].length > 0) {
+            const num_channels = input.length;
+            const frame_count = input[0].length;
+            const chunk = new Float32Array(frame_count * num_channels);
+            for (let ch = 0; ch < num_channels; ch++) {
+                const src = input[ch];
+                for (let i = 0; i < frame_count; i++) {
+                    chunk[i * num_channels + ch] = src[i];
+                }
+            }
+            this.port.postMessage({ type: 'chunk', data: chunk, num_channels }, [chunk.buffer]);
+        }
+        if (this.stopped) {
+            this.port.postMessage({ type: 'finished' });
+            return false;
+        }
+        return true;
+    }
+}
+
 registerProcessor('wasm-processor', WasmProcessor);
+registerProcessor('wasm-recorder', RecorderProcessor);
 
 export default null;

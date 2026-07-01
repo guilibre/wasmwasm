@@ -1,0 +1,13 @@
+param gate = 0
+static gate_ = 0
+param start = 1
+param end = 0
+param time = 1
+
+k = 1 - exp(log(0.001)/(time*SAMPLE_RATE))
+static t = end
+
+OUT[0] <- t
+
+t = t + k*(end - t)
+gate > gate_ ? t = start

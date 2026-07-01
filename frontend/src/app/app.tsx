@@ -56,12 +56,19 @@ export default function App() {
     const orchestra_worker_ref = useRef<Worker | null>(null);
     const midi_fwd_ref = useRef<string | null>(null);
     const play_session_ref = useRef(0);
+    const play_inflight_ref = useRef<Promise<void> | null>(null);
     const patch_cache_ref = useRef<Map<string, { json: string; compiled: CompiledPatch }>>(
         new Map(),
     );
+    const recorder_node_ref = useRef<AudioWorkletNode | null>(null);
+    const recorded_buffers_ref = useRef<Float32Array[]>([]);
+    const recorded_length_ref = useRef(0);
+    const recorded_channels_ref = useRef(2);
     const ts_ref = useRef<typeof import('typescript') | null>(null);
     const [analysers, set_analysers] = useState<{ l: AnalyserNode; r: AnalyserNode } | null>(null);
     const [is_playing, set_is_playing] = useState(false);
+    const [is_recording, set_is_recording] = useState(false);
+    const is_recording_ref = useRef(false);
     const [error, set_error] = useState<string | null>(null);
     const import_ref = useRef<HTMLInputElement>(null);
     const editor_ref = useRef<WWEditorHandle>(null);
@@ -400,6 +407,157 @@ export default function App() {
         set_compile_status((prev) => new Map(prev).set(key, status));
     };
 
+    const clear_recording_data = () => {
+        recorded_buffers_ref.current.length = 0;
+        recorded_length_ref.current = 0;
+    };
+
+    const download_blob = (blob: Blob, filename: string) => {
+        const url = URL.createObjectURL(blob);
+        const anchor = document.createElement('a');
+        anchor.href = url;
+        anchor.download = filename;
+        anchor.click();
+        URL.revokeObjectURL(url);
+    };
+
+    const encode_wav = (
+        buffers: Float32Array[],
+        length: number,
+        sample_rate: number,
+        num_channels: number = 2,
+    ): Blob => {
+        const bytes_per_sample = 2;
+        const block_align = num_channels * bytes_per_sample;
+        const data_size = length * bytes_per_sample;
+        const array_buffer = new ArrayBuffer(44 + data_size);
+        const view = new DataView(array_buffer);
+        let offset = 0;
+        const write_string = (s: string) => {
+            for (let i = 0; i < s.length; i++) {
+                view.setUint8(offset++, s.charCodeAt(i));
+            }
+        };
+        write_string('RIFF');
+        view.setUint32(offset, 36 + data_size, true);
+        offset += 4;
+        write_string('WAVE');
+        write_string('fmt ');
+        view.setUint32(offset, 16, true);
+        offset += 4;
+        view.setUint16(offset, 1, true);
+        offset += 2;
+        view.setUint16(offset, num_channels, true);
+        offset += 2;
+        view.setUint32(offset, sample_rate, true);
+        offset += 4;
+        view.setUint32(offset, sample_rate * block_align, true);
+        offset += 4;
+        view.setUint16(offset, block_align, true);
+        offset += 2;
+        view.setUint16(offset, bytes_per_sample * 8, true);
+        offset += 2;
+        write_string('data');
+        view.setUint32(offset, data_size, true);
+        offset += 4;
+
+        let sample_offset = offset;
+        for (const chunk of buffers) {
+            for (let i = 0; i < chunk.length; i++) {
+                const sample = Math.max(-1, Math.min(1, chunk[i]));
+                view.setInt16(sample_offset, sample < 0 ? sample * 0x8000 : sample * 0x7fff, true);
+                sample_offset += 2;
+            }
+        }
+
+        return new Blob([array_buffer], { type: 'audio/wav' });
+    };
+
+    const create_recorder_node = (context: AudioContext) => {
+        const node = new AudioWorkletNode(context, 'wasm-recorder', {
+            numberOfInputs: 1,
+            numberOfOutputs: 0,
+            channelCount: 2,
+            channelCountMode: 'explicit',
+        });
+        node.port.onmessage = (event: MessageEvent) => {
+            if (event.data.type !== 'chunk') return;
+            const chunk = event.data.data as Float32Array;
+            recorded_channels_ref.current = event.data.num_channels ?? 2;
+            recorded_buffers_ref.current.push(chunk);
+            recorded_length_ref.current += chunk.length;
+        };
+        return node;
+    };
+
+    const start_recording = async () => {
+        if (is_recording) return;
+        const context = audio_context_ref.current;
+        const merger = merger_ref.current;
+        if (!context || !merger) return;
+        clear_recording_data();
+        const node = create_recorder_node(context);
+        merger.connect(node);
+        recorder_node_ref.current = node;
+        is_recording_ref.current = true;
+        set_is_recording(true);
+    };
+
+    const stop_recording = async () => {
+        const node = recorder_node_ref.current;
+        if (!node) return;
+        is_recording_ref.current = false;
+        set_is_recording(false);
+
+        let finished = false;
+        const finish_promise = new Promise<void>((resolve) => {
+            const timeout = window.setTimeout(() => {
+                finished = true;
+                resolve();
+            }, 200);
+            node.port.onmessage = (event: MessageEvent) => {
+                if (event.data.type === 'chunk') {
+                    const chunk = event.data.data as Float32Array;
+                    recorded_channels_ref.current = event.data.num_channels ?? 2;
+                    recorded_buffers_ref.current.push(chunk);
+                    recorded_length_ref.current += chunk.length;
+                }
+                if (event.data.type === 'finished') {
+                    if (!finished) {
+                        finished = true;
+                        window.clearTimeout(timeout);
+                        resolve();
+                    }
+                }
+            };
+        });
+
+        node.port.postMessage({ type: 'stop' });
+        await finish_promise;
+
+        node.disconnect();
+        recorder_node_ref.current = null;
+
+        const context = audio_context_ref.current;
+        if (context && recorded_length_ref.current > 0) {
+            const blob = encode_wav(
+                recorded_buffers_ref.current,
+                recorded_length_ref.current,
+                context.sampleRate,
+                recorded_channels_ref.current,
+            );
+            download_blob(blob, `wasmwasm-recording-${Date.now()}.wav`);
+        }
+        clear_recording_data();
+    };
+
+    const record = async () => {
+        if (is_recording) return;
+        set_error(null);
+        if (!is_playing) await play();
+        await start_recording();
+    };
+
     const compile_patch = useCallback(async () => {
         set_error(null);
         const sample_rate = audio_context_ref.current?.sampleRate ?? 44100;
@@ -513,7 +671,7 @@ export default function App() {
         }
     }, [orchestra.code]);
 
-    const play = async () => {
+    const play_impl = async () => {
         set_error(null);
         const my_session = ++play_session_ref.current;
 
@@ -577,6 +735,11 @@ export default function App() {
         const context = audio_context_ref.current!;
         const merger = merger_ref.current!;
         await context.resume();
+
+        const clock_sab = new SharedArrayBuffer(8);
+        new BigInt64Array(clock_sab)[0] = BigInt(
+            Math.round(context.currentTime * context.sampleRate),
+        );
 
         const ts = await import('typescript');
 
@@ -689,6 +852,7 @@ export default function App() {
                 input_sab: global_params.input_sab,
                 event_sab: global_params.event_sab,
                 param_export_names: global_params.param_export_names,
+                clock_sab,
             });
             await global_ready;
             global_node_ref.current = global_node;
@@ -743,6 +907,7 @@ export default function App() {
                 input_sab: params.input_sab,
                 event_sab: params.event_sab,
                 param_export_names: params.param_export_names,
+                clock_sab,
             });
 
             if (play_session_ref.current !== session) {
@@ -856,8 +1021,18 @@ export default function App() {
             global_code: compiled_global_code,
             global_param_names: global_params?.param_names,
             global_event_sab: global_params?.event_sab,
+            clock_sab,
         });
         set_is_playing(true);
+    };
+
+    const play = async () => {
+        if (play_inflight_ref.current) return play_inflight_ref.current;
+        const run = play_impl().finally(() => {
+            play_inflight_ref.current = null;
+        });
+        play_inflight_ref.current = run;
+        return run;
     };
 
     const stop = async (dur: number = 1, time?: number) => {
@@ -883,6 +1058,9 @@ export default function App() {
             }
             const wait = Math.max(0, (start + dur - context.currentTime) * 1000);
             await new Promise<void>((r) => setTimeout(r, wait));
+        }
+        if (is_recording_ref.current) {
+            await stop_recording();
         }
         orchestra_worker_ref.current?.postMessage({ type: 'stop' });
         if (midi_fwd_ref.current) {
@@ -918,6 +1096,7 @@ export default function App() {
                 <button onClick={is_playing ? () => stop(0) : play}>
                     {is_playing ? 'Stop' : 'Play'}
                 </button>
+                <button onClick={record}>{is_recording ? 'Recording…' : 'Record'}</button>
                 <button onClick={export_patch}>Export</button>
                 <button onClick={() => import_ref.current?.click()}>Import</button>
                 <input

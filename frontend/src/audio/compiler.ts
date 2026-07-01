@@ -166,7 +166,7 @@ export default class WasmWasm {
     static make_params(compiled: CompiledPatch): PatchParams {
         const { param_names, param_export_names, defaults_by_export } = compiled;
         const input_sab = new SharedArrayBuffer(param_names.length * 8);
-        const event_sab = new SharedArrayBuffer(8 + 256 * 16);
+        const event_sab = new SharedArrayBuffer(8 + 1024 * 16);
         const input_view = new Float64Array(input_sab);
         for (let i = 0; i < param_export_names.length; i++) {
             const d = defaults_by_export[param_export_names[i]];
