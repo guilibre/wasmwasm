@@ -1,6 +1,5 @@
 import type { VirtualTypeScriptEnvironment } from '@typescript/vfs';
 import { TsEditor } from './ts_editor';
-import { ORCHESTRA_FALLBACK } from './ts_env';
 import './instrument.scss';
 
 interface Props {
@@ -63,11 +62,7 @@ export function OrchestraPanel({
                 </div>
             </div>
             <div className="instrument__editor">
-                <TsEditor
-                    initial_value={code || ORCHESTRA_FALLBACK}
-                    on_change={on_code_change}
-                    env={env}
-                />
+                <TsEditor initial_value={code} on_change={on_code_change} env={env} />
             </div>
         </div>
     );

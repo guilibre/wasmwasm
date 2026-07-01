@@ -1,6 +1,11 @@
-static t = 0
+param freq = 440
 
-OUT[0] <- IN[0] * (4 * (t < 0.5 ? t : 1 - t) - 1)
+static t = 0.25
 
-dt = IN[1] / SAMPLE_RATE
-t = t < 1 ? t + dt : t + dt - 1
+OUT[0] <- IN[0]*(4*(t < 0.5 ? t : 1 - t) - 1)
+
+static sr_inv = 1/SAMPLE_RATE
+
+dt = freq*sr_inv
+t = t + dt
+t >= 1 ? t = t - 1

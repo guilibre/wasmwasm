@@ -4,7 +4,8 @@ param q = 1
 static low = 0
 static band = 0
 
-g = 2*sin(PI*cf/SAMPLE_RATE)
+static sr_inv = 1/SAMPLE_RATE
+g = 2*sin(PI*cf*sr_inv)
 R = 1/q
 
 low  = low + g*band

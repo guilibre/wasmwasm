@@ -1,0 +1,11 @@
+param echo_delay = 1
+param decay = 0.8
+
+buffer = delay 48000 {_. 0}
+static idx = 0
+
+out = IN[0] + decay*@[idx]buffer
+OUT[0] <- out
+@[idx]buffer = out
+idx = idx + 1
+idx >= echo_delay*SAMPLE_RATE ? idx = 0

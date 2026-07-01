@@ -34,7 +34,7 @@ const async_function = Object.getPrototypeOf(async function () {}).constructor a
 ) => (...args: unknown[]) => Promise<void>;
 
 const EVENT_CAPACITY = 256;
-const LOOKAHEAD = 0.1;
+const LOOKAHEAD = 0.2;
 
 interface InstrumentInit {
     name: string;
@@ -62,6 +62,7 @@ function build_instrument(
     spawn_ctx_ref: SpawnCtxRef,
     abort_promise: Promise<void>,
     is_aborted: () => boolean,
+    birth_time: number,
 ) {
     const ev_write_head = new Int32Array(instr.event_sab, 0, 1);
     const ev_data = new DataView(instr.event_sab, 8);
@@ -75,7 +76,7 @@ function build_instrument(
     }
 
     let active_ctx: { v: number } | null = null;
-    let cursor: number | null = null;
+    let cursor: number = birth_time;
 
     const write_events = (name: string, value: number, t: number) => {
         const indices = name_to_indices.get(name);
@@ -109,8 +110,10 @@ function build_instrument(
         if (is_aborted()) throw ABORT;
     };
 
-    const die = () =>
-        self.postMessage({ type: 'destroy-instance', instance_id: instr.instance_id });
+    const die = () => {
+        const t = active_ctx?.v ?? get_task_time();
+        self.postMessage({ type: 'destroy-instance', instance_id: instr.instance_id, time: t });
+    };
 
     const fn_names = [...instr.code.matchAll(/^(?:async\s+)?function\s+(\w+)/gm)].map((m) => m[1]);
     if (fn_names.length === 0) return { kill: die };
@@ -137,7 +140,7 @@ function build_instrument(
         wrapped[name] = async (...args: unknown[]) => {
             const my_spawn_ctx = spawn_ctx_ref.current;
             const prev = active_ctx;
-            const start = Math.max(cursor ?? get_task_time(), get_task_time());
+            const start = Math.max(cursor, get_task_time());
             active_ctx = { v: start };
             cursor = start;
             try {
@@ -214,6 +217,7 @@ self.onmessage = async (event: MessageEvent) => {
     const ABORT = Symbol();
 
     const {
+        session,
         orchestra_code,
         bpm,
         sampleRate,
@@ -223,6 +227,7 @@ self.onmessage = async (event: MessageEvent) => {
         global_param_names,
         global_event_sab,
     } = event.data as {
+        session: number;
         orchestra_code: string;
         bpm: number;
         sampleRate: number;
@@ -254,6 +259,7 @@ self.onmessage = async (event: MessageEvent) => {
     const global = () => {
         if (!global_init) return Promise.reject(new Error('No global module available'));
         const ctx = spawn_ctx_ref.current;
+        const birth_time = ctx ? ctx.task_time.v : get_orch_time();
         return Promise.resolve(
             build_instrument(
                 global_init,
@@ -263,6 +269,7 @@ self.onmessage = async (event: MessageEvent) => {
                 spawn_ctx_ref,
                 abort_promise,
                 is_aborted,
+                birth_time,
             ),
         );
     };
@@ -270,6 +277,8 @@ self.onmessage = async (event: MessageEvent) => {
     const instrument = (name: string) => {
         if (is_aborted()) return Promise.reject(ABORT);
         const ctx = spawn_ctx_ref.current;
+        const birth_time = ctx ? ctx.task_time.v : get_orch_time();
+        if (!ctx && birth_time > orch_scheduled.v) orch_scheduled.v = birth_time;
         return new Promise<Record<string, (...args: unknown[]) => unknown>>((resolve, reject) => {
             const id = next_request_id++;
             pending_instances.set(id, {
@@ -284,12 +293,13 @@ self.onmessage = async (event: MessageEvent) => {
                             spawn_ctx_ref,
                             abort_promise,
                             is_aborted,
+                            birth_time,
                         ),
                     );
                 },
                 reject: (msg: string) => reject(new Error(msg)),
             });
-            self.postMessage({ type: 'request-instance', name, request_id: id });
+            self.postMessage({ type: 'request-instance', name, request_id: id, birth_time });
         });
     };
 
@@ -358,7 +368,11 @@ self.onmessage = async (event: MessageEvent) => {
     const instrument_fns = instrument_names.map((name) => () => instrument(name));
 
     try {
-        const stop = (dur: number = 1) => self.postMessage({ type: 'stop', dur });
+        const stop = (dur: number = 1) => {
+            const ctx = spawn_ctx_ref.current;
+            const t = (ctx ? ctx.task_time.v : get_orch_time()) + LOOKAHEAD;
+            self.postMessage({ type: 'stop', dur, time: t, session });
+        };
         const builtins = {
             instrument,
             global,

@@ -1,7 +1,8 @@
 param cutoff_hi = 1000
 param Q = 1
 
-w0 = 2*PI*cutoff_hi/SAMPLE_RATE
+static sr_inv = 1/SAMPLE_RATE
+w0 = 2*PI*cf*sr_inv
 c = cos(w0)
 s = sin(w0)
 alpha = s/(2*Q)

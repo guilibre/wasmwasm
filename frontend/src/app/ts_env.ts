@@ -29,6 +29,7 @@ declare function rand(lo: number, hi: number): number;
 declare async function setup_midi();
 declare function add_on_midi_event(f: (params: MidiParams) => void): string;
 declare function remove_on_midi_event(id: string);
+declare function stop(fade_out: number);
 `;
 
 const ORCHESTRA_DEFS =
@@ -52,18 +53,6 @@ declare function set_param(name: string, value: number);
 declare function sleep(seconds: number): Promise<void>;
 declare function die();
 `;
-
-export const ORCHESTRA_FALLBACK = `const i = instrument('instrument1');
-while (true) {
-  i.note(0.2, 440);
-  await sleep_beats(1);
-}`;
-
-export const INSTRUMENT_FALLBACK = `async function note(amp: number, freq: number) {
-  set_param('amp', amp);
-  set_param('freq', freq);
-  set_param('gate', 1);
-}`;
 
 const ts_lib_files = import.meta.glob<string>('/node_modules/typescript/lib/lib.*.d.ts', {
     eager: true,

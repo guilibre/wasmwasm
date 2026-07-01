@@ -290,12 +290,12 @@ export default function App() {
         const ctx_ref = audio_context_ref;
         const mic_ref = mic_source_ref;
         return () => {
-            worker_ref.current?.terminate();
             nodes_ref.current.forEach((n) => {
                 n.port.postMessage({ type: 'stop' });
                 n.port.postMessage({ type: 'clear' });
                 n.disconnect();
             });
+            worker_ref.current?.terminate();
             nodes_ref.current.clear();
             capture_ref.current.clear();
             ctx_ref.current?.close();
@@ -571,6 +571,7 @@ export default function App() {
             );
         } else {
             orchestra_worker_ref.current.postMessage({ type: 'stop' });
+            orchestra_worker_ref.current.onmessage = null;
         }
 
         const context = audio_context_ref.current!;
@@ -701,6 +702,7 @@ export default function App() {
             compiled: CompiledPatch,
             instance_idx: number,
             session: number,
+            birth_time?: number,
         ): Promise<{
             event_sab: SharedArrayBuffer;
             param_names: string[];
@@ -734,6 +736,7 @@ export default function App() {
                 num_out_channels: compiled.num_out_channels,
                 external_inputs: compiled.external_inputs,
                 is_global: false,
+                start_frame: birth_time != null ? Math.round(birth_time * context.sampleRate) : 0,
             });
             node.port.postMessage({
                 type: 'load-params-sab',
@@ -776,11 +779,15 @@ export default function App() {
                 return;
             }
             if (e.data.type === 'stop') {
-                stop(e.data.dur ?? 1);
+                if (e.data.session === my_session) stop(e.data.dur ?? 1, e.data.time);
                 return;
             }
             if (e.data.type === 'request-instance') {
-                const { name, request_id } = e.data as { name: string; request_id: number };
+                const { name, request_id, birth_time } = e.data as {
+                    name: string;
+                    request_id: number;
+                    birth_time: number;
+                };
                 const json = instr_json.get(name);
                 const compiled = instr_compiled.get(name);
                 const instr = orchestra.instruments.find((i) => i.name === name);
@@ -800,6 +807,7 @@ export default function App() {
                     compiled,
                     instance_idx,
                     my_session,
+                    birth_time,
                 );
                 if (!result) {
                     worker.postMessage({
@@ -822,19 +830,24 @@ export default function App() {
             if (e.data.type === 'destroy-instance') {
                 const node = worklet_nodes_ref.current.get(e.data.instance_id);
                 if (node) {
-                    node.port.postMessage({ type: 'stop' });
-                    node.port.postMessage({ type: 'clear' });
-                    if (capture_nodes_ref.current.delete(node)) {
-                        mic_source_ref.current?.disconnect(node);
-                    }
-                    node.disconnect();
-                    worklet_nodes_ref.current.delete(e.data.instance_id);
+                    const stop_frame = Math.round(e.data.time * context.sampleRate);
+                    node.port.postMessage({ type: 'stop', frame: stop_frame });
+                    const delay = Math.max(0, (e.data.time - context.currentTime) * 1000);
+                    setTimeout(() => {
+                        node.port.postMessage({ type: 'clear' });
+                        if (capture_nodes_ref.current.delete(node)) {
+                            mic_source_ref.current?.disconnect(node);
+                        }
+                        node.disconnect();
+                        worklet_nodes_ref.current.delete(e.data.instance_id);
+                    }, delay);
                 }
                 return;
             }
         };
         worker.postMessage({
             type: 'run',
+            session: my_session,
             orchestra_code: compiled_orchestra,
             bpm: orchestra.bpm,
             sampleRate: context.sampleRate,
@@ -847,14 +860,29 @@ export default function App() {
         set_is_playing(true);
     };
 
-    const stop = async (dur: number = 1) => {
+    const stop = async (dur: number = 1, time?: number) => {
         const context = audio_context_ref.current;
         const merger = merger_ref.current;
-        if (context && merger) {
-            merger.gain.setValueAtTime(merger.gain.value, context.currentTime);
-            merger.gain.linearRampToValueAtTime(0, context.currentTime + dur);
-            await new Promise<void>((r) => setTimeout(r, dur * 1000));
-            merger.gain.setValueAtTime(1, context.currentTime);
+        const stop_frame = context
+            ? Math.round(((time ?? context.currentTime) + dur) * context.sampleRate)
+            : null;
+
+        worklet_nodes_ref.current.forEach((n) => {
+            n.port.postMessage({ type: 'stop', frame: stop_frame });
+        });
+        if (global_node_ref.current) {
+            global_node_ref.current.port.postMessage({ type: 'stop', frame: stop_frame });
+        }
+
+        if (context) {
+            const start = time ?? context.currentTime;
+            if (merger && dur > 0) {
+                merger.gain.cancelScheduledValues(start);
+                merger.gain.setValueAtTime(merger.gain.value, start);
+                merger.gain.linearRampToValueAtTime(0, start + dur);
+            }
+            const wait = Math.max(0, (start + dur - context.currentTime) * 1000);
+            await new Promise<void>((r) => setTimeout(r, wait));
         }
         orchestra_worker_ref.current?.postMessage({ type: 'stop' });
         if (midi_fwd_ref.current) {
@@ -867,19 +895,18 @@ export default function App() {
             mic_source_ref.current = null;
         }
         worklet_nodes_ref.current.forEach((n) => {
-            n.port.postMessage({ type: 'stop' });
             n.port.postMessage({ type: 'clear' });
             n.disconnect();
         });
         worklet_nodes_ref.current.clear();
         capture_nodes_ref.current.clear();
         if (global_node_ref.current) {
-            global_node_ref.current.port.postMessage({ type: 'stop' });
             global_node_ref.current.port.postMessage({ type: 'clear' });
             global_node_ref.current.disconnect();
             global_node_ref.current = null;
         }
         await context?.suspend();
+        merger?.gain.setValueAtTime(1, context?.currentTime ?? 0);
         set_is_playing(false);
         set_analysers(null);
     };

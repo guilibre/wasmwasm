@@ -1,3 +1,4 @@
+param freq = 440
 param q = 1000
 
 static harms = array 10 {i. i + 1}
@@ -16,8 +17,9 @@ static lp = array 10 {_. 0}
 
 R = 1/q
 
-freqs = map {a. IN[1]*a} harms
-g = map {a. tan(PI*a/SAMPLE_RATE)} freqs
+freqs = map {a. freq*a} harms
+static sr_inv = 1/SAMPLE_RATE
+g = map {a. tan(PI*a*sr_inv)} freqs
 h = map {a. 1/(1 + a*(R + a))} g
 
 aux = map {a. R + a} g

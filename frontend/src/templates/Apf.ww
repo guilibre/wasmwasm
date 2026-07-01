@@ -1,8 +1,10 @@
-param cutoff = 1000
+param cf = 1000
+
 static x = 0
 static y_ = 0
-static k = exp(-2*PI*cutoff/SAMPLE_RATE)
 
+static sr_inv = 1/SAMPLE_RATE
+k = exp(-2*PI*cf*sr_inv)
 y = -k*IN[0] + x + k*y_
 OUT[0] <- y
 

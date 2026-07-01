@@ -1,16 +1,16 @@
 param gate = 0
+param amp = 0.2
 param atk = 0.01
-param rel = 1
+param rel = 0.5
 
-static t = 0
-static dt = 1/SAMPLE_RATE
 static gate_ = 0
 static env = 0
+static denv = 0
 
-OUT[0] <- env
+OUT[0] <- amp * env
 
-denv = t < atk ? 1/(atk*SAMPLE_RATE) : -1/(rel*SAMPLE_RATE)
+gate > gate_ ? denv = 1/(atk*SAMPLE_RATE)
 env = min 1 (max 0 (env + denv))
+env >= 1 ? denv = -1/(rel*SAMPLE_RATE) : (env <= 0 ? denv = 0)
 
-t = gate > gate_ ? 0 : t + dt
 gate_ = gate

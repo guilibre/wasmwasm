@@ -119,5 +119,11 @@ export function TsEditor({ initial_value, on_change, env }: TsEditorProps) {
         if (env) env.updateFile(TS_FILE, view.state.doc.toString());
     }, [env, ts_compartment]);
 
-    return <div ref={container_ref} style={{ height: '100%' }} />;
+    return (
+        <div
+            ref={container_ref}
+            style={{ height: '100%' }}
+            onKeyDown={(e) => e.stopPropagation()}
+        />
+    );
 }

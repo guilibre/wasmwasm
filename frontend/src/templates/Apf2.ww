@@ -1,10 +1,11 @@
 param cf = 1000
-param Q = 1
+param q = 1
 
-w0 = 2*PI*cf/SAMPLE_RATE
+static sr_inv = 1/SAMPLE_RATE
+w0 = 2*PI*cf*sr_inv
 c = cos(w0)
 s = sin(w0)
-alpha = s/(2*Q)
+alpha = s/(2*q)
 
 a0_inv = 1/(1 + alpha)
 a1 = -a0_inv*2*c

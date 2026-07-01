@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import type { VirtualTypeScriptEnvironment } from '@typescript/vfs';
 import type { OrchestraState, PatchView } from '../patch/use_patch_store';
 import { TsEditor } from './ts_editor';
-import { make_instrument_env_with_params, INSTRUMENT_FALLBACK } from './ts_env';
+import { make_instrument_env_with_params } from './ts_env';
 import { GLOBAL_CACHE_KEY } from './constants';
 import './instrument.scss';
 
@@ -172,7 +172,7 @@ export function InstrumentPanel({
                 <div className="instrument__editor">
                     <TsEditor
                         key={GLOBAL_CACHE_KEY}
-                        initial_value={global_code || INSTRUMENT_FALLBACK}
+                        initial_value={global_code}
                         on_change={on_global_code_change}
                         env={global_env ?? default_env}
                     />
@@ -181,7 +181,7 @@ export function InstrumentPanel({
                 <div className="instrument__editor">
                     <TsEditor
                         key={active_instr.id}
-                        initial_value={active_instr.code || INSTRUMENT_FALLBACK}
+                        initial_value={active_instr.code}
                         on_change={(code) => on_code_change(active_instr.id, code)}
                         env={env}
                     />

@@ -9,7 +9,7 @@
 #include <vector>
 
 static constexpr size_t delay_size_min = 1;
-static constexpr size_t delay_size_max = 4096;
+static constexpr size_t delay_size_max = 64UL * 1024;
 
 Parser::Parser(Tokenizer tokenizer)
     : tokenizer(tokenizer), current(this->tokenizer.next()) {}

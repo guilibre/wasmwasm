@@ -285,7 +285,8 @@ auto emit_stmts(FnCtx &ctx, const std::vector<IRInstr> &body)
                                           delay_f64()));
                         auto *k = BinaryenBinary(
                             mod, BinaryenAddInt32(), i_int,
-                            BinaryenConst(mod, BinaryenLiteralInt32(k_offset)));
+                            BinaryenConst(mod, BinaryenLiteralInt32(size_bytes -
+                                                                    k_offset)));
                         auto *k_bytes = BinaryenBinary(
                             mod, BinaryenMulInt32(), k,
                             BinaryenConst(mod, BinaryenLiteralInt32(8)));

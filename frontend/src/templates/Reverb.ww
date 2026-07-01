@@ -1,0 +1,63 @@
+param room_size = 0.5
+param damping = 0.5
+param mix = 0.3
+
+cf1_buf = delay 1557 {_. 0}
+cf2_buf = delay 1617 {_. 0}
+cf3_buf = delay 1491 {_. 0}
+cf4_buf = delay 1422 {_. 0}
+
+ap1_buf = delay 225 {_. 0}
+ap2_buf = delay 341 {_. 0}
+
+static cf1_idx = 0
+static cf2_idx = 0
+static cf3_idx = 0
+static cf4_idx = 0
+
+static ap1_idx = 0
+static ap2_idx = 0
+
+static cf1_filt = 0
+static cf2_filt = 0
+static cf3_filt = 0
+static cf4_filt = 0
+
+g = 0.28 + room_size*0.7
+damp1 = damping*0.4
+
+cf1_out = @[cf1_idx]cf1_buf
+cf2_out = @[cf2_idx]cf2_buf
+cf3_out = @[cf3_idx]cf3_buf
+cf4_out = @[cf4_idx]cf4_buf
+
+cf1_filt = cf1_out*(1 - damp1) + cf1_filt*damp1
+cf2_filt = cf2_out*(1 - damp1) + cf2_filt*damp1
+cf3_filt = cf3_out*(1 - damp1) + cf3_filt*damp1
+cf4_filt = cf4_out*(1 - damp1) + cf4_filt*damp1
+
+@[cf1_idx]cf1_buf = IN[0] + g*cf1_filt
+@[cf2_idx]cf2_buf = IN[0] + g*cf2_filt
+@[cf3_idx]cf3_buf = IN[0] + g*cf3_filt
+@[cf4_idx]cf4_buf = IN[0] + g*cf4_filt
+
+cf1_idx = cf1_idx < 1556 ? cf1_idx + 1 : 0
+cf2_idx = cf2_idx < 1616 ? cf2_idx + 1 : 0
+cf3_idx = cf3_idx < 1490 ? cf3_idx + 1 : 0
+cf4_idx = cf4_idx < 1421 ? cf4_idx + 1 : 0
+
+wet = (cf1_out + cf2_out + cf3_out + cf4_out)*0.25
+
+ap1_g = 0.5
+ap1_delayed = @[ap1_idx]ap1_buf
+ap1_y = ap1_delayed - ap1_g*wet
+@[ap1_idx]ap1_buf = wet + ap1_g*ap1_y
+ap1_idx = ap1_idx < 224 ? ap1_idx + 1 : 0
+
+ap2_g = 0.5
+ap2_delayed = @[ap2_idx]ap2_buf
+ap2_y = ap2_delayed - ap2_g*ap1_y
+@[ap2_idx]ap2_buf = ap1_y + ap2_g*ap2_y
+ap2_idx = ap2_idx < 340 ? ap2_idx + 1 : 0
+
+OUT[0] <- IN[0] + mix*(ap2_y - IN[0])

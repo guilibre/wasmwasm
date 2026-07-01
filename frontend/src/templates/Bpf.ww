@@ -1,7 +1,9 @@
-param cutoff_lo = 200
-param cutoff_hi = 2000
-a_hi = 1 - exp(-cutoff_hi*2*PI/SAMPLE_RATE)
-a_lo = 1 - exp(-cutoff_lo*2*PI/SAMPLE_RATE)
+param cf_lo = 200
+param cf_hi = 2000
+
+static sr_inv = 1/SAMPLE_RATE
+a_hi = 1 - exp(-cf_hi*2*PI*sr_inv)
+a_lo = 1 - exp(-cf_lo*2*PI*sr_inv)
 
 static x_hi = 0
 static x_lo = 0

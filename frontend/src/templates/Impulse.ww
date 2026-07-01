@@ -1,0 +1,11 @@
+param freq = 440
+
+static t = 0
+static t_ = 0
+
+OUT[0] <- IN[0] * (t < t_)
+
+t_ = t
+static sr_inv = 1/SAMPLE_RATE
+t = t + freq*sr_inv
+t >= 1 ? t = t - 1

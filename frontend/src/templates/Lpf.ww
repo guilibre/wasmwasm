@@ -1,6 +1,9 @@
+param cf = 1000
+
+static sr_inv = 1/SAMPLE_RATE
+static a = 1 - exp(-cf*2*PIsr_inv)
+
 static x = 0
-param cutoff = 1000
-static a = 1 - exp(-cutoff*2*PI/SAMPLE_RATE)
 
 x = x + a*(IN[0] - x)
 OUT[0] <- x
