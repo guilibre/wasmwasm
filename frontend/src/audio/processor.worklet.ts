@@ -11,10 +11,18 @@ interface WasmGlobal {
     value: number;
 }
 
+interface ExternalInput {
+    name: string;
+    channels: number;
+}
+
 class WasmProcessor extends AudioWorkletProcessor {
     main: (...args: number[]) => void = () => {};
     heap: Float32Array | null = null;
-    has_capture = false;
+    num_out_channels = 2;
+    external_inputs: ExternalInput[] = [];
+    has_ext = false;
+    is_global = false;
     stopped = false;
 
     _ready_sent = false;
@@ -60,7 +68,10 @@ class WasmProcessor extends AudioWorkletProcessor {
                 this.instance = instance;
                 exports.init();
                 this.main = exports.main;
-                this.has_capture = this.main.length === 4;
+                this.has_ext = this.main.length === 4;
+                this.num_out_channels = event.data.num_out_channels ?? 2;
+                this.external_inputs = event.data.external_inputs ?? [];
+                this.is_global = event.data.is_global ?? false;
                 this._ready_sent = false;
                 if (this.param_export_names.length > 0) {
                     this.param_exports = this.param_export_names.map(
@@ -73,6 +84,7 @@ class WasmProcessor extends AudioWorkletProcessor {
                         }
                     }
                 }
+                this.port.postMessage({ type: 'wasm-ready' });
             }
 
             if (event.data.type === 'load-params-sab') {
@@ -126,20 +138,24 @@ class WasmProcessor extends AudioWorkletProcessor {
 
         const heap = this.heap;
         const num_samples = outputs[0][0].length;
-        const out_l = outputs[0][0];
-        const out_r = outputs[0][1];
+        const ext_base_floats = num_samples * this.num_out_channels;
 
-        if (this.has_capture) {
-            const in_l = inputs[0][0];
-            const in_r = inputs[0][1];
-            const in_f32_offset = num_samples * 2;
-            if (in_l) heap.set(in_l, in_f32_offset);
-            else heap.fill(0, in_f32_offset, in_f32_offset + num_samples);
-            if (in_r) heap.set(in_r, in_f32_offset + num_samples);
-            else heap.fill(0, in_f32_offset + num_samples, in_f32_offset + num_samples * 2);
-            this.main(0, num_samples * 8, num_samples, 2);
+        if (this.has_ext) {
+            let channel_offset = 0;
+            for (let group = 0; group < this.external_inputs.length; group++) {
+                const { channels } = this.external_inputs[group];
+                const pin = this.is_global ? inputs[group] : inputs[0];
+                for (let ch = 0; ch < channels; ch++) {
+                    const dst = ext_base_floats + (channel_offset + ch) * num_samples;
+                    const src = pin?.[ch];
+                    if (src) heap.set(src, dst);
+                    else heap.fill(0, dst, dst + num_samples);
+                }
+                channel_offset += channels;
+            }
+            this.main(0, ext_base_floats * 4, num_samples, this.num_out_channels);
         } else {
-            this.main(0, num_samples, 2);
+            this.main(0, num_samples, this.num_out_channels);
         }
 
         if (!this._ready_sent && this.ev_data) {
@@ -147,8 +163,10 @@ class WasmProcessor extends AudioWorkletProcessor {
             this.port.postMessage({ type: 'ready', startTime: currentFrame * inv_sample_rate });
         }
 
-        out_l.set(heap.subarray(0, num_samples));
-        if (out_r) out_r.set(heap.subarray(num_samples, num_samples * 2));
+        for (let ch = 0; ch < this.num_out_channels; ch++) {
+            const out_ch = outputs[0][ch];
+            if (out_ch) out_ch.set(heap.subarray(ch * num_samples, (ch + 1) * num_samples));
+        }
 
         return true;
     }

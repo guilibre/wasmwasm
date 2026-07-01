@@ -213,12 +213,24 @@ self.onmessage = async (event: MessageEvent) => {
     const is_aborted = () => aborted;
     const ABORT = Symbol();
 
-    const { orchestra_code, bpm, sampleRate, audioCurrentTime, instrument_names } = event.data as {
+    const {
+        orchestra_code,
+        bpm,
+        sampleRate,
+        audioCurrentTime,
+        instrument_names,
+        global_code,
+        global_param_names,
+        global_event_sab,
+    } = event.data as {
         orchestra_code: string;
         bpm: number;
         sampleRate: number;
         audioCurrentTime: number;
         instrument_names: string[];
+        global_code?: string;
+        global_param_names?: string[];
+        global_event_sab?: SharedArrayBuffer;
     };
 
     const perf_origin = performance.now();
@@ -228,6 +240,32 @@ self.onmessage = async (event: MessageEvent) => {
     const get_orch_time = () => Math.max(orch_scheduled.v, real_time() + LOOKAHEAD);
 
     const spawn_ctx_ref: SpawnCtxRef = { current: null };
+
+    const global_init: InstrumentInit | null = global_event_sab
+        ? {
+              name: 'global',
+              code: global_code ?? '',
+              param_names: global_param_names ?? [],
+              event_sab: global_event_sab,
+              instance_id: '__global__',
+          }
+        : null;
+
+    const global = () => {
+        if (!global_init) return Promise.reject(new Error('No global module available'));
+        const ctx = spawn_ctx_ref.current;
+        return Promise.resolve(
+            build_instrument(
+                global_init,
+                sampleRate,
+                ctx ? () => ctx.task_time.v : get_orch_time,
+                real_time,
+                spawn_ctx_ref,
+                abort_promise,
+                is_aborted,
+            ),
+        );
+    };
 
     const instrument = (name: string) => {
         if (is_aborted()) return Promise.reject(ABORT);
@@ -323,6 +361,7 @@ self.onmessage = async (event: MessageEvent) => {
         const stop = (dur: number = 1) => self.postMessage({ type: 'stop', dur });
         const builtins = {
             instrument,
+            global,
             sleep,
             sleep_beats,
             from_beats,

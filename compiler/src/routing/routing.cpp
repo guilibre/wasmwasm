@@ -1,13 +1,30 @@
 #include "routing.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <functional>
 #include <json/json.h>
+#include <map>
+#include <optional>
 #include <stdexcept>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 
 namespace {
+
+auto split_trailing_index(const std::string &src)
+    -> std::optional<std::pair<std::string, int>> {
+    const auto under = src.rfind('_');
+    if (under == std::string::npos || under + 1 >= src.size())
+        return std::nullopt;
+    const auto idx_part = src.substr(under + 1);
+    if (!std::ranges::all_of(idx_part, [](unsigned char c) -> bool {
+            return std::isdigit(c) != 0;
+        }))
+        return std::nullopt;
+    return std::make_pair(src.substr(0, under), std::stoi(idx_part));
+}
 
 void validate_patch(const Json::Value &root) {
     if (!root.isObject())
@@ -36,15 +53,24 @@ void validate_patch(const Json::Value &root) {
     auto valid_source = [&](const std::string &src) -> bool {
         if (src == "capture_l" || src == "capture_r") return true;
         const auto under = src.rfind('_');
-        if (under == std::string::npos || under < 4) return false;
-        const auto mod = src.substr(0, under - 4);
-        const auto mid = src.substr(under - 4, 4);
-        if (mid != "_out") return false;
-        return mod_names.contains(mod);
+        if (under != std::string::npos && under >= 4) {
+            const auto mod = src.substr(0, under - 4);
+            const auto mid = src.substr(under - 4, 4);
+            if (mid == "_out" && mod_names.contains(mod)) return true;
+        }
+        return split_trailing_index(src).has_value();
     };
 
     auto valid_sink = [&](const std::string &sink) -> bool {
         if (sink == "dac_l" || sink == "dac_r") return true;
+        if (sink.starts_with("out_")) {
+            const auto idx_part = sink.substr(4);
+            if (!idx_part.empty() &&
+                std::ranges::all_of(idx_part, [](unsigned char c) -> bool {
+                    return std::isdigit(c) != 0;
+                }))
+                return true;
+        }
         const auto under = sink.rfind('_');
         if (under == std::string::npos || under < 3) return false;
         const auto mod = sink.substr(0, under - 3);
@@ -104,13 +130,42 @@ auto build_routing_graph(const ParsedPatch &patch,
     std::unordered_map<std::string, IRModule *> mod_map;
     for (auto &ir : compiled_modules) mod_map[ir.name] = &ir;
 
+    std::unordered_set<std::string> mod_names;
+    for (const auto &[mod_name, _] : patch.module_sources)
+        mod_names.insert(mod_name);
+
+    auto is_module_output = [&](const std::string &src) -> bool {
+        const auto under = src.rfind('_');
+        if (under == std::string::npos || under < 4) return false;
+        const auto mod = src.substr(0, under - 4);
+        const auto mid = src.substr(under - 4, 4);
+        return mid == "_out" && mod_names.contains(mod);
+    };
+
     std::unordered_map<std::string, std::vector<std::string>> mod_inputs;
     std::string dac_l;
     std::string dac_r;
-    bool has_capture = false;
+    std::vector<std::string> out_sources;
+
+    std::map<std::string, int> ext_channel_counts;
+    std::unordered_map<std::string, std::string> ext_source_group;
+    std::unordered_map<std::string, int> ext_source_local_channel;
 
     for (const auto &[sink, src] : patch.connections) {
-        if (src == "capture_l" || src == "capture_r") has_capture = true;
+        if (src == "capture_l" || src == "capture_r") {
+            const auto local = src == "capture_l" ? 0 : 1;
+            ext_channel_counts["capture"] =
+                std::max(ext_channel_counts["capture"], local + 1);
+            ext_source_group[src] = "capture";
+            ext_source_local_channel[src] = local;
+        } else if (!is_module_output(src)) {
+            if (auto split = split_trailing_index(src)) {
+                auto &count = ext_channel_counts[split->first];
+                count = std::max(count, split->second + 1);
+                ext_source_group[src] = split->first;
+                ext_source_local_channel[src] = split->second;
+            }
+        }
 
         if (sink == "dac_l") {
             dac_l = src;
@@ -118,6 +173,12 @@ auto build_routing_graph(const ParsedPatch &patch,
         }
         if (sink == "dac_r") {
             dac_r = src;
+            continue;
+        }
+        if (sink.starts_with("out_")) {
+            const auto idx = std::stoul(sink.substr(4));
+            if (out_sources.size() <= idx) out_sources.resize(idx + 1);
+            out_sources[idx] = src;
             continue;
         }
 
@@ -130,6 +191,18 @@ auto build_routing_graph(const ParsedPatch &patch,
             inputs[idx] = src;
         }
     }
+
+    std::unordered_map<std::string, int> group_base_offset;
+    int cumulative_offset = 0;
+    for (const auto &[name, channels] : ext_channel_counts) {
+        group_base_offset[name] = cumulative_offset;
+        cumulative_offset += channels;
+    }
+
+    std::unordered_map<std::string, int> external_input_channels;
+    for (const auto &[src, group] : ext_source_group)
+        external_input_channels[src] =
+            group_base_offset[group] + ext_source_local_channel[src];
 
     std::unordered_map<std::string, std::unordered_set<std::string>> deps;
     for (const auto &[mod_name, _] : patch.module_sources) {
@@ -156,7 +229,9 @@ auto build_routing_graph(const ParsedPatch &patch,
     RoutingGraph graph;
     graph.dac_l_source = dac_l;
     graph.dac_r_source = dac_r;
-    graph.has_capture = has_capture;
+    graph.out_sources = out_sources;
+    graph.external_input_channels = external_input_channels;
+    graph.external_input_count = cumulative_offset;
 
     for (const auto &name : order) {
         auto it = std::ranges::find_if(

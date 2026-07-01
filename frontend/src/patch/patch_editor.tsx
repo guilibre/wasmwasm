@@ -12,6 +12,8 @@ import '@xyflow/react/dist/style.css';
 import { BlockNode } from './block_node';
 import { CaptureNode } from './capture_node';
 import { DacNode } from './dac_node';
+import { OutNode } from './out_node';
+import { InNode } from './in_node';
 import { SelfLoopEdge } from './self_loop_edge';
 import type { usePatchStore } from './use_patch_store';
 
@@ -23,6 +25,8 @@ const NODE_TYPES = {
     block: BlockNode,
     capture: CaptureNode,
     dac: DacNode,
+    out: OutNode,
+    in: InNode,
 };
 
 interface ContextMenu {
@@ -37,7 +41,16 @@ interface Props {
 }
 
 export function PatchEditor({ store }: Props) {
-    const { nodes, edges, on_nodes_change, on_edges_change, on_connect, select, add_block } = store;
+    const {
+        nodes,
+        edges,
+        on_nodes_change,
+        on_edges_change,
+        on_connect,
+        select,
+        add_block,
+        update_name,
+    } = store;
 
     const rf = useReactFlow();
 
@@ -56,11 +69,52 @@ export function PatchEditor({ store }: Props) {
     const name_input_ref = useRef<HTMLInputElement>(null);
     const [ctx_menu, set_ctx_menu] = useState<ContextMenu | null>(null);
 
+    const [rename_input, set_rename_input] = useState<{
+        node_id: string;
+        screen_x: number;
+        screen_y: number;
+    } | null>(null);
+    const [pending_rename, set_pending_rename] = useState('');
+    const rename_input_ref = useRef<HTMLInputElement>(null);
+
     const on_node_double_click: NodeMouseHandler = useCallback(
-        (_e, node) => {
-            if (node.type === 'block') select(node.id);
+        (e, node) => {
+            if (node.type === 'block') {
+                select(node.id);
+                return;
+            }
+            if (node.type === 'out') {
+                const bounds = (e.currentTarget as HTMLElement)
+                    .closest('.ww-canvas')
+                    ?.getBoundingClientRect();
+                set_rename_input({
+                    node_id: node.id,
+                    screen_x: e.clientX - (bounds?.left ?? 0),
+                    screen_y: e.clientY - (bounds?.top ?? 0),
+                });
+                set_pending_rename((node.data as { name: string }).name);
+                setTimeout(() => rename_input_ref.current?.focus(), 0);
+            }
         },
         [select],
+    );
+
+    const commit_rename = useCallback(() => {
+        if (rename_input && pending_rename.trim())
+            update_name(rename_input.node_id, pending_rename.trim());
+        set_rename_input(null);
+        set_pending_rename('');
+    }, [rename_input, pending_rename, update_name]);
+
+    const on_key_down_rename = useCallback(
+        (e: React.KeyboardEvent) => {
+            if (e.key === 'Enter') commit_rename();
+            else if (e.key === 'Escape') {
+                set_rename_input(null);
+                set_pending_rename('');
+            }
+        },
+        [commit_rename],
     );
 
     const on_canvas_double_click = useCallback(
@@ -181,6 +235,19 @@ export function PatchEditor({ store }: Props) {
                     onKeyDown={on_key_down_name}
                     onBlur={commit_name}
                     placeholder="block name"
+                />
+            )}
+
+            {rename_input && (
+                <input
+                    ref={rename_input_ref}
+                    className="ww-name-input"
+                    style={{ left: rename_input.screen_x, top: rename_input.screen_y }}
+                    value={pending_rename}
+                    onChange={(e) => set_pending_rename(e.target.value)}
+                    onKeyDown={on_key_down_rename}
+                    onBlur={commit_rename}
+                    placeholder="OUT N"
                 />
             )}
 

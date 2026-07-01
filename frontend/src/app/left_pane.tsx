@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { VirtualTypeScriptEnvironment } from '@typescript/vfs';
-import type { OrchestraState } from '../patch/use_patch_store';
+import type { OrchestraState, PatchView } from '../patch/use_patch_store';
 
 import { OrchestraPanel } from './orchestra';
 import { InstrumentPanel } from './instruments';
@@ -26,6 +26,10 @@ interface Props {
     compile_status: Map<string, 'idle' | 'compiling' | 'ok' | 'error'>;
     orchestra_env: VirtualTypeScriptEnvironment | null;
     instrument_envs: Map<string, VirtualTypeScriptEnvironment>;
+    on_global_patch_code_change: (code: string) => void;
+    global_env: VirtualTypeScriptEnvironment | null;
+    view: PatchView;
+    on_view_change: (view: PatchView) => void;
 }
 
 export function LeftPane({
@@ -43,6 +47,10 @@ export function LeftPane({
     compile_status,
     orchestra_env,
     instrument_envs,
+    on_global_patch_code_change,
+    global_env,
+    view,
+    on_view_change,
 }: Props) {
     const [width, set_width] = useState(() => window.innerWidth * 0.4);
     const width_ref = useRef(width);
@@ -103,6 +111,8 @@ export function LeftPane({
             <div className="app__panel-divider" onMouseDown={on_height_mousedown} />
             <InstrumentPanel
                 instruments={orchestra.instruments}
+                active_instrument_id={orchestra.active_id}
+                view={view}
                 on_add={on_add}
                 on_remove={on_remove}
                 on_rename={on_rename}
@@ -112,6 +122,10 @@ export function LeftPane({
                 on_compile_instrument={on_compile_instrument}
                 compile_status={compile_status}
                 instrument_envs={instrument_envs}
+                global_code={orchestra.global_patch_code}
+                on_global_code_change={on_global_patch_code_change}
+                global_env={global_env}
+                on_view_change={on_view_change}
             />
             <div className="app__orch-handle" onMouseDown={on_width_mousedown} />
         </div>

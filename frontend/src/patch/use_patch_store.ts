@@ -12,6 +12,25 @@ export interface BlockData {
     params: string[];
 }
 
+export interface OutData {
+    name: string;
+    num_channels: number;
+}
+
+export interface InData {
+    name: string;
+    num_channels: number;
+}
+
+const OUT_NAME_RE = /^OUT\s+(\d+)$/i;
+
+export function parse_out_name(name: string): number | null {
+    const m = OUT_NAME_RE.exec(name.trim());
+    if (!m) return null;
+    const n = parseInt(m[1], 10);
+    return n > 0 ? n : null;
+}
+
 export function scan_params(code: string): string[] {
     return [...code.matchAll(/^\s*param\s+(\w+)\s*=/gm)].map((m) => m[1]);
 }
@@ -38,21 +57,34 @@ export interface OrchestraState {
     active_id: string | null;
     instruments: InstrumentState[];
     code: string;
+    global_nodes: Node[];
+    global_edges: Edge[];
+    global_patch_code: string;
 }
+
+export type PatchView = 'instrument' | 'global';
 
 interface PatchState {
     orchestra: OrchestraState;
     selected_id: string | null;
+    view: PatchView;
 }
 
 type PatchAction =
     | { type: 'nodes_change'; changes: NodeChange[] }
     | { type: 'edges_change'; changes: EdgeChange[] }
     | { type: 'connect'; connection: Connection }
+    | { type: 'global_nodes_change'; changes: NodeChange[] }
+    | { type: 'global_edges_change'; changes: EdgeChange[] }
+    | { type: 'global_connect'; connection: Connection }
+    | { type: 'set_view'; view: PatchView }
     | { type: 'select'; id: string | null }
     | { type: 'update_code'; id: string; code: string }
     | { type: 'update_name'; id: string; name: string }
     | { type: 'add_node'; node: Node }
+    | { type: 'update_global_code'; id: string; code: string }
+    | { type: 'update_global_name'; id: string; name: string }
+    | { type: 'add_global_node'; node: Node }
     | { type: 'set_orchestra_bpm'; bpm: number }
     | { type: 'add_instrument' }
     | { type: 'remove_instrument'; id: string }
@@ -60,17 +92,22 @@ type PatchAction =
     | { type: 'rename_instrument'; id: string; name: string }
     | { type: 'set_active_instrument'; id: string }
     | { type: 'set_orchestra_code'; code: string }
+    | { type: 'set_global_patch_code'; code: string }
     | { type: 'load'; orchestra: OrchestraState }
     | { type: 'apply_layout'; instrument_id: string; nodes: Node[] }
+    | { type: 'apply_global_layout'; nodes: Node[] }
     | { type: 'undo' }
     | { type: 'redo' };
 
 const NO_HISTORY = new Set<PatchAction['type']>([
     'select',
+    'set_view',
     'set_active_instrument',
     'set_instrument_code',
     'set_orchestra_code',
+    'set_global_patch_code',
     'apply_layout',
+    'apply_global_layout',
     'load',
     'undo',
     'redo',
@@ -108,6 +145,22 @@ function node_ports(node: Node) {
             { id: `${node.id}__dac_r`, x: xr, y: 0 },
         ];
     }
+    if (node.type === 'out') {
+        const num_channels = (node.data as Partial<OutData>).num_channels ?? 0;
+        return spaced(num_channels, NODE_W).map((x, i) => ({
+            id: `${node.id}__out_${i}`,
+            x,
+            y: 0,
+        }));
+    }
+    if (node.type === 'in') {
+        const num_channels = (node.data as Partial<InData>).num_channels ?? 0;
+        return spaced(num_channels, NODE_W).map((x, i) => ({
+            id: `${node.id}__in_${i}`,
+            x,
+            y: NODE_H,
+        }));
+    }
     const data = node.data as Partial<BlockData>;
     const num_in = data.num_inputs ?? 0;
     const num_out = data.num_outputs ?? 0;
@@ -130,11 +183,11 @@ async function elk_layout(nodes: Node[], edges: Edge[]): Promise<Node[]> {
         ...n,
     }));
     const capture_node_idx = children.findIndex((x) => x.type === 'capture');
-    const capture_node = children[capture_node_idx];
-    children.splice(capture_node_idx, 1);
-    const dac_node_idx = children.findIndex((x) => x.type === 'dac');
-    const dac_node = children[dac_node_idx];
-    children.splice(dac_node_idx, 1);
+    const capture_node = capture_node_idx === -1 ? null : children[capture_node_idx];
+    if (capture_node_idx !== -1) children.splice(capture_node_idx, 1);
+    const dac_node_idx = children.findIndex((x) => x.type === 'dac' || x.type === 'out');
+    const dac_node = dac_node_idx === -1 ? null : children[dac_node_idx];
+    if (dac_node_idx !== -1) children.splice(dac_node_idx, 1);
     const graph = {
         id: 'root',
         layoutOptions: {
@@ -161,8 +214,8 @@ async function elk_layout(nodes: Node[], edges: Edge[]): Promise<Node[]> {
                     e.source !== e.target &&
                     e.sourceHandle &&
                     e.targetHandle &&
-                    e.source != 'capture' &&
-                    e.target != 'dac',
+                    e.source !== capture_node?.id &&
+                    e.target !== dac_node?.id,
             )
             .map((e) => ({
                 id: e.id,
@@ -184,25 +237,112 @@ async function elk_layout(nodes: Node[], edges: Edge[]): Promise<Node[]> {
 
     const margin = 50;
 
-    capture_node.x = (max_x + min_x) / 2;
-    capture_node.y = min_y - NODE_H - margin;
-    dac_node.x = (max_x + min_x) / 2;
-    dac_node.y = max_y + margin;
+    if (capture_node) {
+        capture_node.x = (max_x + min_x) / 2;
+        capture_node.y = min_y - NODE_H - margin;
+    }
+    if (dac_node) {
+        dac_node.x = (max_x + min_x) / 2;
+        dac_node.y = max_y + margin;
+    }
+
+    const fixed_nodes = [capture_node, dac_node].filter(
+        (n): n is NonNullable<typeof n> => n != null,
+    );
 
     return nodes.map((n) => {
-        const child = [capture_node, dac_node, ...(laid_out.children ?? [])].find(
-            (c) => c.id === n.id,
-        );
+        const child = [...fixed_nodes, ...(laid_out.children ?? [])].find((c) => c.id === n.id);
         return child ? { ...n, position: { x: child.x ?? 0, y: child.y ?? 0 } } : n;
     });
 }
 
 const default_nodes = (): Node[] => [
     { id: 'capture', type: 'capture', position: { x: 0, y: 0 }, data: {} },
-    { id: 'dac', type: 'dac', position: { x: 0, y: 0 }, data: {} },
+    {
+        id: 'out',
+        type: 'out',
+        position: { x: 0, y: 0 },
+        data: { name: 'OUT 2', num_channels: 2 } satisfies OutData,
+    },
 ];
 
-const DEFAULT_ORCHESTRA: OrchestraState = { bpm: 120, active_id: null, instruments: [], code: '' };
+function in_node_id(instrument_id: string): string {
+    return `in_${instrument_id}`;
+}
+
+function out_channels_of(instrument: InstrumentState): number {
+    const out_node = instrument.nodes.find((n) => n.type === 'out');
+    return (out_node?.data as Partial<OutData> | undefined)?.num_channels ?? 2;
+}
+
+function make_in_node(instrument: InstrumentState): Node {
+    return {
+        id: in_node_id(instrument.id),
+        type: 'in',
+        position: { x: 0, y: 0 },
+        data: { name: instrument.name, num_channels: out_channels_of(instrument) } satisfies InData,
+    };
+}
+
+function sync_global_in_nodes(instruments: InstrumentState[], global_nodes: Node[]): Node[] {
+    const instrument_ids = new Set(instruments.map((i) => i.id));
+    const kept = global_nodes.filter(
+        (n) => n.type !== 'in' || instrument_ids.has(n.id.replace(/^in_/, '')),
+    );
+    const existing_in_ids = new Set(kept.filter((n) => n.type === 'in').map((n) => n.id));
+    const updated = kept.map((n) => {
+        if (n.type !== 'in') return n;
+        const instrument = instruments.find((i) => in_node_id(i.id) === n.id);
+        if (!instrument) return n;
+        const num_channels = out_channels_of(instrument);
+        const data = n.data as Partial<InData>;
+        if (data.num_channels === num_channels && data.name === instrument.name) return n;
+        return { ...n, data: { ...n.data, num_channels, name: instrument.name } };
+    });
+    const added = instruments
+        .filter((i) => !existing_in_ids.has(in_node_id(i.id)))
+        .map((i) => make_in_node(i));
+    return [...updated, ...added];
+}
+
+const default_global_nodes = (): Node[] => [
+    { id: 'master_dac', type: 'dac', position: { x: 0, y: 0 }, data: {} },
+];
+
+const DEFAULT_ORCHESTRA: OrchestraState = {
+    bpm: 120,
+    active_id: null,
+    instruments: [],
+    code: '',
+    global_nodes: default_global_nodes(),
+    global_edges: [],
+    global_patch_code: '',
+};
+
+function normalize_orchestra(orchestra: Partial<OrchestraState>): OrchestraState {
+    const instruments = (orchestra.instruments ?? []).map((i: Partial<InstrumentState>) => ({
+        ...i,
+        nodes: (i.nodes ?? default_nodes()).map((n) => ({ ...n, position: { x: 0, y: 0 } })),
+        edges: i.edges ?? [],
+        code: i.code ?? '',
+    })) as InstrumentState[];
+    const global_nodes = sync_global_in_nodes(
+        instruments,
+        (orchestra.global_nodes ?? default_global_nodes()).map((n) => ({
+            ...n,
+            position: { x: 0, y: 0 },
+        })),
+    );
+    return {
+        bpm: orchestra.bpm ?? 120,
+        active_id: orchestra.active_id ?? null,
+        instruments,
+        code: orchestra.code ?? '',
+        global_nodes,
+        global_edges: orchestra.global_edges ?? [],
+        global_patch_code: orchestra.global_patch_code ?? '',
+    };
+}
 
 function load_initial_patch(): PatchState {
     try {
@@ -210,25 +350,17 @@ function load_initial_patch(): PatchState {
         if (saved) {
             const { orchestra } = JSON.parse(saved);
             if (orchestra) {
-                orchestra.instruments = (orchestra.instruments ?? []).map(
-                    (i: Partial<InstrumentState>) => ({
-                        ...i,
-                        nodes: (i.nodes ?? default_nodes()).map((n) => ({
-                            ...n,
-                            position: { x: 0, y: 0 },
-                        })),
-                        edges: i.edges ?? [],
-                        code: i.code ?? '',
-                    }),
-                );
-                orchestra.code = orchestra.code ?? '';
-                return { orchestra, selected_id: null };
+                return {
+                    orchestra: normalize_orchestra(orchestra),
+                    selected_id: null,
+                    view: 'instrument',
+                };
             }
         }
     } catch (_e) {
         console.error(_e);
     }
-    return { orchestra: DEFAULT_ORCHESTRA, selected_id: null };
+    return { orchestra: DEFAULT_ORCHESTRA, selected_id: null, view: 'instrument' };
 }
 
 function load_initial(): HistoryState {
@@ -257,7 +389,7 @@ function patch_reducer(state: PatchState, action: PatchAction): PatchState {
             const active = get_active(state);
             if (!active) return state;
             const filtered_changes = action.changes.filter(
-                (c) => !(c.type === 'remove' && (c.id === 'capture' || c.id === 'dac')),
+                (c) => !(c.type === 'remove' && (c.id === 'capture' || c.id === 'out')),
             );
             const removed_ids = new Set(
                 filtered_changes
@@ -273,9 +405,9 @@ function patch_reducer(state: PatchState, action: PatchAction): PatchState {
                               (e) =>
                                   (!removed_ids.has(e.source) && !removed_ids.has(e.target)) ||
                                   e.source === 'capture' ||
-                                  e.source === 'dac' ||
+                                  e.source === 'out' ||
                                   e.target === 'capture' ||
-                                  e.target === 'dac',
+                                  e.target === 'out',
                           )
                         : i.edges,
             }));
@@ -309,6 +441,69 @@ function patch_reducer(state: PatchState, action: PatchAction): PatchState {
             };
             return map_active(state, (i) => ({ ...i, edges: [...i.edges, new_edge] }));
         }
+        case 'global_nodes_change': {
+            const filtered_changes = action.changes.filter(
+                (c) =>
+                    !(
+                        c.type === 'remove' &&
+                        state.orchestra.global_nodes.find((n) => n.id === c.id)?.type !== 'block'
+                    ),
+            );
+            const removed_ids = new Set(
+                filtered_changes
+                    .filter((c): c is NodeChange & { type: 'remove' } => c.type === 'remove')
+                    .map((c) => c.id),
+            );
+            return {
+                ...state,
+                orchestra: {
+                    ...state.orchestra,
+                    global_nodes: applyNodeChanges(filtered_changes, state.orchestra.global_nodes),
+                    global_edges:
+                        removed_ids.size > 0
+                            ? state.orchestra.global_edges.filter(
+                                  (e) => !removed_ids.has(e.source) && !removed_ids.has(e.target),
+                              )
+                            : state.orchestra.global_edges,
+                },
+            };
+        }
+        case 'global_edges_change': {
+            const edge_ids = new Set(state.orchestra.global_edges.map((e) => e.id));
+            const relevant = action.changes.filter((c) => c.type !== 'add' && edge_ids.has(c.id));
+            if (relevant.length === 0) return state;
+            return {
+                ...state,
+                orchestra: {
+                    ...state.orchestra,
+                    global_edges: applyEdgeChanges(relevant, state.orchestra.global_edges),
+                },
+            };
+        }
+        case 'global_connect': {
+            const { source, sourceHandle, target, targetHandle } = action.connection;
+            const occupied = state.orchestra.global_edges.some(
+                (e) => e.target === target && e.targetHandle === (targetHandle ?? null),
+            );
+            if (occupied) return state;
+            const new_edge: Edge = {
+                id: `e_${source}_${sourceHandle}_${target}_${targetHandle}`,
+                source,
+                sourceHandle: sourceHandle ?? null,
+                target,
+                targetHandle: targetHandle ?? null,
+                type: undefined,
+            };
+            return {
+                ...state,
+                orchestra: {
+                    ...state.orchestra,
+                    global_edges: [...state.orchestra.global_edges, new_edge],
+                },
+            };
+        }
+        case 'set_view':
+            return { ...state, selected_id: null, view: action.view };
         case 'select':
             return { ...state, selected_id: action.id };
         case 'add_node':
@@ -338,14 +533,92 @@ function patch_reducer(state: PatchState, action: PatchAction): PatchState {
                 ),
             }));
         }
-        case 'update_name':
-            if (!get_active(state)) return state;
+        case 'update_name': {
+            const active = get_active(state);
+            if (!active) return state;
+            const target_node = active.nodes.find((n) => n.id === action.id);
+            if (target_node?.type === 'out') {
+                const num_channels = parse_out_name(action.name);
+                if (num_channels === null) return state;
+                const next_state = map_active(state, (i) => ({
+                    ...i,
+                    nodes: i.nodes.map((n) =>
+                        n.id === action.id
+                            ? { ...n, data: { name: `OUT ${num_channels}`, num_channels } }
+                            : n,
+                    ),
+                }));
+                const updated_active = get_active(next_state)!;
+                const in_id = in_node_id(updated_active.id);
+                return {
+                    ...next_state,
+                    orchestra: {
+                        ...next_state.orchestra,
+                        global_nodes: sync_global_in_nodes(
+                            next_state.orchestra.instruments.map((i) =>
+                                i.id === updated_active.id ? updated_active : i,
+                            ),
+                            next_state.orchestra.global_nodes,
+                        ),
+                        global_edges: next_state.orchestra.global_edges.filter((e) => {
+                            if (e.source !== in_id) return true;
+                            const idx = parseInt((e.sourceHandle ?? '').replace('in_', ''));
+                            return isNaN(idx) || idx < num_channels;
+                        }),
+                    },
+                };
+            }
             return map_active(state, (i) => ({
                 ...i,
                 nodes: i.nodes.map((n) =>
                     n.id === action.id ? { ...n, data: { ...n.data, name: action.name } } : n,
                 ),
             }));
+        }
+        case 'add_global_node':
+            return {
+                ...state,
+                orchestra: {
+                    ...state.orchestra,
+                    global_nodes: [...state.orchestra.global_nodes, action.node],
+                },
+            };
+        case 'update_global_code': {
+            const arity = scan_arity(action.code);
+            const params = scan_params(action.code);
+            return {
+                ...state,
+                orchestra: {
+                    ...state.orchestra,
+                    global_edges: state.orchestra.global_edges.filter((e) => {
+                        if (e.source === action.id) {
+                            const idx = parseInt((e.sourceHandle ?? '').replace('out_', ''));
+                            if (!isNaN(idx) && idx >= arity.num_outputs) return false;
+                        }
+                        if (e.target === action.id) {
+                            const idx = parseInt((e.targetHandle ?? '').replace('in_', ''));
+                            if (!isNaN(idx) && idx >= arity.num_inputs) return false;
+                        }
+                        return true;
+                    }),
+                    global_nodes: state.orchestra.global_nodes.map((n) =>
+                        n.id === action.id
+                            ? { ...n, data: { ...n.data, code: action.code, ...arity, params } }
+                            : n,
+                    ),
+                },
+            };
+        }
+        case 'update_global_name':
+            return {
+                ...state,
+                orchestra: {
+                    ...state.orchestra,
+                    global_nodes: state.orchestra.global_nodes.map((n) =>
+                        n.id === action.id ? { ...n, data: { ...n.data, name: action.name } } : n,
+                    ),
+                },
+            };
         case 'set_orchestra_bpm':
             return { ...state, orchestra: { ...state.orchestra, bpm: action.bpm } };
         case 'add_instrument': {
@@ -357,13 +630,15 @@ function patch_reducer(state: PatchState, action: PatchAction): PatchState {
                 edges: [],
                 code: '',
             };
+            const instruments = [...state.orchestra.instruments, instr];
             return {
                 ...state,
                 selected_id: null,
                 orchestra: {
                     ...state.orchestra,
                     active_id: instr.id,
-                    instruments: [...state.orchestra.instruments, instr],
+                    instruments,
+                    global_nodes: sync_global_in_nodes(instruments, state.orchestra.global_nodes),
                 },
             };
         }
@@ -373,10 +648,19 @@ function patch_reducer(state: PatchState, action: PatchAction): PatchState {
                 state.orchestra.active_id === action.id
                     ? (remaining[remaining.length - 1]?.id ?? null)
                     : state.orchestra.active_id;
+            const in_id = in_node_id(action.id);
             return {
                 ...state,
                 selected_id: null,
-                orchestra: { ...state.orchestra, active_id, instruments: remaining },
+                orchestra: {
+                    ...state.orchestra,
+                    active_id,
+                    instruments: remaining,
+                    global_nodes: sync_global_in_nodes(remaining, state.orchestra.global_nodes),
+                    global_edges: state.orchestra.global_edges.filter(
+                        (e) => e.source !== in_id && e.target !== in_id,
+                    ),
+                },
             };
         }
         case 'set_instrument_code':
@@ -389,16 +673,19 @@ function patch_reducer(state: PatchState, action: PatchAction): PatchState {
                     ),
                 },
             };
-        case 'rename_instrument':
+        case 'rename_instrument': {
+            const instruments = state.orchestra.instruments.map((i) =>
+                i.id === action.id ? { ...i, name: action.name } : i,
+            );
             return {
                 ...state,
                 orchestra: {
                     ...state.orchestra,
-                    instruments: state.orchestra.instruments.map((i) =>
-                        i.id === action.id ? { ...i, name: action.name } : i,
-                    ),
+                    instruments,
+                    global_nodes: sync_global_in_nodes(instruments, state.orchestra.global_nodes),
                 },
             };
+        }
         case 'set_active_instrument':
             return {
                 ...state,
@@ -407,8 +694,14 @@ function patch_reducer(state: PatchState, action: PatchAction): PatchState {
             };
         case 'set_orchestra_code':
             return { ...state, orchestra: { ...state.orchestra, code: action.code } };
+        case 'set_global_patch_code':
+            return { ...state, orchestra: { ...state.orchestra, global_patch_code: action.code } };
         case 'load':
-            return { orchestra: action.orchestra, selected_id: null };
+            return {
+                orchestra: normalize_orchestra(action.orchestra),
+                selected_id: null,
+                view: 'instrument',
+            };
         case 'apply_layout':
             return {
                 ...state,
@@ -418,6 +711,11 @@ function patch_reducer(state: PatchState, action: PatchAction): PatchState {
                         i.id === action.instrument_id ? { ...i, nodes: action.nodes } : i,
                     ),
                 },
+            };
+        case 'apply_global_layout':
+            return {
+                ...state,
+                orchestra: { ...state.orchestra, global_nodes: action.nodes },
             };
         default:
             return state;
@@ -447,6 +745,20 @@ function serialize_orchestra(orchestra: OrchestraState) {
                 targetHandle: e.targetHandle,
             })),
         })),
+        global_nodes: orchestra.global_nodes.map((n) => ({
+            id: n.id,
+            type: n.type,
+            data: n.data,
+        })),
+        global_edges: orchestra.global_edges.map((e) => ({
+            id: e.id,
+            type: e.type,
+            source: e.source,
+            sourceHandle: e.sourceHandle,
+            target: e.target,
+            targetHandle: e.targetHandle,
+        })),
+        global_patch_code: orchestra.global_patch_code,
     };
 }
 
@@ -508,8 +820,11 @@ export function usePatchStore() {
 
     const active_instrument =
         state.orchestra.instruments.find((i) => i.id === state.orchestra.active_id) ?? null;
-    const nodes = active_instrument?.nodes ?? [];
-    const edges = active_instrument?.edges ?? [];
+    const view = state.view;
+    const nodes =
+        view === 'global' ? state.orchestra.global_nodes : (active_instrument?.nodes ?? []);
+    const edges =
+        view === 'global' ? state.orchestra.global_edges : (active_instrument?.edges ?? []);
 
     const [layout_serial, set_layout_serial] = useState(0);
 
@@ -519,6 +834,7 @@ export function usePatchStore() {
     });
 
     useEffect(() => {
+        if (view !== 'instrument') return;
         const instrument = active_instrument_ref.current;
         if (!instrument) return;
         const id = instrument.id;
@@ -526,30 +842,61 @@ export function usePatchStore() {
             dispatch({ type: 'apply_layout', instrument_id: id, nodes: laid_out });
             set_layout_serial((s) => s + 1);
         });
-    }, [state.orchestra.active_id]);
+    }, [state.orchestra.active_id, view]);
+
+    const global_nodes_ref = useRef(state.orchestra.global_nodes);
+    const global_edges_ref = useRef(state.orchestra.global_edges);
+    useEffect(() => {
+        global_nodes_ref.current = state.orchestra.global_nodes;
+        global_edges_ref.current = state.orchestra.global_edges;
+    });
+
+    useEffect(() => {
+        if (view !== 'global') return;
+        elk_layout(global_nodes_ref.current, global_edges_ref.current).then((laid_out) => {
+            dispatch({ type: 'apply_global_layout', nodes: laid_out });
+            set_layout_serial((s) => s + 1);
+        });
+    }, [view]);
+
     const selected_node = nodes.find((n) => n.id === state.selected_id) ?? null;
 
     const on_nodes_change = useCallback(
-        (changes: NodeChange[]) => dispatch({ type: 'nodes_change', changes }),
-        [],
+        (changes: NodeChange[]) =>
+            dispatch(
+                view === 'global'
+                    ? { type: 'global_nodes_change', changes }
+                    : { type: 'nodes_change', changes },
+            ),
+        [view],
     );
     const on_edges_change = useCallback(
-        (changes: EdgeChange[]) => dispatch({ type: 'edges_change', changes }),
-        [],
+        (changes: EdgeChange[]) =>
+            dispatch(
+                view === 'global'
+                    ? { type: 'global_edges_change', changes }
+                    : { type: 'edges_change', changes },
+            ),
+        [view],
     );
     const on_connect = useCallback(
-        (connection: Connection) => dispatch({ type: 'connect', connection }),
-        [],
+        (connection: Connection) =>
+            dispatch(
+                view === 'global'
+                    ? { type: 'global_connect', connection }
+                    : { type: 'connect', connection },
+            ),
+        [view],
     );
     const select = useCallback((id: string | null) => dispatch({ type: 'select', id }), []);
-    const add_block = useCallback((name: string, position: { x: number; y: number }) => {
-        const id = `block_${Date.now()}`;
-        const code = get_default_code(name);
-        const arity = scan_arity(code);
-        const params = scan_params(code);
-        dispatch({
-            type: 'add_node',
-            node: {
+    const set_view = useCallback((v: PatchView) => dispatch({ type: 'set_view', view: v }), []);
+    const add_block = useCallback(
+        (name: string, position: { x: number; y: number }) => {
+            const id = `block_${Date.now()}`;
+            const code = get_default_code(name);
+            const arity = scan_arity(code);
+            const params = scan_params(code);
+            const node: Node = {
                 id,
                 type: 'block',
                 position,
@@ -559,17 +906,31 @@ export function usePatchStore() {
                     ...arity,
                     params,
                 } satisfies BlockData,
-            },
-        });
-        dispatch({ type: 'select', id });
-    }, []);
+            };
+            dispatch(
+                view === 'global' ? { type: 'add_global_node', node } : { type: 'add_node', node },
+            );
+            dispatch({ type: 'select', id });
+        },
+        [view],
+    );
     const update_code = useCallback(
-        (id: string, code: string) => dispatch({ type: 'update_code', id, code }),
-        [],
+        (id: string, code: string) =>
+            dispatch(
+                view === 'global'
+                    ? { type: 'update_global_code', id, code }
+                    : { type: 'update_code', id, code },
+            ),
+        [view],
     );
     const update_name = useCallback(
-        (id: string, name: string) => dispatch({ type: 'update_name', id, name }),
-        [],
+        (id: string, name: string) =>
+            dispatch(
+                view === 'global'
+                    ? { type: 'update_global_name', id, name }
+                    : { type: 'update_name', id, name },
+            ),
+        [view],
     );
     const set_orchestra_bpm = useCallback(
         (bpm: number) => dispatch({ type: 'set_orchestra_bpm', bpm }),
@@ -594,6 +955,10 @@ export function usePatchStore() {
     );
     const set_orchestra_code = useCallback(
         (code: string) => dispatch({ type: 'set_orchestra_code', code }),
+        [],
+    );
+    const set_global_patch_code = useCallback(
+        (code: string) => dispatch({ type: 'set_global_patch_code', code }),
         [],
     );
 
@@ -634,6 +999,8 @@ export function usePatchStore() {
         orchestra: state.orchestra,
         nodes,
         edges,
+        view,
+        set_view,
         selected_id: state.selected_id,
         selected_node,
         can_undo: history.past.length > 0,
@@ -654,6 +1021,7 @@ export function usePatchStore() {
         rename_instrument,
         set_active_instrument,
         set_orchestra_code,
+        set_global_patch_code,
         export_patch,
         import_patch,
         load_patch,

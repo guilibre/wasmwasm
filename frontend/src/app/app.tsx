@@ -16,6 +16,7 @@ import {
     type CompiledInstrument,
 } from './ts_env';
 import { setup_midi, add_on_midi_event, remove_on_midi_event } from '../audio/helpers';
+import { GLOBAL_CACHE_KEY } from './constants';
 import './app.scss';
 
 function parse_fn_sigs(
@@ -46,6 +47,7 @@ function parse_fn_sigs(
 export default function App() {
     const audio_context_ref = useRef<AudioContext | null>(null);
     const merger_ref = useRef<GainNode | null>(null);
+    const global_node_ref = useRef<AudioWorkletNode | null>(null);
     const worklet_nodes_ref = useRef<Map<string, AudioWorkletNode>>(new Map());
     const capture_nodes_ref = useRef<Set<AudioWorkletNode>>(new Set());
     const mic_source_ref = useRef<MediaStreamAudioSourceNode | null>(null);
@@ -91,14 +93,19 @@ export default function App() {
         import_patch,
         set_orchestra_bpm,
         set_orchestra_code,
+        set_global_patch_code,
         add_instrument,
         remove_instrument,
         set_instrument_code,
         rename_instrument,
         set_active_instrument,
+        view,
+        set_view,
         undo,
         redo,
     } = store;
+    const active_instrument =
+        orchestra.instruments.find((i) => i.id === orchestra.active_id) ?? null;
     const selected_block = selected_node?.type === 'block' ? selected_node : null;
     const initial_instruments_ref = useRef(orchestra.instruments);
 
@@ -135,6 +142,21 @@ export default function App() {
             prev_patch_data.current.set(instr.id, { nodes: instr.nodes, edges: instr.edges });
         }
     }, [orchestra.instruments]);
+
+    const prev_global_data_ref = useRef<{ nodes: unknown; edges: unknown } | null>(null);
+    useEffect(() => {
+        const prev = prev_global_data_ref.current;
+        if (
+            prev &&
+            (prev.nodes !== orchestra.global_nodes || prev.edges !== orchestra.global_edges)
+        ) {
+            patch_cache_ref.current.delete(GLOBAL_CACHE_KEY);
+        }
+        prev_global_data_ref.current = {
+            nodes: orchestra.global_nodes,
+            edges: orchestra.global_edges,
+        };
+    }, [orchestra.global_nodes, orchestra.global_edges]);
 
     const sig_parse_timers_ref = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
 
@@ -192,6 +214,50 @@ export default function App() {
         [set_orchestra_code],
     );
 
+    const handle_global_patch_code_change = useCallback(
+        (code: string) => {
+            set_global_patch_code(code);
+            set_compile_status((s) => {
+                const m = new Map(s);
+                m.delete(`instr:${GLOBAL_CACHE_KEY}`);
+                return m;
+            });
+            if (ts_ref.current) {
+                const existing_timer = sig_parse_timers_ref.current.get(GLOBAL_CACHE_KEY);
+                if (existing_timer !== undefined) clearTimeout(existing_timer);
+                const timer = setTimeout(() => {
+                    sig_parse_timers_ref.current.delete(GLOBAL_CACHE_KEY);
+                    if (!ts_ref.current) return;
+                    const { fn_names, fn_sigs } = parse_fn_sigs(ts_ref.current, code);
+                    set_compiled_instrument_info((prev) => {
+                        const existing = prev.get(GLOBAL_CACHE_KEY);
+                        const new_map = new Map(prev).set(GLOBAL_CACHE_KEY, {
+                            name: 'global',
+                            param_names: existing?.param_names ?? [],
+                            fn_names,
+                            fn_sigs,
+                        });
+                        const sigs_changed =
+                            !existing ||
+                            existing.fn_names.length !== fn_names.length ||
+                            existing.fn_names.some((f, i) => f !== fn_names[i]) ||
+                            existing.fn_sigs.some((s, i) => s !== fn_sigs[i]);
+                        if (sigs_changed) {
+                            set_orchestra_env(
+                                make_orchestra_env_with_instruments([...new_map.values()]),
+                            );
+                        }
+                        return new_map;
+                    });
+                }, 2000);
+                sig_parse_timers_ref.current.set(GLOBAL_CACHE_KEY, timer);
+            }
+        },
+        [set_global_patch_code],
+    );
+
+    const initial_global_patch_code_ref = useRef(orchestra.global_patch_code);
+
     useEffect(() => {
         import('typescript').then((ts) => {
             ts_ref.current = ts;
@@ -205,6 +271,13 @@ export default function App() {
                     fn_sigs,
                 });
             }
+            const { fn_names, fn_sigs } = parse_fn_sigs(ts, initial_global_patch_code_ref.current);
+            new_map.set(GLOBAL_CACHE_KEY, {
+                name: 'global',
+                param_names: [],
+                fn_names,
+                fn_sigs,
+            });
             set_compiled_instrument_info(new_map);
             set_orchestra_env(make_orchestra_env_with_instruments([...new_map.values()]));
         });
@@ -330,8 +403,8 @@ export default function App() {
     const compile_patch = useCallback(async () => {
         set_error(null);
         const sample_rate = audio_context_ref.current?.sampleRate ?? 44100;
-        await Promise.all(
-            orchestra.instruments.map(async (instr) => {
+        await Promise.all([
+            ...orchestra.instruments.map(async (instr) => {
                 const key = `patch:${instr.id}`;
                 set_status(key, 'compiling');
                 try {
@@ -349,15 +422,33 @@ export default function App() {
                     set_status(key, 'error');
                 }
             }),
-        );
-    }, [orchestra.instruments]);
+            (async () => {
+                const key = `patch:${GLOBAL_CACHE_KEY}`;
+                set_status(key, 'compiling');
+                try {
+                    const json = patch_to_json(orchestra.global_nodes, orchestra.global_edges);
+                    const compiled = await WasmWasm.compile_patch(sample_rate, json);
+                    patch_cache_ref.current.set(GLOBAL_CACHE_KEY, { json, compiled });
+                    set_compiled_patch_params((prev) =>
+                        new Map(prev).set(GLOBAL_CACHE_KEY, compiled.param_names),
+                    );
+                    const env = make_instrument_env_with_params(compiled.param_names);
+                    set_instrument_envs((prev) => new Map(prev).set(GLOBAL_CACHE_KEY, env));
+                    set_status(key, 'ok');
+                } catch (e) {
+                    set_error(`[global] ${String(e)}`);
+                    set_status(key, 'error');
+                }
+            })(),
+        ]);
+    }, [orchestra.instruments, orchestra.global_nodes, orchestra.global_edges]);
 
     const compile_instrument = useCallback(async () => {
         set_error(null);
         const ts = await import('typescript');
         let new_info_map = new Map(compiled_instrument_info);
-        await Promise.all(
-            orchestra.instruments.map(async (instr) => {
+        await Promise.all([
+            ...orchestra.instruments.map(async (instr) => {
                 const key = `instr:${instr.id}`;
                 set_status(key, 'compiling');
                 try {
@@ -375,11 +466,34 @@ export default function App() {
                     set_status(key, 'error');
                 }
             }),
-        );
+            (async () => {
+                const key = `instr:${GLOBAL_CACHE_KEY}`;
+                set_status(key, 'compiling');
+                try {
+                    const { fn_names, fn_sigs } = parse_fn_sigs(ts, orchestra.global_patch_code);
+                    const param_names = compiled_patch_params.get(GLOBAL_CACHE_KEY) ?? [];
+                    new_info_map = new Map(new_info_map).set(GLOBAL_CACHE_KEY, {
+                        name: 'global',
+                        param_names,
+                        fn_names,
+                        fn_sigs,
+                    });
+                    set_status(key, 'ok');
+                } catch (e) {
+                    set_error(`[global] ${String(e)}`);
+                    set_status(key, 'error');
+                }
+            })(),
+        ]);
         set_compiled_instrument_info(new_info_map);
         const env = make_orchestra_env_with_instruments([...new_info_map.values()]);
         set_orchestra_env(env);
-    }, [orchestra.instruments, compiled_patch_params, compiled_instrument_info]);
+    }, [
+        orchestra.instruments,
+        orchestra.global_patch_code,
+        compiled_patch_params,
+        compiled_instrument_info,
+    ]);
 
     const compile_orchestra = useCallback(async () => {
         set_status('orchestra', 'compiling');
@@ -440,6 +554,12 @@ export default function App() {
         });
         worklet_nodes_ref.current.clear();
         capture_nodes_ref.current.clear();
+        if (global_node_ref.current) {
+            global_node_ref.current.port.postMessage({ type: 'stop' });
+            global_node_ref.current.port.postMessage({ type: 'clear' });
+            global_node_ref.current.disconnect();
+            global_node_ref.current = null;
+        }
         if (midi_fwd_ref.current) {
             remove_on_midi_event(midi_fwd_ref.current);
             midi_fwd_ref.current = null;
@@ -472,6 +592,28 @@ export default function App() {
                 set_error(`[orchestra] ${String(e)}`);
             }
         }
+
+        let compiled_global_code = '';
+        if (orchestra.global_patch_code.trim()) {
+            try {
+                compiled_global_code = ts.transpileModule(orchestra.global_patch_code, {
+                    compilerOptions: {
+                        target: ts.ScriptTarget.ES2025,
+                        module: ts.ModuleKind.ESNext,
+                    },
+                }).outputText;
+            } catch (e) {
+                set_error(`[global] ${String(e)}`);
+            }
+        }
+
+        const cached_global = patch_cache_ref.current.get(GLOBAL_CACHE_KEY);
+        const global_json = cached_global
+            ? cached_global.json
+            : patch_to_json(orchestra.global_nodes, orchestra.global_edges);
+        const global_compile_promise = cached_global
+            ? Promise.resolve(cached_global.compiled)
+            : WasmWasm.compile_patch(context.sampleRate, global_json);
 
         const instr_json = new Map<string, string>();
         const instr_compiled_code = new Map<string, string>();
@@ -507,6 +649,52 @@ export default function App() {
             instr_compiled_code.set(instr.name, compiled_code);
         }
 
+        const global_pin_by_instrument = new Map<string, number>();
+        let global_params: PatchParams | null = null;
+        try {
+            const compiled_global = await global_compile_promise;
+            patch_cache_ref.current.set(GLOBAL_CACHE_KEY, {
+                json: global_json,
+                compiled: compiled_global,
+            });
+
+            compiled_global.external_inputs.forEach((ext, pin_index) => {
+                const instr = orchestra.instruments.find((i) => ext.name === `in_${i.id}_in`);
+                if (instr) global_pin_by_instrument.set(instr.id, pin_index);
+            });
+
+            const global_node = new AudioWorkletNode(context, 'wasm-processor', {
+                numberOfInputs: compiled_global.external_inputs.length,
+                numberOfOutputs: 1,
+                outputChannelCount: [compiled_global.num_out_channels],
+            });
+            global_node.connect(merger);
+            global_node.port.start();
+            const global_ready = new Promise<void>((resolve) => {
+                global_node.port.onmessage = (e: MessageEvent) => {
+                    if (e.data.type === 'wasm-ready') resolve();
+                };
+            });
+            global_node.port.postMessage({
+                type: 'load-wasm',
+                module: compiled_global.wasm_module,
+                num_out_channels: compiled_global.num_out_channels,
+                external_inputs: compiled_global.external_inputs,
+                is_global: true,
+            });
+            global_params = WasmWasm.make_params(compiled_global);
+            global_node.port.postMessage({
+                type: 'load-params-sab',
+                input_sab: global_params.input_sab,
+                event_sab: global_params.event_sab,
+                param_export_names: global_params.param_export_names,
+            });
+            await global_ready;
+            global_node_ref.current = global_node;
+        } catch (e) {
+            set_error(`[global] ${String(e)}`);
+        }
+
         const create_instance = async (
             instr: (typeof orchestra.instruments)[number],
             json: string,
@@ -522,9 +710,12 @@ export default function App() {
             const node = new AudioWorkletNode(context, 'wasm-processor', {
                 numberOfInputs: 1,
                 numberOfOutputs: 1,
-                outputChannelCount: [2],
+                outputChannelCount: [compiled.num_out_channels],
             });
-            node.connect(merger);
+            const pin_index = global_pin_by_instrument.get(instr.id);
+            if (pin_index !== undefined && global_node_ref.current) {
+                node.connect(global_node_ref.current, 0, pin_index);
+            }
             worklet_nodes_ref.current.set(`${instr.id}:${instance_idx}`, node);
 
             if (needs_capture(json)) {
@@ -537,7 +728,13 @@ export default function App() {
             }
 
             node.port.start();
-            node.port.postMessage({ type: 'load-wasm', module: compiled.wasm_module });
+            node.port.postMessage({
+                type: 'load-wasm',
+                module: compiled.wasm_module,
+                num_out_channels: compiled.num_out_channels,
+                external_inputs: compiled.external_inputs,
+                is_global: false,
+            });
             node.port.postMessage({
                 type: 'load-params-sab',
                 input_sab: params.input_sab,
@@ -643,6 +840,9 @@ export default function App() {
             sampleRate: context.sampleRate,
             audioCurrentTime: context.currentTime,
             instrument_names: [...instr_json.keys()],
+            global_code: compiled_global_code,
+            global_param_names: global_params?.param_names,
+            global_event_sab: global_params?.event_sab,
         });
         set_is_playing(true);
     };
@@ -673,6 +873,12 @@ export default function App() {
         });
         worklet_nodes_ref.current.clear();
         capture_nodes_ref.current.clear();
+        if (global_node_ref.current) {
+            global_node_ref.current.port.postMessage({ type: 'stop' });
+            global_node_ref.current.port.postMessage({ type: 'clear' });
+            global_node_ref.current.disconnect();
+            global_node_ref.current = null;
+        }
         await context?.suspend();
         set_is_playing(false);
         set_analysers(null);
@@ -717,12 +923,32 @@ export default function App() {
                     compile_status={compile_status}
                     orchestra_env={orchestra_env}
                     instrument_envs={instrument_envs}
+                    on_global_patch_code_change={handle_global_patch_code_change}
+                    global_env={instrument_envs.get(GLOBAL_CACHE_KEY) ?? null}
+                    view={view}
+                    on_view_change={set_view}
                 />
 
                 <div className="app__patch-pane">
-                    <ReactFlowProvider>
-                        <PatchEditor store={store} />
-                    </ReactFlowProvider>
+                    <div className="app__patch-container">
+                        <div className="app__patch-tabs">
+                            <div
+                                className={`app__patch-tab${view === 'global' ? ' app__patch-tab--active' : ''}`}
+                                onClick={() => set_view('global')}
+                            >
+                                global
+                            </div>
+                            <div
+                                className={`app__patch-tab${view === 'instrument' ? ' app__patch-tab--active' : ''}`}
+                                onClick={() => set_view('instrument')}
+                            >
+                                {active_instrument?.name ?? 'instrument'}
+                            </div>
+                        </div>
+                        <ReactFlowProvider>
+                            <PatchEditor store={store} />
+                        </ReactFlowProvider>
+                    </div>
                     <Sidebar analyser_l={analysers?.l ?? null} analyser_r={analysers?.r ?? null} />
                 </div>
             </div>

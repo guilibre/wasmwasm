@@ -21,7 +21,9 @@ export function patch_to_json(nodes: Node[], edges: Edge[]): string {
             src_node.type === 'capture' ? edge.sourceHandle : `${src_node.id}_${edge.sourceHandle}`;
 
         const sink_key =
-            tgt_node.type === 'dac' ? edge.targetHandle : `${tgt_node.id}_${edge.targetHandle}`;
+            tgt_node.type === 'out' || tgt_node.type === 'dac'
+                ? edge.targetHandle
+                : `${tgt_node.id}_${edge.targetHandle}`;
 
         patch[sink_key] = src_key;
     }

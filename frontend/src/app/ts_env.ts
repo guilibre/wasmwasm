@@ -35,6 +35,7 @@ const ORCHESTRA_DEFS =
     HELPER_DEFS +
     `
 declare function instrument(name: string): any;
+declare function global(): any;
 declare function sleep(seconds: number): Promise<void>;
 declare function sleep_beats(beats: number): Promise<void>;
 declare function on_beat(fn: (beat: number) => void);

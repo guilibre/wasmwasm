@@ -2,6 +2,7 @@
 
 #include "ir/ir.hpp"
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 struct ModuleRoute {
@@ -13,7 +14,9 @@ struct RoutingGraph {
     std::vector<ModuleRoute> modules;
     std::string dac_l_source;
     std::string dac_r_source;
-    bool has_capture = false;
+    std::vector<std::string> out_sources;
+    std::unordered_map<std::string, int> external_input_channels;
+    int external_input_count = 0;
 };
 
 struct ParsedPatch {

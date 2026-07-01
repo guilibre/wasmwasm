@@ -1,12 +1,15 @@
 import { useMemo, useState } from 'react';
 import type { VirtualTypeScriptEnvironment } from '@typescript/vfs';
-import type { OrchestraState } from '../patch/use_patch_store';
+import type { OrchestraState, PatchView } from '../patch/use_patch_store';
 import { TsEditor } from './ts_editor';
 import { make_instrument_env_with_params, INSTRUMENT_FALLBACK } from './ts_env';
+import { GLOBAL_CACHE_KEY } from './constants';
 import './instrument.scss';
 
 interface Props {
     instruments: OrchestraState['instruments'];
+    active_instrument_id: string | null;
+    view: PatchView;
     on_add: () => void;
     on_remove: (id: string) => void;
     on_rename: (id: string, name: string) => void;
@@ -16,10 +19,16 @@ interface Props {
     on_compile_instrument: () => void;
     compile_status: Map<string, 'idle' | 'compiling' | 'ok' | 'error'>;
     instrument_envs: Map<string, VirtualTypeScriptEnvironment>;
+    global_code: string;
+    on_global_code_change: (code: string) => void;
+    global_env: VirtualTypeScriptEnvironment | null;
+    on_view_change: (view: PatchView) => void;
 }
 
 export function InstrumentPanel({
     instruments,
+    active_instrument_id,
+    view,
     on_add,
     on_remove,
     on_rename,
@@ -29,20 +38,29 @@ export function InstrumentPanel({
     on_compile_instrument,
     compile_status,
     instrument_envs,
+    global_code,
+    on_global_code_change,
+    global_env,
+    on_view_change,
 }: Props) {
     const [editing_id, set_editing_id] = useState<string | null>(null);
     const [name_draft, set_name_draft] = useState('');
-    const [active_id, set_active_id] = useState<string | null>(instruments[0]?.id ?? null);
 
-    const resolved_id = active_id ?? instruments[0]?.id ?? null;
+    const resolved_id =
+        view === 'global' ? GLOBAL_CACHE_KEY : (active_instrument_id ?? instruments[0]?.id ?? null);
     const active_instr = instruments.find((i) => i.id === resolved_id) ?? null;
+    const is_global_tab = resolved_id === GLOBAL_CACHE_KEY;
 
     const default_env = useMemo(() => make_instrument_env_with_params([]), []);
     const env = (active_instr ? instrument_envs.get(active_instr.id) : undefined) ?? default_env;
 
     const handle_tab_click = (id: string) => {
-        set_active_id(id);
-        on_set_active(id);
+        if (id === GLOBAL_CACHE_KEY) {
+            on_view_change('global');
+        } else {
+            on_set_active(id);
+            on_view_change('instrument');
+        }
     };
 
     const start_rename = (id: string, name: string) => {
@@ -63,10 +81,6 @@ export function InstrumentPanel({
 
     const handle_remove = (e: React.MouseEvent, id: string) => {
         e.stopPropagation();
-        if (resolved_id === id) {
-            const remaining = instruments.filter((i) => i.id !== id);
-            set_active_id(remaining[0]?.id ?? null);
-        }
         on_remove(id);
     };
 
@@ -78,10 +92,12 @@ export function InstrumentPanel({
     );
     const all_patches_ok =
         instruments.length > 0 &&
-        instruments.every((i) => compile_status.get(`patch:${i.id}`) === 'ok');
+        instruments.every((i) => compile_status.get(`patch:${i.id}`) === 'ok') &&
+        compile_status.get(`patch:${GLOBAL_CACHE_KEY}`) === 'ok';
     const all_instrs_ok =
         instruments.length > 0 &&
-        instruments.every((i) => compile_status.get(`instr:${i.id}`) === 'ok');
+        instruments.every((i) => compile_status.get(`instr:${i.id}`) === 'ok') &&
+        compile_status.get(`instr:${GLOBAL_CACHE_KEY}`) === 'ok';
 
     return (
         <div className="instrument">
@@ -105,6 +121,12 @@ export function InstrumentPanel({
             </div>
             <div className="instrument__header">
                 <div className="instrument__tabs">
+                    <div
+                        className={`instrument__tab${is_global_tab ? ' instrument__tab--active' : ''}`}
+                        onClick={() => handle_tab_click(GLOBAL_CACHE_KEY)}
+                    >
+                        <span className="instrument__tab-name">global</span>
+                    </div>
                     {instruments.map((instr) => (
                         <div
                             key={instr.id}
@@ -146,7 +168,16 @@ export function InstrumentPanel({
                 </div>
             </div>
 
-            {active_instr ? (
+            {is_global_tab ? (
+                <div className="instrument__editor">
+                    <TsEditor
+                        key={GLOBAL_CACHE_KEY}
+                        initial_value={global_code || INSTRUMENT_FALLBACK}
+                        on_change={on_global_code_change}
+                        env={global_env ?? default_env}
+                    />
+                </div>
+            ) : active_instr ? (
                 <div className="instrument__editor">
                     <TsEditor
                         key={active_instr.id}

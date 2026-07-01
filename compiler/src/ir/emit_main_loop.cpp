@@ -14,31 +14,24 @@ auto pfx(const IRModule &ir, const std::string &s) -> std::string {
     return ir.name + "$" + s;
 }
 
-auto resolve_source(BinaryenModuleRef mod, const std::string &src,
-                    BinaryenIndex in_base, BinaryenIndex sample,
-                    BinaryenIndex num_samples) -> BinaryenExpressionRef {
-    if (src == "capture_l") {
-        auto *addr = BinaryenBinary(
-            mod, BinaryenAddInt32(),
-            BinaryenLocalGet(mod, in_base, BinaryenTypeInt32()),
-            BinaryenBinary(mod, BinaryenMulInt32(),
-                           BinaryenLocalGet(mod, sample, BinaryenTypeInt32()),
-                           BinaryenConst(mod, BinaryenLiteralInt32(4))));
-        return BinaryenUnary(mod, BinaryenPromoteFloat32(),
-                             BinaryenLoad(mod, 4, false, 0, 4,
-                                          BinaryenTypeFloat32(), addr,
-                                          "memory"));
-    }
-    if (src == "capture_r") {
-        auto *r_base = BinaryenBinary(
+auto resolve_source(BinaryenModuleRef mod, const RoutingGraph &graph,
+                    const std::string &src, BinaryenIndex in_base,
+                    BinaryenIndex sample, BinaryenIndex num_samples)
+    -> BinaryenExpressionRef {
+    if (auto it = graph.external_input_channels.find(src);
+        it != graph.external_input_channels.end()) {
+        auto *ch_base = BinaryenBinary(
             mod, BinaryenAddInt32(),
             BinaryenLocalGet(mod, in_base, BinaryenTypeInt32()),
             BinaryenBinary(
                 mod, BinaryenMulInt32(),
-                BinaryenLocalGet(mod, num_samples, BinaryenTypeInt32()),
-                BinaryenConst(mod, BinaryenLiteralInt32(4))));
+                BinaryenBinary(
+                    mod, BinaryenMulInt32(),
+                    BinaryenLocalGet(mod, num_samples, BinaryenTypeInt32()),
+                    BinaryenConst(mod, BinaryenLiteralInt32(4))),
+                BinaryenConst(mod, BinaryenLiteralInt32(it->second))));
         auto *addr = BinaryenBinary(
-            mod, BinaryenAddInt32(), r_base,
+            mod, BinaryenAddInt32(), ch_base,
             BinaryenBinary(mod, BinaryenMulInt32(),
                            BinaryenLocalGet(mod, sample, BinaryenTypeInt32()),
                            BinaryenConst(mod, BinaryenLiteralInt32(4))));
@@ -57,11 +50,13 @@ auto resolve_source(BinaryenModuleRef mod, const std::string &src,
     return BinaryenConst(mod, BinaryenLiteralFloat64(0.0));
 }
 
-auto resolve_source_vec_lane(BinaryenModuleRef mod, const std::string &src,
-                             int lane, BinaryenIndex in_base,
-                             BinaryenIndex sample, BinaryenIndex num_samples)
+auto resolve_source_vec_lane(BinaryenModuleRef mod, const RoutingGraph &graph,
+                             const std::string &src, int lane,
+                             BinaryenIndex in_base, BinaryenIndex sample,
+                             BinaryenIndex num_samples)
     -> BinaryenExpressionRef {
-    if (src == "capture_l" || src == "capture_r") {
+    if (auto it = graph.external_input_channels.find(src);
+        it != graph.external_input_channels.end()) {
         auto *sample_n =
             BinaryenBinary(mod, BinaryenAddInt32(),
                            BinaryenLocalGet(mod, sample, BinaryenTypeInt32()),
@@ -69,16 +64,16 @@ auto resolve_source_vec_lane(BinaryenModuleRef mod, const std::string &src,
         auto *sample_offset =
             BinaryenBinary(mod, BinaryenMulInt32(), sample_n,
                            BinaryenConst(mod, BinaryenLiteralInt32(4)));
-        BinaryenExpressionRef ch_base =
-            BinaryenLocalGet(mod, in_base, BinaryenTypeInt32());
-        if (src == "capture_r") {
-            ch_base = BinaryenBinary(
-                mod, BinaryenAddInt32(), ch_base,
+        auto *ch_base = BinaryenBinary(
+            mod, BinaryenAddInt32(),
+            BinaryenLocalGet(mod, in_base, BinaryenTypeInt32()),
+            BinaryenBinary(
+                mod, BinaryenMulInt32(),
                 BinaryenBinary(
                     mod, BinaryenMulInt32(),
                     BinaryenLocalGet(mod, num_samples, BinaryenTypeInt32()),
-                    BinaryenConst(mod, BinaryenLiteralInt32(4))));
-        }
+                    BinaryenConst(mod, BinaryenLiteralInt32(4))),
+                BinaryenConst(mod, BinaryenLiteralInt32(it->second))));
         auto *addr =
             BinaryenBinary(mod, BinaryenAddInt32(), ch_base, sample_offset);
         return BinaryenUnary(mod, BinaryenPromoteFloat32(),
@@ -109,8 +104,13 @@ void emit_main_loop(const RoutingGraph &graph, BinaryenModuleRef mod) {
                                        });
         });
 
+    const std::vector<std::string> channels =
+        !graph.out_sources.empty()
+            ? graph.out_sources
+            : std::vector<std::string>{graph.dac_l_source, graph.dac_r_source};
+
     const bool vec_available =
-        simd_eligible && !graph.modules.empty() &&
+        simd_eligible && !graph.modules.empty() && channels.size() == 2 &&
         std::ranges::all_of(
             graph.modules, [&](const ModuleRoute &route) -> bool {
                 const auto fn_name = pfx(route.ir, route.ir.main_fn + "_vec");
@@ -121,17 +121,17 @@ void emit_main_loop(const RoutingGraph &graph, BinaryenModuleRef mod) {
     if (!BinaryenHasMemory(mod))
         BinaryenAddMemoryImport(mod, "memory", "env", "memory", 0);
 
-    const bool has_cap = graph.has_capture;
+    const bool has_ext = graph.external_input_count > 0;
 
     std::vector<BinaryenType> param_types = {
         BinaryenTypeInt32(), BinaryenTypeInt32(), BinaryenTypeInt32()};
-    if (has_cap)
+    if (has_ext)
         param_types.insert(param_types.begin() + 1, BinaryenTypeInt32());
 
     const BinaryenIndex OUT_BASE = 0;
     BinaryenIndex IN_BASE = 0;
     BinaryenIndex NUM_SAMPLES = 0;
-    if (has_cap) {
+    if (has_ext) {
         IN_BASE = 1;
         NUM_SAMPLES = 2;
     } else {
@@ -147,7 +147,7 @@ void emit_main_loop(const RoutingGraph &graph, BinaryenModuleRef mod) {
         for (const auto &route : graph.modules) {
             for (size_t i = 0; i < route.inputs.size(); ++i) {
                 const auto gname = pfx(route.ir, "IN$" + std::to_string(i));
-                auto *val = resolve_source(mod, route.inputs[i], IN_BASE,
+                auto *val = resolve_source(mod, graph, route.inputs[i], IN_BASE,
                                            SAMPLE, NUM_SAMPLES);
                 stmts.push_back(BinaryenGlobalSet(mod, gname.c_str(), val));
             }
@@ -159,43 +159,34 @@ void emit_main_loop(const RoutingGraph &graph, BinaryenModuleRef mod) {
         auto dac_f32 = [&](const std::string &src) -> BinaryenExpressionRef {
             return BinaryenUnary(
                 mod, BinaryenDemoteFloat64(),
-                resolve_source(mod, src, IN_BASE, SAMPLE, NUM_SAMPLES));
+                resolve_source(mod, graph, src, IN_BASE, SAMPLE, NUM_SAMPLES));
         };
 
-        auto out_addr_l =
-            [&](BinaryenIndex sample_local) -> BinaryenExpressionRef {
-            return BinaryenBinary(
+        auto out_addr =
+            [&](int channel,
+                BinaryenIndex sample_local) -> BinaryenExpressionRef {
+            auto *ch_base = BinaryenBinary(
                 mod, BinaryenAddInt32(),
                 BinaryenLocalGet(mod, OUT_BASE, BinaryenTypeInt32()),
+                BinaryenBinary(
+                    mod, BinaryenMulInt32(),
+                    BinaryenBinary(
+                        mod, BinaryenMulInt32(),
+                        BinaryenLocalGet(mod, NUM_SAMPLES, BinaryenTypeInt32()),
+                        BinaryenConst(mod, BinaryenLiteralInt32(4))),
+                    BinaryenConst(mod, BinaryenLiteralInt32(channel))));
+            return BinaryenBinary(
+                mod, BinaryenAddInt32(), ch_base,
                 BinaryenBinary(
                     mod, BinaryenMulInt32(),
                     BinaryenLocalGet(mod, sample_local, BinaryenTypeInt32()),
                     BinaryenConst(mod, BinaryenLiteralInt32(4))));
         };
-        auto out_addr_r =
-            [&](BinaryenIndex sample_local) -> BinaryenExpressionRef {
-            auto *r_base = BinaryenBinary(
-                mod, BinaryenAddInt32(),
-                BinaryenLocalGet(mod, OUT_BASE, BinaryenTypeInt32()),
-                BinaryenBinary(
-                    mod, BinaryenMulInt32(),
-                    BinaryenLocalGet(mod, NUM_SAMPLES, BinaryenTypeInt32()),
-                    BinaryenConst(mod, BinaryenLiteralInt32(4))));
-            return BinaryenBinary(
-                mod, BinaryenAddInt32(), r_base,
-                BinaryenBinary(
-                    mod, BinaryenMulInt32(),
-                    BinaryenLocalGet(mod, sample_local, BinaryenTypeInt32()),
-                    BinaryenConst(mod, BinaryenLiteralInt32(4))));
-        };
-        auto *addr_l = out_addr_l(SAMPLE);
-        auto *addr_r = out_addr_r(SAMPLE);
-        stmts.push_back(BinaryenStore(mod, 4, 0, 4, addr_l,
-                                      dac_f32(graph.dac_l_source),
-                                      BinaryenTypeFloat32(), "memory"));
-        stmts.push_back(BinaryenStore(mod, 4, 0, 4, addr_r,
-                                      dac_f32(graph.dac_r_source),
-                                      BinaryenTypeFloat32(), "memory"));
+        for (size_t ch = 0; ch < channels.size(); ++ch) {
+            stmts.push_back(BinaryenStore(
+                mod, 4, 0, 4, out_addr(static_cast<int>(ch), SAMPLE),
+                dac_f32(channels[ch]), BinaryenTypeFloat32(), "memory"));
+        }
 
         stmts.push_back(BinaryenLocalSet(
             mod, SAMPLE,
@@ -218,7 +209,7 @@ void emit_main_loop(const RoutingGraph &graph, BinaryenModuleRef mod) {
         auto lane_f32 = [&](const std::string &src,
                             int lane) -> BinaryenExpressionRef {
             return BinaryenUnary(mod, BinaryenDemoteFloat64(),
-                                 resolve_source_vec_lane(mod, src, lane,
+                                 resolve_source_vec_lane(mod, graph, src, lane,
                                                          IN_BASE, SAMPLE,
                                                          NUM_SAMPLES));
         };
@@ -258,16 +249,16 @@ void emit_main_loop(const RoutingGraph &graph, BinaryenModuleRef mod) {
                                BinaryenConst(mod, BinaryenLiteralInt32(4))));
         };
         stmts.push_back(BinaryenStore(mod, 4, 0, 4, out_addr_vec_l(0),
-                                      lane_f32(graph.dac_l_source, 0),
+                                      lane_f32(channels[0], 0),
                                       BinaryenTypeFloat32(), "memory"));
         stmts.push_back(BinaryenStore(mod, 4, 0, 4, out_addr_vec_r(0),
-                                      lane_f32(graph.dac_r_source, 0),
+                                      lane_f32(channels[1], 0),
                                       BinaryenTypeFloat32(), "memory"));
         stmts.push_back(BinaryenStore(mod, 4, 0, 4, out_addr_vec_l(1),
-                                      lane_f32(graph.dac_l_source, 1),
+                                      lane_f32(channels[0], 1),
                                       BinaryenTypeFloat32(), "memory"));
         stmts.push_back(BinaryenStore(mod, 4, 0, 4, out_addr_vec_r(1),
-                                      lane_f32(graph.dac_r_source, 1),
+                                      lane_f32(channels[1], 1),
                                       BinaryenTypeFloat32(), "memory"));
 
         stmts.push_back(BinaryenLocalSet(
