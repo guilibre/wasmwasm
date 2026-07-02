@@ -151,6 +151,23 @@ struct Lowerer {
 
     auto lower_tail_as_array(const ExprPtr &e, size_t n)
         -> std::vector<IRValue> {
+        if (const auto *var = std::get_if<Variable>(&e->node)) {
+            const auto &raw_name = var->name.lexeme;
+            const auto name = inline_alias.contains(raw_name)
+                                  ? inline_alias.at(raw_name)
+                                  : raw_name;
+            if (!array_env.contains(name))
+                throw std::runtime_error("'" + name + "' is not an array");
+            if (array_env.at(name).size() != n)
+                throw std::runtime_error(
+                    "internal error: array tail arity mismatch");
+            std::vector<IRValue> out;
+            out.reserve(n);
+            for (size_t i = 0; i < n; ++i)
+                out.push_back(read_array_elem(name, i));
+            return out;
+        }
+
         if (const auto *lit = std::get_if<ArrayLiteral>(&e->node)) {
             if (lit->elements.size() != n)
                 throw std::runtime_error(
@@ -217,7 +234,7 @@ struct Lowerer {
 
         if (std::holds_alternative<Call>(e->node)) {
             const auto [callee_node, arg_ptrs] = flatten_calls(e);
-            const auto *var = std::get_if<Variable>(&callee_node->node);
+            const auto *var = std::get_if<Variable>(&(*callee_node)->node);
             if (var != nullptr && fns.contains(var->name.lexeme)) {
                 const auto &info = fns.at(var->name.lexeme);
                 if (info.return_type.size() == n) {
@@ -424,12 +441,12 @@ struct Lowerer {
     }
 
     static auto flatten_calls(const ExprPtr &e)
-        -> std::pair<const Expr *, std::vector<const ExprPtr *>> {
+        -> std::pair<const ExprPtr *, std::vector<const ExprPtr *>> {
         std::vector<const ExprPtr *> args;
-        const Expr *node = e.get();
-        while (const auto *call = std::get_if<Call>(&node->node)) {
+        const ExprPtr *node = &e;
+        while (const auto *call = std::get_if<Call>(&(*node)->node)) {
             args.emplace_back(&call->argument);
-            node = call->callee.get();
+            node = &call->callee;
         }
         std::ranges::reverse(args);
         return {node, args};
@@ -953,7 +970,8 @@ struct Lowerer {
 
                     {
                         const auto [cn, ap] = flatten_calls(node.value);
-                        if (const auto *cv = std::get_if<Variable>(&cn->node)) {
+                        if (const auto *cv =
+                                std::get_if<Variable>(&(*cn)->node)) {
                             if (cv->name.lexeme == "zip") {
                                 lower_bind_zip(name, node.value);
                                 return std::nullopt;
@@ -1021,7 +1039,8 @@ struct Lowerer {
 
                     {
                         const auto [cn, ap] = flatten_calls(node.value);
-                        if (const auto *cv = std::get_if<Variable>(&cn->node);
+                        if (const auto *cv =
+                                std::get_if<Variable>(&(*cn)->node);
                             cv != nullptr && fns.contains(cv->name.lexeme)) {
                             const auto &info = fns.at(cv->name.lexeme);
                             if (info.return_type.size() > 1) {
@@ -1164,7 +1183,7 @@ struct Lowerer {
                     const auto [callee_node, arg_ptrs] = flatten_calls(e);
 
                     if (const auto *cv =
-                            std::get_if<Variable>(&callee_node->node)) {
+                            std::get_if<Variable>(&(*callee_node)->node)) {
                         if (cv->name.lexeme == "foldr")
                             return lower_foldr(arg_ptrs);
                     }
@@ -1179,7 +1198,7 @@ struct Lowerer {
                     }
 
                     if (const auto *var =
-                            std::get_if<Variable>(&callee_node->node)) {
+                            std::get_if<Variable>(&(*callee_node)->node)) {
                         const auto &name = var->name.lexeme;
 
                         if (std::ranges::contains(math_builtins, name)) {
@@ -1259,6 +1278,26 @@ struct Lowerer {
                             return IRLocalRef{res};
                         }
                         throw std::runtime_error("Unknown function: " + name);
+                    }
+
+                    if (std::holds_alternative<Lambda>((*callee_node)->node)) {
+                        std::vector<std::string> arg_locals;
+                        arg_locals.reserve(arg_vals.size());
+                        for (const auto &av : arg_vals) {
+                            if (const auto *lr = std::get_if<IRLocalRef>(&av)) {
+                                arg_locals.emplace_back(lr->name);
+                            } else {
+                                auto t = tmp();
+                                define(t, IRType::Float);
+                                emit(IRAssign{
+                                    .result = t,
+                                    .value = av,
+                                    .type = IRType::Float,
+                                });
+                                arg_locals.emplace_back(t);
+                            }
+                        }
+                        return inline_lambda_body(*callee_node, arg_locals);
                     }
 
                     throw std::runtime_error("Dynamic dispatch not supported");
