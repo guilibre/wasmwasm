@@ -86,12 +86,6 @@ auto Parser::parse_expression() -> ParseResult {
                 .col = current.column,
             });
         advance();
-        if (!match(TokenKind::Number))
-            return std::unexpected(ParseError{
-                .msg = "Expected numeric literal as param default",
-                .line = current.line,
-                .col = current.column,
-            });
         auto default_val = parse_expression();
         if (!default_val) return default_val;
         return Expr::make<ParamBind>(name, std::move(*default_val));

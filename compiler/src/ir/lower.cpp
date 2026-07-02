@@ -5,6 +5,7 @@
 #include "ir.hpp"
 #include "types/type.hpp"
 #include <algorithm>
+#include <cmath>
 #include <numbers>
 #include <optional>
 #include <stdexcept>
@@ -32,6 +33,46 @@ auto ir_type_of(const TypePtr &t) -> IRType {
         }
     }
     return IRType::Float;
+}
+
+auto eval_const_expr(const ExprPtr &e) -> double {
+    if (const auto *lit = std::get_if<Literal>(&e->node))
+        return std::stod(std::string(lit->value.lexeme));
+
+    if (const auto *un = std::get_if<UnaryOp>(&e->node)) {
+        const double v = eval_const_expr(un->expr);
+        switch (un->op) {
+        case Operation::Sub:
+            return -v;
+        case Operation::Not:
+            return v == 0.0 ? 1.0 : 0.0;
+        default:
+            throw std::runtime_error(
+                "param default must be a constant expression");
+        }
+    }
+
+    if (const auto *bin = std::get_if<BinaryOp>(&e->node)) {
+        const double l = eval_const_expr(bin->left);
+        const double r = eval_const_expr(bin->right);
+        switch (bin->op) {
+        case Operation::Add:
+            return l + r;
+        case Operation::Sub:
+            return l - r;
+        case Operation::Mul:
+            return l * r;
+        case Operation::Div:
+            return l / r;
+        case Operation::Pow:
+            return std::pow(l, r);
+        default:
+            throw std::runtime_error(
+                "param default must be a constant expression");
+        }
+    }
+
+    throw std::runtime_error("param default must be a constant expression");
 }
 
 struct FnInfo {
@@ -1281,13 +1322,8 @@ struct Lowerer {
 
                 if constexpr (std::is_same_v<T, ParamBind>) {
                     const auto &name = node.name.lexeme;
-                    const auto *lit =
-                        std::get_if<Literal>(&node.default_val->node);
-                    if (!lit)
-                        throw std::runtime_error(
-                            "param default must be a numeric literal");
                     const double default_val =
-                        std::stod(std::string(lit->value.lexeme));
+                        eval_const_expr(node.default_val);
                     param_names.insert(name);
                     mod.params.emplace_back(name, default_val);
                     return std::nullopt;

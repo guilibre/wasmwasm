@@ -1,0 +1,62 @@
+param dt = 0.05
+param g  = 9.8
+param l1 = 7
+param l2 = 11
+param m1 = 29
+param m2 = 13
+param c  = 0
+
+static t1 = 0
+static t2 = 0
+static t1d = 2
+static t2d = 1
+
+t1dd = {p1 p2 p1d p2d.
+  p12   = p1 - p2
+  delta = l1 * (2*m1 + m2 - m2 * cos (2*p12))
+  term1 = -g*(2*m1 + m2) * sin (p1)
+  term2 = -m2*g          * sin (p1 - 2*p2)
+  term3 = -2 * sin (p12) * m2 * (p2d*p2d*l2 + p1d*p1d*l1*cos (p12))
+  (term1 + term2 + term3) / delta - c * p1d
+}
+
+t2dd = {p1 p2 p1d p2d.
+  p12   = p1 - p2
+  term1 = p1d*p1d*l1*(m1 + m2)
+  term2 = g*(m1 + m2) * cos (p1)
+  term3 = p2d*p2d*l2*m2 * cos (p12)
+  2 * sin (p12) * (term1 + term2 + term3) / (l2 * (2*m1 + m2 - m2 * cos (2*p12))) - c * p2d
+}
+
+k1_t1d  = t1d
+k1_t2d  = t2d
+k1_t1dd = t1dd t1 t2 t1d t2d
+k1_t2dd = t2dd t1 t2 t1d t2d
+
+k2_t1d  = t1d + dt/2 * k1_t1dd
+k2_t2d  = t2d + dt/2 * k1_t2dd
+k2_t1dd = t1dd (t1 + dt/2 * k1_t1d) (t2 + dt/2 * k1_t2d) k2_t1d k2_t2d
+k2_t2dd = t2dd (t1 + dt/2 * k1_t1d) (t2 + dt/2 * k1_t2d) k2_t1d k2_t2d
+
+k3_t1d  = t1d + dt/2 * k2_t1dd
+k3_t2d  = t2d + dt/2 * k2_t2dd
+k3_t1dd = t1dd (t1 + dt/2 * k2_t1d) (t2 + dt/2 * k2_t2d) k3_t1d k3_t2d
+k3_t2dd = t2dd (t1 + dt/2 * k2_t1d) (t2 + dt/2 * k2_t2d) k3_t1d k3_t2d
+
+k4_t1d  = t1d + dt * k3_t1dd
+k4_t2d  = t2d + dt * k3_t2dd
+k4_t1dd = t1dd (t1 + dt * k3_t1d) (t2 + dt * k3_t2d) k4_t1d k4_t2d
+k4_t2dd = t2dd (t1 + dt * k3_t1d) (t2 + dt * k3_t2d) k4_t1d k4_t2d
+
+t1  = t1  + dt/6 * (k1_t1d  + 2*k2_t1d  + 2*k3_t1d  + k4_t1d)
+t2  = t2  + dt/6 * (k1_t2d  + 2*k2_t2d  + 2*k3_t2d  + k4_t2d)
+t1d = t1d + dt/6 * (k1_t1dd + 2*k2_t1dd + 2*k3_t1dd + k4_t1dd)
+t2d = t2d + dt/6 * (k1_t2dd + 2*k2_t2dd + 2*k3_t2dd + k4_t2dd)
+
+x1 = l1 * sin (t1)
+y1 = -l1 * cos (t1)
+x2 = x1 + l2 * sin (t2)
+y2 = y1 - l2 * cos (t2)
+
+OUT[0] <- x1/l1
+OUT[1] <- x2/(l1 + l2)

@@ -1,0 +1,12 @@
+param k = 1
+param h = 0.1
+
+static x = 0
+static y = 0.5
+
+OUT[0] <- x
+OUT[1] <- y
+
+y = y - k * x * h/2
+x = x +     y * h
+y = y - k * x * h/2
