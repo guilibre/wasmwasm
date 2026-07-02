@@ -13,9 +13,10 @@ auto Lowerer::read_array_elem(const std::string &arr_name, size_t i)
     if (memory_arrays.contains(arr_name)) {
         auto r = tmp();
         define(r, IRType::Float);
-        const auto addr =
-            mod.static_array_base(arr_name) + static_cast<uint32_t>(i * 8);
-        emit(IRMemRead{.result = r, .addr = addr});
+        emit(IRMemRead{
+            .result = r,
+            .ref = IRMemRef{.buffer = arr_name,
+                            .byte_offset = static_cast<uint32_t>(i * 8)}});
         return IRLocalRef{r};
     }
     const auto &elem = array_env.at(arr_name).at(i);
@@ -205,10 +206,11 @@ void Lowerer::lower_bind_map(const std::string &dest_name,
     }
 
     if (memory_arrays.contains(dest_name)) {
-        const auto base = mod.static_array_base(dest_name);
         for (size_t i = 0; i < n; ++i)
-            emit(IRMemWrite{.addr = base + static_cast<uint32_t>(i * 8),
-                            .value = results[i]});
+            emit(IRMemWrite{
+                .ref = IRMemRef{.buffer = dest_name,
+                                .byte_offset = static_cast<uint32_t>(i * 8)},
+                .value = results[i]});
     } else if (static_arrays.contains(dest_name)) {
         const auto &elem_names = array_env.at(dest_name);
         for (size_t i = 0; i < n; ++i)
@@ -285,10 +287,11 @@ void Lowerer::lower_bind_zip(const std::string &dest_name,
     }
 
     if (memory_arrays.contains(dest_name)) {
-        const auto base = mod.static_array_base(dest_name);
         for (size_t i = 0; i < n; ++i)
-            emit(IRMemWrite{.addr = base + static_cast<uint32_t>(i * 8),
-                            .value = results[i]});
+            emit(IRMemWrite{
+                .ref = IRMemRef{.buffer = dest_name,
+                                .byte_offset = static_cast<uint32_t>(i * 8)},
+                .value = results[i]});
     } else if (static_arrays.contains(dest_name)) {
         const auto &elem_names = array_env.at(dest_name);
         for (size_t i = 0; i < n; ++i)

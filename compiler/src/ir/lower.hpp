@@ -5,5 +5,4 @@
 
 #include <string>
 
-auto lower(const ExprPtr &program, const std::string &module_name,
-           uint32_t memory_base) -> IRModule;
+auto lower(const ExprPtr &program, const std::string &module_name) -> IRModule;

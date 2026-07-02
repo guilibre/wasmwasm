@@ -5,7 +5,6 @@
 #include <memory>
 #include <optional>
 #include <string>
-#include <unordered_map>
 #include <variant>
 #include <vector>
 
@@ -43,15 +42,6 @@ struct IRCall {
     std::vector<IRValue> args;
     std::vector<IRType> result_type;
 };
-
-inline auto make_scalar_call(std::string result, std::string callee,
-                             std::vector<IRValue> args, IRType result_type)
-    -> IRCall {
-    return IRCall{.result = {std::move(result)},
-                  .callee = std::move(callee),
-                  .args = std::move(args),
-                  .result_type = {result_type}};
-}
 
 struct IRDelayRead {
     std::string result;
@@ -98,13 +88,18 @@ struct IRStaticWrite {
     IRValue value;
 };
 
+struct IRMemRef {
+    std::string buffer;
+    uint32_t byte_offset = 0;
+};
+
 struct IRMemRead {
     std::string result;
-    uint32_t addr;
+    IRMemRef ref;
 };
 
 struct IRMemWrite {
-    uint32_t addr;
+    IRMemRef ref;
     IRValue value;
 };
 
@@ -162,7 +157,10 @@ struct IRDelayDecl {
     std::string init_fn;
 };
 
-inline constexpr uint32_t delay_memory_start = (64 * 1024) + 1024;
+struct IRArrayDecl {
+    std::string name;
+    size_t size_elements;
+};
 
 struct IRStaticVar {
     std::string name;
@@ -173,6 +171,8 @@ struct IRModule {
     std::string name;
     std::vector<IRFunction> functions;
     std::vector<IRDelayDecl> delays;
+    std::vector<IRArrayDecl> static_arrays_decl;
+    std::vector<std::string> alloc_order;
     std::vector<IRStaticVar> static_vars;
     std::vector<std::pair<std::string, double>> params;
     std::string init_fn;
@@ -180,18 +180,13 @@ struct IRModule {
     std::string static_init_fn;
     size_t num_inputs = 0;
     size_t num_outputs = 0;
-    uint32_t memory_base = delay_memory_start;
-    uint32_t next_offset = 0;
-    std::unordered_map<std::string, uint32_t> delay_bases_map;
-    std::unordered_map<std::string, uint32_t> static_array_bases;
-
-    [[nodiscard]] auto delay_base(const std::string &buf_name) const
-        -> uint32_t;
-    [[nodiscard]] auto total_bytes() const -> uint32_t;
-    [[nodiscard]] auto static_array_base(const std::string &array_name) const
-        -> uint32_t;
-    auto alloc_delay(const std::string &delay_name, size_t n_elements)
-        -> uint32_t;
-    auto alloc_static_array(const std::string &array_name, size_t n_elements)
-        -> uint32_t;
 };
+
+inline auto make_scalar_call(std::string result, std::string callee,
+                             std::vector<IRValue> args, IRType result_type)
+    -> IRCall {
+    return IRCall{.result = {std::move(result)},
+                  .callee = std::move(callee),
+                  .args = std::move(args),
+                  .result_type = {result_type}};
+}

@@ -2,8 +2,11 @@ add_library(${PROJECT_NAME}_lib STATIC
     builtins.cpp
     compile.cpp
     ast/ast.cpp
-    ir/emit.cpp
-    ir/emit_main_loop.cpp
+    backend/binaryen/binaryen_backend.cpp
+    backend/binaryen/binaryen_codegen.cpp
+    backend/binaryen/binaryen_emit.cpp
+    backend/binaryen/binaryen_emit_main_loop.cpp
+    backend/binaryen/binaryen_math_module.cpp
     ir/lower.cpp
     ir/lower_arrays.cpp
     ir/lower_bind.cpp

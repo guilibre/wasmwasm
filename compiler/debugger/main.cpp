@@ -1,6 +1,7 @@
+#include "backend/binaryen/binaryen_backend.hpp"
+#include "backend/binaryen/binaryen_codegen.hpp"
 #include "binaryen-c.h"
 #include "builtins.hpp"
-#include "ir/emit.hpp"
 #include "ir/lower.hpp"
 #include "parser/parser.hpp"
 #include "parser/tokenizer.hpp"
@@ -9,6 +10,7 @@
 #include <fstream>
 #include <iostream>
 #include <json/json.h>
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -92,17 +94,7 @@ auto frontend_to_patch_json(const Json::Value &root) -> std::string {
 
 auto run(const char *math_wasm_path) -> int {
     auto math_bin = load_file(math_wasm_path);
-    auto *math_module = BinaryenModuleReadWithFeatures(
-        math_bin.data(), math_bin.size(), BinaryenFeatureAll());
-    if (math_module == nullptr) {
-        std::cout << "failed to load math.wasm\n";
-        return 1;
-    }
-    if (!BinaryenModuleValidate(math_module)) {
-        std::cout << "math.wasm is invalid\n";
-        BinaryenModuleDispose(math_module);
-        return 1;
-    }
+    BinaryenBackend backend(math_bin.data(), math_bin.size());
     std::cout << "math.wasm OK\n";
 
     const auto src = []() -> std::string {
@@ -124,10 +116,13 @@ auto run(const char *math_wasm_path) -> int {
     auto patch = parse_patch_json(patch_json);
     std::cout << "parse OK\n";
 
-    auto *main_module = BinaryenModuleCreate();
+    const BackendOptions opts{.sample_rate = 44100.0};
+    auto codegen = backend.create_codegen(opts);
+    auto *codegen_impl = dynamic_cast<BinaryenCodeGen *>(codegen.get());
+    if (codegen_impl == nullptr)
+        throw std::runtime_error("expected a BinaryenCodeGen");
 
     std::vector<IRModule> compiled;
-    auto next_mem = delay_memory_start;
     for (const auto &[name, code] : patch.module_sources) {
         const Tokenizer tok(code);
         Parser parser(tok);
@@ -143,24 +138,22 @@ auto run(const char *math_wasm_path) -> int {
         infer_expr(*ast, env, subst, gen);
         finalize_types(*ast, subst);
 
-        auto ir = lower(*ast, name, next_mem);
-        std::cout << "[" << name << "] memory_base=" << ir.memory_base
-                  << " total_bytes=" << ir.total_bytes() << "\n";
-        emit_ir(ir, main_module, math_module, 44100.0);
-        next_mem += ir.total_bytes();
+        auto ir = lower(*ast, name);
+        std::cout << "[" << name << "] lowered OK\n";
+        codegen->add_module(ir);
         compiled.push_back(std::move(ir));
     }
     std::cout << "emit OK\n";
 
     auto graph = build_routing_graph(patch, std::move(compiled));
-    emit_main_loop(graph, main_module);
+    codegen->finalize(graph);
     std::cout << "routing OK\n";
+
+    auto *main_module = codegen_impl->raw_module();
 
     if (!BinaryenModuleValidate(main_module)) {
         std::cout << "INVALID MODULE\n";
         BinaryenModulePrint(main_module);
-        BinaryenModuleDispose(math_module);
-        BinaryenModuleDispose(main_module);
         return 1;
     }
     std::cout << "validate OK\n";
@@ -168,26 +161,12 @@ auto run(const char *math_wasm_path) -> int {
     std::cout << "\n=== WAT (pre-optimization) ===\n";
     BinaryenModulePrint(main_module);
 
-    BinaryenSetOptimizeLevel(3);
-    BinaryenSetShrinkLevel(0);
-    BinaryenSetFastMath(true);
-    BinaryenSetLowMemoryUnused(true);
-    BinaryenSetAlwaysInlineMaxSize(100);
-    BinaryenSetFlexibleInlineMaxSize(250);
-    BinaryenSetOneCallerInlineMaxSize(250);
-    BinaryenModuleOptimize(main_module);
+    const auto artifact = codegen->build();
+    (void)artifact;
 
-    if (!BinaryenModuleValidate(main_module)) {
-        std::cout << "OPTIMIZATION FAILED\n";
-        BinaryenModuleDispose(math_module);
-        BinaryenModuleDispose(main_module);
-        return 1;
-    }
     std::cout << "\n=== WAT (post-optimization) ===\n";
     BinaryenModulePrint(main_module);
 
-    BinaryenModuleDispose(main_module);
-    BinaryenModuleDispose(math_module);
     return 0;
 }
 

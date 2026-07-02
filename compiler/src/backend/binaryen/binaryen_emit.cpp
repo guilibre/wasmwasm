@@ -1,8 +1,8 @@
-#include "emit.hpp"
+#include "binaryen_emit.hpp"
 
 #include "ast/ast.hpp"
 #include "binaryen-c.h"
-#include "ir.hpp"
+#include "ir/ir.hpp"
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -62,10 +62,16 @@ struct FnCtx {
     BinaryenModuleRef mod{};
     double sample_rate{};
     const IRModule *ir{};
+    const std::unordered_map<std::string, uint32_t> *buffer_bases{};
 
     std::unordered_map<std::string, BinaryenIndex> idx;
     std::vector<BinaryenType> param_types;
     std::vector<BinaryenType> var_types;
+
+    [[nodiscard]] auto resolve(const std::string &buffer_name) const
+        -> uint32_t {
+        return buffer_bases->at(pfx(*ir, buffer_name));
+    }
 
     void add_param(const std::string &name, IRType type) {
         idx[name] = static_cast<BinaryenIndex>(idx.size());
@@ -265,7 +271,7 @@ auto emit_stmts(FnCtx &ctx, const std::vector<IRInstr> &body)
                                                       ctx.get(i.value)));
                 }
                 if constexpr (std::is_same_v<T, IRDelayRead>) {
-                    const auto base = ctx.ir->delay_base(i.delay);
+                    const auto base = ctx.resolve(i.delay);
                     const auto pname = pfx(*ctx.ir, i.delay);
                     auto *ptr = BinaryenGlobalGet(ctx.mod, pname.c_str(),
                                                   BinaryenTypeInt32());
@@ -275,7 +281,7 @@ auto emit_stmts(FnCtx &ctx, const std::vector<IRInstr> &body)
                                                        ptr, "memory")));
                 }
                 if constexpr (std::is_same_v<T, IRDelayReadDelayed>) {
-                    const auto base = ctx.ir->delay_base(i.delay);
+                    const auto base = ctx.resolve(i.delay);
                     const auto pname = pfx(*ctx.ir, i.delay);
                     const auto &delay = [&]() -> const IRDelayDecl & {
                         for (const auto &b : ctx.ir->delays)
@@ -403,7 +409,7 @@ auto emit_stmts(FnCtx &ctx, const std::vector<IRInstr> &body)
                                                 mul(frac(), coef_a)))))))));
                 }
                 if constexpr (std::is_same_v<T, IRDelayWrite>) {
-                    const auto base = ctx.ir->delay_base(i.delay);
+                    const auto base = ctx.resolve(i.delay);
                     const auto &delay = *std::ranges::find_if(
                         ctx.ir->delays, [&](const IRDelayDecl &b) -> bool {
                             return b.name == i.delay;
@@ -430,7 +436,7 @@ auto emit_stmts(FnCtx &ctx, const std::vector<IRInstr> &body)
                         BinaryenGlobalSet(ctx.mod, pname.c_str(), new_ptr));
                 }
                 if constexpr (std::is_same_v<T, IRDelayWriteQuiet>) {
-                    const auto base = ctx.ir->delay_base(i.delay);
+                    const auto base = ctx.resolve(i.delay);
                     const auto &delay = *std::ranges::find_if(
                         ctx.ir->delays, [&](const IRDelayDecl &b) -> bool {
                             return b.name == i.delay;
@@ -548,16 +554,20 @@ auto emit_stmts(FnCtx &ctx, const std::vector<IRInstr> &body)
                     }
                 }
                 if constexpr (std::is_same_v<T, IRMemRead>) {
+                    const auto addr =
+                        ctx.resolve(i.ref.buffer) + i.ref.byte_offset;
                     stmts.push_back(ctx.set(
                         i.result,
                         BinaryenLoad(
-                            ctx.mod, 8, false, i.addr, 8, BinaryenTypeFloat64(),
+                            ctx.mod, 8, false, addr, 8, BinaryenTypeFloat64(),
                             BinaryenConst(ctx.mod, BinaryenLiteralInt32(0)),
                             "memory")));
                 }
                 if constexpr (std::is_same_v<T, IRMemWrite>) {
+                    const auto addr =
+                        ctx.resolve(i.ref.buffer) + i.ref.byte_offset;
                     stmts.push_back(BinaryenStore(
-                        ctx.mod, 8, i.addr, 8,
+                        ctx.mod, 8, addr, 8,
                         BinaryenConst(ctx.mod, BinaryenLiteralInt32(0)),
                         ctx.get(i.value), BinaryenTypeFloat64(), "memory"));
                 }
@@ -568,12 +578,15 @@ auto emit_stmts(FnCtx &ctx, const std::vector<IRInstr> &body)
     return stmts;
 }
 
-void emit_function(const IRFunction &fn, BinaryenModuleRef mod,
-                   double sample_rate, const IRModule &ir) {
+void emit_function(
+    const IRFunction &fn, BinaryenModuleRef mod, double sample_rate,
+    const IRModule &ir,
+    const std::unordered_map<std::string, uint32_t> &buffer_bases) {
     FnCtx ctx{
         .mod = mod,
         .sample_rate = sample_rate,
         .ir = &ir,
+        .buffer_bases = &buffer_bases,
         .idx = {},
         .param_types = {},
         .var_types = {},
@@ -592,12 +605,14 @@ void emit_function(const IRFunction &fn, BinaryenModuleRef mod,
         static_cast<BinaryenIndex>(ctx.var_types.size()), body);
 }
 
-void emit_init_delays(const IRModule &ir, BinaryenModuleRef mod) {
+void emit_init_delays(
+    const IRModule &ir, BinaryenModuleRef mod,
+    const std::unordered_map<std::string, uint32_t> &buffer_bases) {
     std::vector<BinaryenExpressionRef> all_loops;
     std::array<BinaryenType, 1> idx_type = {BinaryenTypeInt32()};
 
     for (const auto &delay : ir.delays) {
-        const auto base = ir.delay_base(delay.name);
+        const auto base = buffer_bases.at(pfx(ir, delay.name));
         const auto n = static_cast<int32_t>(delay.size_elements);
 
         const auto idx_local = [&]() -> BinaryenExpressionRef {
@@ -708,35 +723,9 @@ void import_math(BinaryenModuleRef main_mod, BinaryenModuleRef math_mod) {
 
 } // namespace
 
-auto IRModule::delay_base(const std::string &buf_name) const -> uint32_t {
-    return delay_bases_map.at(buf_name);
-}
-
-auto IRModule::total_bytes() const -> uint32_t { return next_offset; }
-
-auto IRModule::static_array_base(const std::string &array_name) const
-    -> uint32_t {
-    return static_array_bases.at(array_name);
-}
-
-auto IRModule::alloc_delay(const std::string &delay_name, size_t n_elements)
-    -> uint32_t {
-    const auto base = memory_base + next_offset;
-    delay_bases_map[delay_name] = base;
-    next_offset += static_cast<uint32_t>(n_elements * 8);
-    return base;
-}
-
-auto IRModule::alloc_static_array(const std::string &array_name,
-                                  size_t n_elements) -> uint32_t {
-    const auto base = memory_base + next_offset;
-    static_array_bases[array_name] = base;
-    next_offset += static_cast<uint32_t>(n_elements * 8);
-    return base;
-}
-
 void emit_ir(const IRModule &ir, BinaryenModuleRef mod,
-             BinaryenModuleRef math_module, double sample_rate) {
+             BinaryenModuleRef math_module, double sample_rate,
+             const std::unordered_map<std::string, uint32_t> &buffer_bases) {
     BinaryenModuleSetFeatures(mod, BinaryenFeatureAll());
     if (!BinaryenHasMemory(mod))
         BinaryenAddMemoryImport(mod, "memory", "env", "memory", 0);
@@ -747,7 +736,8 @@ void emit_ir(const IRModule &ir, BinaryenModuleRef mod,
         import_math(mod, math_module);
     }
 
-    for (const auto &fn : ir.functions) emit_function(fn, mod, sample_rate, ir);
+    for (const auto &fn : ir.functions)
+        emit_function(fn, mod, sample_rate, ir, buffer_bases);
 
     for (const auto &delay : ir.delays) {
         const auto delay_name = pfx(ir, delay.name);
@@ -779,5 +769,5 @@ void emit_ir(const IRModule &ir, BinaryenModuleRef mod,
                           BinaryenConst(mod, BinaryenLiteralFloat64(0.0)));
     }
 
-    emit_init_delays(ir, mod);
+    emit_init_delays(ir, mod, buffer_bases);
 }

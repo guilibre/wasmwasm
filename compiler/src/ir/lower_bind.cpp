@@ -95,7 +95,7 @@ auto Lowerer::lower_bind(const Bind &node) -> std::optional<IRValue> {
 
         mod.functions.emplace_back(std::move(init_fn));
         bufs.insert(name);
-        mod.alloc_delay(name, ctor.size);
+        mod.alloc_order.push_back(name);
         mod.delays.push_back({
             .name = name,
             .size_elements = ctor.size,
@@ -175,7 +175,9 @@ auto Lowerer::lower_static_bind(const StaticBind &node)
         const std::string fn_name = name + "$array_init";
         lift(fn_name, ctor.init_fn);
         const auto &fn_info = fns.at(fn_name);
-        const auto base = mod.alloc_static_array(name, ctor.size);
+        mod.static_arrays_decl.push_back(
+            {.name = name, .size_elements = ctor.size});
+        mod.alloc_order.push_back(name);
         std::vector<std::string> elem_names;
         elem_names.reserve(ctor.size);
         for (size_t i = 0; i < ctor.size; ++i) {
@@ -188,7 +190,8 @@ auto Lowerer::lower_static_bind(const StaticBind &node)
             static_init_body.emplace_back(make_scalar_call(
                 r, fn_name, std::move(call_args), IRType::Float));
             static_init_body.emplace_back(IRMemWrite{
-                .addr = base + static_cast<uint32_t>(i * 8),
+                .ref = IRMemRef{.buffer = name,
+                                .byte_offset = static_cast<uint32_t>(i * 8)},
                 .value = IRLocalRef{r},
             });
         }
@@ -201,7 +204,8 @@ auto Lowerer::lower_static_bind(const StaticBind &node)
     if (std::holds_alternative<ArrayLiteral>(node.init->node)) {
         const auto &arr = std::get<ArrayLiteral>(node.init->node);
         const auto n = arr.elements.size();
-        const auto base = mod.alloc_static_array(name, n);
+        mod.static_arrays_decl.push_back({.name = name, .size_elements = n});
+        mod.alloc_order.push_back(name);
         std::vector<std::string> elem_names;
         elem_names.reserve(n);
         auto *saved = cur;
@@ -211,7 +215,9 @@ auto Lowerer::lower_static_bind(const StaticBind &node)
             const auto v = lower_expr(arr.elements[i]);
             if (v)
                 static_init_body.emplace_back(IRMemWrite{
-                    .addr = base + static_cast<uint32_t>(i * 8),
+                    .ref =
+                        IRMemRef{.buffer = name,
+                                 .byte_offset = static_cast<uint32_t>(i * 8)},
                     .value = *v,
                 });
         }

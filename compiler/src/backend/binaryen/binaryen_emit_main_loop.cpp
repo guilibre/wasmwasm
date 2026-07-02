@@ -1,4 +1,4 @@
-#include "emit.hpp"
+#include "binaryen_emit.hpp"
 
 #include "binaryen-c.h"
 #include "routing/routing.hpp"

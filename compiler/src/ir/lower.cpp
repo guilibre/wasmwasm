@@ -187,11 +187,9 @@ void Lowerer::compute_arity() {
 
 } // namespace lower_detail
 
-auto lower(const ExprPtr &program, const std::string &module_name,
-           uint32_t memory_base) -> IRModule {
+auto lower(const ExprPtr &program, const std::string &module_name) -> IRModule {
     lower_detail::Lowerer l;
     l.mod.name = module_name;
-    l.mod.memory_base = memory_base;
     l.mod.init_fn = "init";
     l.pre_register_math_builtins();
     l.pre_register_fns(program);
