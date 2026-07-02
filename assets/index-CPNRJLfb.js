@@ -277,7 +277,7 @@ param l1 = 7
 param l2 = 11
 param m1 = 29
 param m2 = 13
-param c  = 0.00001
+param c  = 0
 
 static t1 = 0
 static t2 = 0
@@ -328,28 +328,16 @@ fixed_point = {n t1 t2 p1 p2.
   )
 }
 
-step = {t1 t2 p1 p2.
-  mid = fixed_point 4 t1 t2 p1 p2
-  [
-    2*@[0]mid - t1,
-    2*@[1]mid - t2,
-    2*@[2]mid - p1,
-    2*@[3]mid - p2,
-  ]
-}
-
-advance = {n t1 t2 p1 p2.
-  n < 1 ? [t1, t2, p1, p2] : (
-    s = step t1 t2 p1 p2
-    advance (n - 1) (@[0]s) (@[1]s) (@[2]s) (@[3]s)
+step = {n.
+  n >= 1 ? (
+    mid = fixed_point 4 t1 t2 p1 p2
+    t1 = 2*@[0]mid - t1
+    t2 = 2*@[1]mid - t2
+    p1 = 2*@[2]mid - p1
+    p2 = 2*@[3]mid - p2
+    step (n - 1)
   )
 }
-
-next = advance 4 t1 t2 p1 p2
-t1 = @[0]next
-t2 = @[1]next
-p1 = @[2]next
-p2 = @[3]next
 
 x1 = l1 * sin(t1)
 y1 = -l1 * cos(t1)
@@ -357,7 +345,11 @@ x2 = x1 + l2 * sin(t2)
 y2 = y1 - l2 * cos(t2)
 
 OUT[0] <- x1/l1
+OUT[2] <- y1/l1
 OUT[1] <- x2/(l1 + l2)
+OUT[3] <- y2/(l1 + l2)
+
+step 4
 `,"../templates/Dust.ww":`param activity = 1
 static dt = 1/SAMPLE_RATE
 OUT[0] <- uniform 0 1 < activity*dt
