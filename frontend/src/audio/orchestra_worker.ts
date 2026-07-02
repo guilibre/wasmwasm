@@ -1,7 +1,8 @@
-import { HELPERS } from './helpers';
+import { HELPERS, make_listener_registry } from './helpers';
 import type { MidiParams } from './helpers';
 
-const worker_midi_listeners = new Map<string, (params: MidiParams) => Promise<void>>();
+const worker_midi_registry = make_listener_registry<MidiParams>();
+const worker_midi_listeners = worker_midi_registry.listeners;
 let midi_setup_resolve: (() => void) | null = null;
 let abort_current: (() => void) | null = null;
 
@@ -12,21 +13,11 @@ function worker_setup_midi(): Promise<void> {
     });
 }
 
-function worker_add_on_midi_event(f: (params: MidiParams) => Promise<void>): string {
-    const id = crypto.randomUUID();
-    worker_midi_listeners.set(id, f);
-    return id;
-}
-
-function worker_remove_on_midi_event(id: string) {
-    worker_midi_listeners.delete(id);
-}
-
 const HELPERS_WITH_MIDI = {
     ...HELPERS,
     setup_midi: worker_setup_midi,
-    add_on_midi_event: worker_add_on_midi_event,
-    remove_on_midi_event: worker_remove_on_midi_event,
+    add_on_midi_event: worker_midi_registry.add,
+    remove_on_midi_event: worker_midi_registry.remove,
 };
 
 const async_function = Object.getPrototypeOf(async function () {}).constructor as new (

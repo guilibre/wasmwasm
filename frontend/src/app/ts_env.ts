@@ -27,7 +27,7 @@ declare function midi_to_cps(m: number): number;
 declare function rand_int(lo: number, hi: number): number;
 declare function rand(lo: number, hi: number): number;
 declare async function setup_midi();
-declare function add_on_midi_event(f: (params: MidiParams) => void): string;
+declare function add_on_midi_event(f: (params: MidiParams) => Promise<void>): string;
 declare function remove_on_midi_event(id: string);
 declare function stop(fade_out: number);
 `;
@@ -46,9 +46,7 @@ declare function current_time(): number;
 declare function spawn(fn: () => Promise<void>);
 `;
 
-const INSTRUMENT_DEFS =
-    HELPER_DEFS +
-    `
+const INSTRUMENT_DEFS = `
 declare function set_param(name: string, value: number);
 declare function sleep(seconds: number): Promise<void>;
 declare function die();

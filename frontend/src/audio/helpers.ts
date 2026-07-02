@@ -50,21 +50,33 @@ export type MidiParams =
     | { type: 'pitchbend'; channel: number; value: number; data: Uint8Array }
     | { type: 'raw'; channel: number; data: Uint8Array };
 
+export function make_listener_registry<T>() {
+    const listeners = new Map<string, (params: T) => Promise<void>>();
+    return {
+        listeners,
+        add: (f: (params: T) => Promise<void>): string => {
+            const id = crypto.randomUUID();
+            listeners.set(id, f);
+            return id;
+        },
+        remove: (id: string) => {
+            listeners.delete(id);
+        },
+    };
+}
+
+const midi_registry = make_listener_registry<MidiParams>();
+const midi_listeners = midi_registry.listeners;
+let midi_access: MIDIAccess | null = null;
+
 export async function setup_midi() {
     if (midi_access) return;
     midi_access = await navigator.requestMIDIAccess();
     wire_inputs(midi_access);
 }
 
-export function add_on_midi_event(f: (params: MidiParams) => Promise<void>): string {
-    const id = crypto.randomUUID();
-    midi_listeners.set(id, f);
-    return id;
-}
-
-export function remove_on_midi_event(id: string) {
-    midi_listeners.delete(id);
-}
+export const add_on_midi_event = midi_registry.add;
+export const remove_on_midi_event = midi_registry.remove;
 
 export const HELPERS = {
     amp_to_db,
@@ -77,13 +89,7 @@ export const HELPERS = {
     midi_to_cps,
     rand_int,
     rand,
-    setup_midi,
-    add_on_midi_event,
-    remove_on_midi_event,
 };
-
-const midi_listeners = new Map<string, (params: MidiParams) => Promise<void>>();
-let midi_access: MIDIAccess | null = null;
 
 function dispatch_midi(msg: MIDIMessageEvent) {
     if (!msg.data) return;

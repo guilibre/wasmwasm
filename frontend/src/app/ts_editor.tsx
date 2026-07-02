@@ -80,8 +80,7 @@ export function TsEditor({ initial_value, on_change, env }: TsEditorProps) {
             view.destroy();
             view_ref.current = null;
         };
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, []);
+    }, [initial_value, ts_compartment]);
 
     useEffect(() => {
         const view = view_ref.current;
