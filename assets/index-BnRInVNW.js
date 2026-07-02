@@ -556,6 +556,12 @@ z1 = b1*IN[0] - a1*y + z2
 z2 = b2*IN[0] - a2*y
 
 OUT[0] <- y
+`,"../templates/Pan2.ww":`param pan = 0
+theta = (pan + 1) * PI/4
+l = cos(theta)
+r = sin(theta)
+OUT[0] <- l*IN[0]
+OUT[1] <- r*IN[0]
 `,"../templates/Pluck.ww":`param freq = 440
 
 buffer = delay 4096 {_. 0}
@@ -656,6 +662,107 @@ ap2_y = ap2_delayed - ap2_g*ap1_y
 ap2_idx = ap2_idx < 340 ? ap2_idx + 1 : 0
 
 OUT[0] <- IN[0] + mix*(ap2_y - IN[0])
+`,"../templates/Reverb2.ww":`param room_size = 0.5
+param damping = 0.5
+param mix = 0.5
+
+cf1l_buf = delay 1557 {_. 0}
+cf2l_buf = delay 1617 {_. 0}
+cf3l_buf = delay 1491 {_. 0}
+cf4l_buf = delay 1422 {_. 0}
+
+cf1r_buf = delay 1580 {_. 0}
+cf2r_buf = delay 1640 {_. 0}
+cf3r_buf = delay 1514 {_. 0}
+cf4r_buf = delay 1445 {_. 0}
+
+ap1l_buf = delay 225 {_. 0}
+ap2l_buf = delay 341 {_. 0}
+
+ap1r_buf = delay 248 {_. 0}
+ap2r_buf = delay 364 {_. 0}
+
+static cf1l_filt = 0
+static cf2l_filt = 0
+static cf3l_filt = 0
+static cf4l_filt = 0
+
+static cf1r_filt = 0
+static cf2r_filt = 0
+static cf3r_filt = 0
+static cf4r_filt = 0
+
+g = 0.28 + room_size*0.7
+damp1 = damping*0.4
+
+inl = IN[0]
+inr = IN[1]
+
+cf1l_out = @cf1l_buf
+cf2l_out = @cf2l_buf
+cf3l_out = @cf3l_buf
+cf4l_out = @cf4l_buf
+
+cf1r_out = @cf1r_buf
+cf2r_out = @cf2r_buf
+cf3r_out = @cf3r_buf
+cf4r_out = @cf4r_buf
+
+cf1l_filt = cf1l_out*(1 - damp1) + cf1l_filt*damp1
+cf2l_filt = cf2l_out*(1 - damp1) + cf2l_filt*damp1
+cf3l_filt = cf3l_out*(1 - damp1) + cf3l_filt*damp1
+cf4l_filt = cf4l_out*(1 - damp1) + cf4l_filt*damp1
+
+cf1r_filt = cf1r_out*(1 - damp1) + cf1r_filt*damp1
+cf2r_filt = cf2r_out*(1 - damp1) + cf2r_filt*damp1
+cf3r_filt = cf3r_out*(1 - damp1) + cf3r_filt*damp1
+cf4r_filt = cf4r_out*(1 - damp1) + cf4r_filt*damp1
+
+cf1l_buf <- inl + g*cf1l_filt
+cf2l_buf <- inl + g*cf2l_filt
+cf3l_buf <- inl + g*cf3l_filt
+cf4l_buf <- inl + g*cf4l_filt
+
+cf1r_buf <- inr + g*cf1r_filt
+cf2r_buf <- inr + g*cf2r_filt
+cf3r_buf <- inr + g*cf3r_filt
+cf4r_buf <- inr + g*cf4r_filt
+
+cf1l_idx = cf1l_idx < 1556 ? cf1l_idx + 1 : 0
+cf2l_idx = cf2l_idx < 1616 ? cf2l_idx + 1 : 0
+cf3l_idx = cf3l_idx < 1490 ? cf3l_idx + 1 : 0
+cf4l_idx = cf4l_idx < 1421 ? cf4l_idx + 1 : 0
+
+cf1r_idx = cf1r_idx < 1579 ? cf1r_idx + 1 : 0
+cf2r_idx = cf2r_idx < 1639 ? cf2r_idx + 1 : 0
+cf3r_idx = cf3r_idx < 1513 ? cf3r_idx + 1 : 0
+cf4r_idx = cf4r_idx < 1444 ? cf4r_idx + 1 : 0
+
+wet_l = (cf1l_out + cf2l_out + cf3l_out + cf4l_out)*0.25
+wet_r = (cf1r_out + cf2r_out + cf3r_out + cf4r_out)*0.25
+
+ap1_g = 0.5
+
+ap1l_delayed = @ap1l_buf
+ap1l_y = ap1l_delayed - ap1_g*wet_l
+ap1l_buf <- wet_l + ap1_g*ap1l_y
+
+ap1r_delayed = @ap1r_buf
+ap1r_y = ap1r_delayed - ap1_g*wet_r
+ap1r_buf <- wet_r + ap1_g*ap1r_y
+
+ap2_g = 0.5
+
+ap2l_delayed = @ap2l_buf
+ap2l_y = ap2l_delayed - ap2_g*ap1l_y
+ap2l_buf <- ap1l_y + ap2_g*ap2l_y
+
+ap2r_delayed = @ap2r_buf
+ap2r_y = ap2r_delayed - ap2_g*ap1r_y
+ap2r_buf <- ap1r_y + ap2_g*ap2r_y
+
+OUT[0] <- inl + mix*(ap2l_y - inl)
+OUT[1] <- inr + mix*(ap2r_y - inr)
 `,"../templates/Saw.ww":`param freq = 440
 
 static t = 0
