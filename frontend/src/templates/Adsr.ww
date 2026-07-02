@@ -13,6 +13,12 @@ OUT[0] <- amp*env
 
 gate > gate_ ? denv = 1/(atk*SAMPLE_RATE)
 env = min 1 (max 0 (env + denv))
-gate ? (env < 1 ? (denv < 0 ? (env <= sus ? denv = 0)) : denv = 1/((sus - 1)*dec*SAMPLE_RATE)) : (env > 0 ? denv = -1/(rel*SAMPLE_RATE))
+gate ? (
+    env < 1 ? (
+        denv < 0 ? (env <= sus ? denv = 0)
+    ) : denv = 1/((sus - 1)*dec*SAMPLE_RATE)
+) : (
+    env > 0 ? denv = -1/(rel*SAMPLE_RATE)
+)
 
 gate_ = gate

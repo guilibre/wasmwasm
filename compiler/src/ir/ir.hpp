@@ -9,7 +9,7 @@
 #include <variant>
 #include <vector>
 
-enum class IRType : uint8_t { Float, Int, Void, Vec };
+enum class IRType : uint8_t { Float, Int, Void };
 
 struct IRLiteral {
     double value;
@@ -38,11 +38,20 @@ struct IRAssign {
 };
 
 struct IRCall {
-    std::string result;
+    std::vector<std::string> result;
     std::string callee;
     std::vector<IRValue> args;
-    IRType result_type;
+    std::vector<IRType> result_type;
 };
+
+inline auto make_scalar_call(std::string result, std::string callee,
+                             std::vector<IRValue> args, IRType result_type)
+    -> IRCall {
+    return IRCall{.result = {std::move(result)},
+                  .callee = std::move(callee),
+                  .args = std::move(args),
+                  .result_type = {result_type}};
+}
 
 struct IRDelayRead {
     std::string result;
@@ -99,36 +108,8 @@ struct IRMemWrite {
     IRValue value;
 };
 
-struct IRVecLoad {
-    std::string result;
-    uint32_t addr;
-};
-
-struct IRVecStore {
-    uint32_t addr;
-    std::string value;
-};
-
-struct IRVecBinOp {
-    std::string result;
-    Operation op;
-    std::string lhs;
-    std::string rhs;
-};
-
-struct IRVecSplat {
-    std::string result;
-    IRValue scalar;
-};
-
-struct IRVecExtractLane {
-    std::string result;
-    std::string vec;
-    uint8_t lane;
-};
-
 struct IRReturn {
-    std::optional<IRValue> value;
+    std::optional<std::vector<IRValue>> value;
 };
 
 struct IRParamRead {
@@ -156,8 +137,7 @@ using IRInstr =
                  IRDelayReadDelayed, IRDelayWrite, IRDelayWriteQuiet,
                  IRGlobalRead, IRIf, IRInputRead, IROutputWrite, IRParamRead,
                  IRParamWrite, IRStaticRead, IRStaticWrite, IRReturn, IRMemRead,
-                 IRMemWrite, IRVecLoad, IRVecStore, IRVecBinOp, IRVecSplat,
-                 IRVecExtractLane>;
+                 IRMemWrite>;
 
 struct IRIfBody {
     std::vector<IRInstr> then_body;
@@ -172,7 +152,7 @@ struct IRParam {
 struct IRFunction {
     std::string name;
     std::vector<IRParam> params;
-    IRType return_type{IRType::Void};
+    std::vector<IRType> return_type;
     std::vector<IRInstr> body;
 };
 
@@ -182,7 +162,7 @@ struct IRDelayDecl {
     std::string init_fn;
 };
 
-inline constexpr uint32_t delay_memory_start = 64 * 1024 + 1024;
+inline constexpr uint32_t delay_memory_start = (64 * 1024) + 1024;
 
 struct IRStaticVar {
     std::string name;

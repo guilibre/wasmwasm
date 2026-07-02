@@ -49,8 +49,7 @@ auto frontend_to_patch_json(const Json::Value &root) -> std::string {
     for (const auto &node : nodes) {
         node_map[node["id"].asString()] = &node;
         if (node["type"].asString() == "block") {
-            const auto &data = node["data"];
-            modules[data["id"].asString()] = data["code"].asString();
+            modules[node["id"].asString()] = node["data"]["code"].asString();
         }
     }
 
@@ -68,17 +67,16 @@ auto frontend_to_patch_json(const Json::Value &root) -> std::string {
         const auto &src_node = *it_src->second;
         const auto &tgt_node = *it_tgt->second;
 
-        const std::string src_key = src_node["type"].asString() == "capture"
-                                        ? edge["sourceHandle"].asString()
-                                        : src_node["data"]["id"].asString() +
-                                              "_" +
-                                              edge["sourceHandle"].asString();
+        const std::string src_key =
+            src_node["type"].asString() == "capture"
+                ? edge["sourceHandle"].asString()
+                : src_id + "_" + edge["sourceHandle"].asString();
 
-        const std::string sink_key = tgt_node["type"].asString() == "dac"
-                                         ? edge["targetHandle"].asString()
-                                         : tgt_node["data"]["id"].asString() +
-                                               "_" +
-                                               edge["targetHandle"].asString();
+        const auto tgt_type = tgt_node["type"].asString();
+        const std::string sink_key =
+            tgt_type == "out" || tgt_type == "dac"
+                ? edge["targetHandle"].asString()
+                : tgt_id + "_" + edge["targetHandle"].asString();
 
         patch[sink_key] = src_key;
     }
@@ -141,7 +139,9 @@ auto run(const char *math_wasm_path) -> int {
         auto env = make_builtin_env();
         Substitution subst;
         TypeGenerator gen;
+        pre_register_toplevel(*ast, env);
         infer_expr(*ast, env, subst, gen);
+        finalize_types(*ast, subst);
 
         auto ir = lower(*ast, name, next_mem);
         std::cout << "[" << name << "] memory_base=" << ir.memory_base

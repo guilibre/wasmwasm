@@ -1,12 +1,16 @@
 param k = 1
-param h = 0.1
+param dt = 0.1
 
 static x = 0
 static y = 0.5
 
+fx = {y. y}
+
+fy = {x. -k * x}
+
 OUT[0] <- x
 OUT[1] <- y
 
-y = y - k * x * h/2
-x = x +     y * h
-y = y - k * x * h/2
+y = y + 0.5 * dt * fy(x)
+x = x + dt * fx(y)
+y = y + 0.5 * dt * fy(x)

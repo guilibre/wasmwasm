@@ -17,6 +17,7 @@ using ExprPtr = std::unique_ptr<Expr>;
 struct Bind {
     Token name;
     ExprPtr value;
+    std::string resolved_name;
 };
 
 struct DelayCtor {
@@ -97,6 +98,7 @@ struct UnaryOp {
 
 struct Variable {
     Token name;
+    std::string resolved_name;
 };
 
 struct Conditional {

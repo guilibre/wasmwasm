@@ -9,59 +9,10 @@
 #include "routing/routing.hpp"
 #include "types/type_inference.hpp"
 
-#include <functional>
 #include <memory>
 #include <stdexcept>
 
 namespace {
-
-auto make_monomorphize(
-    const std::function<TypePtr(const TypePtr &)> &monomorphize_fun_type)
-    -> std::function<void(const ExprPtr &)> {
-    std::function<void(const ExprPtr &)> monomorphize =
-        [&](const auto &expr) -> auto {
-        std::visit(
-            [&](const auto &node) -> auto {
-                using T = std::decay_t<decltype(node)>;
-                if constexpr (std::is_same_v<T, Bind>) monomorphize(node.value);
-                if constexpr (std::is_same_v<T, StaticBind>)
-                    monomorphize(node.init);
-                if constexpr (std::is_same_v<T, ParamBind>)
-                    monomorphize(node.default_val);
-                if constexpr (std::is_same_v<T, DelayWrite>)
-                    monomorphize(node.value);
-                if constexpr (std::is_same_v<T, DelayWriteQuiet>) {
-                    if (node.delay) monomorphize(*node.delay);
-                    monomorphize(node.value);
-                }
-                if constexpr (std::is_same_v<T, DelayCtor>)
-                    monomorphize(node.init_fn);
-                if constexpr (std::is_same_v<T, OutputWrite>)
-                    monomorphize(node.value);
-                if constexpr (std::is_same_v<T, CodeBlock>) {
-                    for (const auto &e : node.expressions) monomorphize(e);
-                    expr->type = monomorphize_fun_type(expr->type);
-                }
-                if constexpr (std::is_same_v<T, Call>) {
-                    monomorphize(node.callee);
-                    monomorphize(node.argument);
-                    expr->type = monomorphize_fun_type(expr->type);
-                }
-                if constexpr (std::is_same_v<T, Lambda>) {
-                    monomorphize(node.body);
-                    expr->type = monomorphize_fun_type(expr->type);
-                }
-                if constexpr (std::is_same_v<T, Variable>) {
-                    if (std::holds_alternative<TypeVar>(expr->type->node))
-                        expr->type = Type::make<TypeBase>(BaseTypeKind::Float);
-                    if (std::holds_alternative<TypeFun>(expr->type->node))
-                        expr->type = monomorphize_fun_type(expr->type);
-                }
-            },
-            expr->node);
-    };
-    return monomorphize;
-}
 
 auto compile_module(const std::string &name, const std::string &src,
                     BinaryenModuleRef math_module, double sample_rate,
@@ -77,23 +28,9 @@ auto compile_module(const std::string &name, const std::string &src,
     auto env = make_builtin_env();
     Substitution subst;
     TypeGenerator gen;
+    pre_register_toplevel(*ast, env);
     infer_expr(*ast, env, subst, gen);
-
-    std::function<TypePtr(const TypePtr &)> mono_type =
-        [&](const auto &type) -> TypePtr {
-        return std::visit(
-            [&](const auto &node) -> auto {
-                using T = std::decay_t<decltype(node)>;
-                if constexpr (std::is_same_v<T, TypeVar>)
-                    return Type::make<TypeBase>(BaseTypeKind::Float);
-                if constexpr (std::is_same_v<T, TypeFun>)
-                    return Type::make<TypeFun>(mono_type(node.param),
-                                               mono_type(node.result));
-                return type;
-            },
-            type->node);
-    };
-    make_monomorphize(mono_type)(*ast);
+    finalize_types(*ast, subst);
 
     auto ir = lower(*ast, name, memory_base);
 

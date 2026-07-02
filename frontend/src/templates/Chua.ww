@@ -1,29 +1,46 @@
-param alpha = 15.7
+param alpha = 15.8
 param beta = 28
 param m0 = -1.143
 param m1 = -0.714
-param dt = 0.02
+param dt = 0.01
 
 static x = 0.1
 static y = 0
 static z = 0
 
 h = {x.
-  tmp = abs (x + 1)
-  tmp = tmp - abs (x - 1)
+  tmp = abs(x + 1)
+  tmp = tmp - abs(x - 1)
   tmp = tmp * (m0 - m1)
   tmp = tmp * 0.5
   tmp + m1 * x
 }
 
-xdot = alpha * (y - x - h(x))
-ydot = z + x - y
-zdot = beta * -y
+fx = {x y.
+  alpha * (y - x - h(x))
+}
+
+fy = {x y z.
+  z + x - y
+}
+
+fz = {y.
+  -beta * y
+}
+
+step = {n.
+  n >= 1 ? (
+    x = x + 0.5 * dt * fx x y
+    z = z + 0.5 * dt * fz y
+    y = y + dt * fy x y z
+    x = x + 0.5 * dt * fx x y
+    z = z + 0.5 * dt * fz y
+    step (n - 1)
+  )
+}
 
 OUT[0] <- x
 OUT[1] <- y
 OUT[2] <- z
 
-x = x + dt * xdot
-y = y + dt * ydot
-z = z + dt * zdot
+step 1

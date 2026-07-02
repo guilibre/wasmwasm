@@ -1,4 +1,5 @@
 #include "type.hpp"
+#include <stdexcept>
 #include <variant>
 
 auto Type::to_binaryen_type() -> BinaryenType {
@@ -15,6 +16,11 @@ auto Type::to_binaryen_type() -> BinaryenType {
         }
     }
     if (std::holds_alternative<TypeVar>(node)) return BinaryenTypeFloat64();
+
+    if (std::holds_alternative<TypeArray>(node))
+        throw std::runtime_error(
+            "TypeArray has no direct Binaryen local/param type; arrays are "
+            "destructured into scalar temporaries before touching a local");
 
     return BinaryenTypeFloat64();
 }

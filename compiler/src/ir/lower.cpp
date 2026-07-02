@@ -35,6 +35,18 @@ auto ir_type_of(const TypePtr &t) -> IRType {
     return IRType::Float;
 }
 
+auto ir_types_of(const TypePtr &t) -> std::vector<IRType> {
+    if (const auto *arr = std::get_if<TypeArray>(&t->node)) {
+        std::vector<IRType> out;
+        out.reserve(arr->elements.size());
+        for (const auto &elem : arr->elements) out.push_back(ir_type_of(elem));
+        return out;
+    }
+    const auto scalar = ir_type_of(t);
+    if (scalar == IRType::Void) return {};
+    return {scalar};
+}
+
 auto eval_const_expr(const ExprPtr &e) -> double {
     if (const auto *lit = std::get_if<Literal>(&e->node))
         return std::stod(std::string(lit->value.lexeme));
@@ -77,7 +89,7 @@ auto eval_const_expr(const ExprPtr &e) -> double {
 
 struct FnInfo {
     std::vector<std::string> free_vars;
-    IRType return_type{IRType::Void};
+    std::vector<IRType> return_type;
     size_t arity{0};
     bool is_math{false};
 };
@@ -97,7 +109,6 @@ struct Lowerer {
     std::unordered_set<std::string> static_arrays;
     std::unordered_set<std::string> memory_arrays;
     std::unordered_map<std::string, std::string> inline_alias;
-    std::unordered_map<std::string, std::vector<std::string>> vec_array_env;
 
     size_t tmp_n = 0;
 
@@ -138,6 +149,116 @@ struct Lowerer {
         return IRLocalRef{r};
     }
 
+    auto lower_tail_as_array(const ExprPtr &e, size_t n)
+        -> std::vector<IRValue> {
+        if (const auto *lit = std::get_if<ArrayLiteral>(&e->node)) {
+            if (lit->elements.size() != n)
+                throw std::runtime_error(
+                    "internal error: array tail arity mismatch");
+            std::vector<IRValue> out;
+            out.reserve(n);
+            for (const auto &elem : lit->elements) {
+                auto v = lower_expr(elem);
+                if (!v)
+                    throw std::runtime_error(
+                        "array element expression is void");
+                out.push_back(*v);
+            }
+            return out;
+        }
+
+        if (const auto *block = std::get_if<CodeBlock>(&e->node)) {
+            if (block->expressions.empty())
+                throw std::runtime_error(
+                    "internal error: empty array-tail block");
+            for (size_t i = 0; i + 1 < block->expressions.size(); ++i)
+                lower_expr(block->expressions[i]);
+            return lower_tail_as_array(block->expressions.back(), n);
+        }
+
+        if (const auto *cond = std::get_if<Conditional>(&e->node)) {
+            if (!cond->else_branch)
+                throw std::runtime_error(
+                    "array-returning conditional needs an else branch");
+            const auto c = lower_expr(cond->condition);
+            if (!c) throw std::runtime_error("conditional condition is void");
+
+            std::vector<IRInstr> then_instrs;
+            std::vector<IRInstr> else_instrs;
+            auto *saved = cur;
+
+            cur = &then_instrs;
+            auto then_vals = lower_tail_as_array(cond->then_branch, n);
+            cur = &else_instrs;
+            auto else_vals = lower_tail_as_array(*cond->else_branch, n);
+            cur = saved;
+
+            std::vector<std::string> results;
+            results.reserve(n);
+            for (size_t i = 0; i < n; ++i) {
+                auto r = tmp();
+                define(r, IRType::Float);
+                then_instrs.emplace_back(IRAssign{
+                    .result = r, .value = then_vals[i], .type = IRType::Float});
+                else_instrs.emplace_back(IRAssign{
+                    .result = r, .value = else_vals[i], .type = IRType::Float});
+                results.push_back(r);
+            }
+            emit(IRIf{
+                .condition = *c,
+                .body = std::make_shared<IRIfBody>(std::move(then_instrs),
+                                                   std::move(else_instrs)),
+            });
+            std::vector<IRValue> out;
+            out.reserve(n);
+            for (const auto &r : results) out.emplace_back(IRLocalRef{r});
+            return out;
+        }
+
+        if (std::holds_alternative<Call>(e->node)) {
+            const auto [callee_node, arg_ptrs] = flatten_calls(e);
+            const auto *var = std::get_if<Variable>(&callee_node->node);
+            if (var != nullptr && fns.contains(var->name.lexeme)) {
+                const auto &info = fns.at(var->name.lexeme);
+                if (info.return_type.size() == n) {
+                    std::vector<IRValue> call_args;
+                    call_args.reserve(arg_ptrs.size() + info.free_vars.size());
+                    for (const auto *arg_ptr : arg_ptrs) {
+                        auto av = lower_expr(*arg_ptr);
+                        if (!av)
+                            throw std::runtime_error(
+                                "void argument in call to " + var->name.lexeme);
+                        call_args.push_back(*av);
+                    }
+                    for (const auto &fv : info.free_vars)
+                        call_args.emplace_back(IRLocalRef{fv});
+                    std::vector<std::string> results;
+                    results.reserve(n);
+                    for (size_t i = 0; i < n; ++i) {
+                        auto t = tmp();
+                        define(t, info.return_type[i]);
+                        results.push_back(t);
+                    }
+                    emit(IRCall{
+                        .result = results,
+                        .callee = var->name.lexeme,
+                        .args = std::move(call_args),
+                        .result_type = info.return_type,
+                    });
+                    std::vector<IRValue> out;
+                    out.reserve(n);
+                    for (const auto &r : results)
+                        out.emplace_back(IRLocalRef{r});
+                    return out;
+                }
+            }
+        }
+
+        throw std::runtime_error(
+            "array-returning function body must end in an array literal "
+            "(optionally through a block or if/else)");
+    }
+
     void
     lower_fn_body(IRFunction &fn,
                   const std::vector<std::pair<std::string, IRType>> &params,
@@ -146,8 +267,14 @@ struct Lowerer {
         const auto saved_locals = locals;
         cur = &fn.body;
         for (const auto &[name, type] : params) locals[name] = type;
-        auto result = lower_expr(body);
-        if (result && fn.return_type != IRType::Void) emit(IRReturn{result});
+        if (fn.return_type.size() > 1) {
+            auto values = lower_tail_as_array(body, fn.return_type.size());
+            emit(IRReturn{std::move(values)});
+        } else {
+            auto result = lower_expr(body);
+            if (result && !fn.return_type.empty())
+                emit(IRReturn{std::vector<IRValue>{*result}});
+        }
         cur = saved_cur;
         locals = saved_locals;
     }
@@ -159,9 +286,11 @@ struct Lowerer {
                 using T = std::decay_t<decltype(node)>;
 
                 if constexpr (std::is_same_v<T, Variable>) {
-                    const auto &name = node.name.lexeme;
-                    if (!bound.contains(name) && !is_special(name) &&
-                        locals.contains(name))
+                    const auto &name = node.resolved_name.empty()
+                                           ? node.name.lexeme
+                                           : node.resolved_name;
+                    if (!bound.contains(name) &&
+                        !is_special(node.name.lexeme) && locals.contains(name))
                         return {name};
                     return {};
                 }
@@ -192,7 +321,9 @@ struct Lowerer {
                         auto fv = free_vars_of(expr, inner);
                         result.insert(fv.begin(), fv.end());
                         if (const auto *b = std::get_if<Bind>(&expr->node))
-                            inner.insert(b->name.lexeme);
+                            inner.insert(b->resolved_name.empty()
+                                             ? b->name.lexeme
+                                             : b->resolved_name);
                     }
                     return result;
                 }
@@ -249,18 +380,18 @@ struct Lowerer {
         std::vector<std::string> fv_vec(fv_set.begin(), fv_set.end());
         std::ranges::sort(fv_vec);
 
-        const auto ret_type = ir_type_of(body->type);
+        const auto ret_types = ir_types_of(body->type);
 
         fns[name] = FnInfo{
             .free_vars = fv_vec,
-            .return_type = ret_type,
+            .return_type = ret_types,
             .arity = params.size(),
         };
         fn_indices.emplace(name, fn_indices.size());
 
         IRFunction fn;
         fn.name = name;
-        fn.return_type = ret_type;
+        fn.return_type = ret_types;
         for (const auto &p : params) fn.params.emplace_back(p, IRType::Float);
         for (const auto &fv : fv_vec)
             fn.params.emplace_back(fv, locals.contains(fv) ? locals.at(fv)
@@ -292,255 +423,6 @@ struct Lowerer {
         return result;
     }
 
-    static auto peel_lambda(const ExprPtr &lam_expr,
-                            std::vector<std::string> &out_params)
-        -> const ExprPtr & {
-        const ExprPtr *ptr = &lam_expr;
-        while (std::holds_alternative<Lambda>((*ptr)->node)) {
-            const auto &lam = std::get<Lambda>((*ptr)->node);
-            if (lam.parameter.has_value())
-                out_params.emplace_back(lam.parameter->lexeme);
-            ptr = &lam.body;
-        }
-        return *ptr;
-    }
-
-    auto vec_eligible(const ExprPtr &expr,
-                      const std::unordered_set<std::string> &params_set) const
-        -> bool {
-        return std::visit(
-            [&](const auto &node) -> bool {
-                using T = std::decay_t<decltype(node)>;
-                if constexpr (std::is_same_v<T, Literal>) return true;
-                if constexpr (std::is_same_v<T, Variable>) {
-                    const auto &name = node.name.lexeme;
-                    if (params_set.contains(name)) return true;
-                    if (array_env.contains(name) ||
-                        vec_array_env.contains(name))
-                        return false;
-                    return locals.contains(name) || statics.contains(name) ||
-                           param_names.contains(name) ||
-                           std::ranges::contains(language_globals, name);
-                }
-                if constexpr (std::is_same_v<T, BinaryOp>) {
-                    if (node.op != Operation::Add &&
-                        node.op != Operation::Sub &&
-                        node.op != Operation::Mul &&
-                        node.op != Operation::Div && node.op != Operation::Pow)
-                        return false;
-                    return vec_eligible(node.left, params_set) &&
-                           vec_eligible(node.right, params_set);
-                }
-                if constexpr (std::is_same_v<T, UnaryOp>) {
-                    if (node.op == Operation::Not) return false;
-                    return vec_eligible(node.expr, params_set);
-                }
-                if constexpr (std::is_same_v<T, Call>) {
-                    const auto [callee_node, arg_ptrs] = flatten_calls(expr);
-                    const auto *var = std::get_if<Variable>(&callee_node->node);
-                    if (!var) return false;
-                    if (!std::ranges::contains(math_builtins, var->name.lexeme))
-                        return false;
-                    return std::ranges::all_of(
-                        arg_ptrs, [&](const auto *ap) -> auto {
-                            return vec_eligible(*ap, params_set);
-                        });
-                }
-                return false;
-            },
-            expr->node);
-    }
-
-    auto emit_as_vec(const ExprPtr &expr,
-                     const std::unordered_map<std::string, std::string> &pmap)
-        -> std::string {
-        return std::visit(
-            [&](const auto &node) -> std::string {
-                using T = std::decay_t<decltype(node)>;
-                if constexpr (std::is_same_v<T, Literal>) {
-                    auto r = tmp();
-                    emit(IRVecSplat{.result = r,
-                                    .scalar = IRLiteral{std::stod(
-                                        std::string(node.value.lexeme))}});
-                    return r;
-                }
-                if constexpr (std::is_same_v<T, Variable>) {
-                    const auto &name = node.name.lexeme;
-                    if (pmap.contains(name)) return pmap.at(name);
-                    auto scalar_val = lower_expr(expr);
-                    auto r = tmp();
-                    emit(IRVecSplat{.result = r, .scalar = *scalar_val});
-                    return r;
-                }
-                if constexpr (std::is_same_v<T, BinaryOp>) {
-                    auto lhs_r = emit_as_vec(node.left, pmap);
-                    auto rhs_r = emit_as_vec(node.right, pmap);
-                    auto r = tmp();
-                    if (node.op == Operation::Pow) {
-                        emit(IRCall{
-                            .result = r,
-                            .callee = "wasmwasm_pow_f64x2",
-                            .args = {IRLocalRef{lhs_r}, IRLocalRef{rhs_r}},
-                            .result_type = IRType::Vec});
-                    } else {
-                        emit(IRVecBinOp{.result = r,
-                                        .op = node.op,
-                                        .lhs = lhs_r,
-                                        .rhs = rhs_r});
-                    }
-                    return r;
-                }
-                if constexpr (std::is_same_v<T, UnaryOp>) {
-                    auto e_r = emit_as_vec(node.expr, pmap);
-                    auto z = tmp();
-                    emit(IRVecSplat{.result = z, .scalar = IRLiteral{0.0}});
-                    auto r = tmp();
-                    emit(IRVecBinOp{.result = r,
-                                    .op = Operation::Sub,
-                                    .lhs = z,
-                                    .rhs = e_r});
-                    return r;
-                }
-                if constexpr (std::is_same_v<T, Call>) {
-                    const auto [callee_node, arg_ptrs] = flatten_calls(expr);
-                    const auto &fn_name =
-                        std::get<Variable>(callee_node->node).name.lexeme;
-                    std::vector<IRValue> vec_args;
-                    for (const auto *ap : arg_ptrs) {
-                        auto vec_r = emit_as_vec(*ap, pmap);
-                        vec_args.emplace_back(IRLocalRef{vec_r});
-                    }
-                    auto r = tmp();
-                    emit(IRCall{.result = r,
-                                .callee = "wasmwasm_" + fn_name + "_f64x2",
-                                .args = std::move(vec_args),
-                                .result_type = IRType::Vec});
-                    return r;
-                }
-                return "";
-            },
-            expr->node);
-    }
-
-    auto vec_src_eligible(const std::string &arr) const -> bool {
-        return vec_array_env.contains(arr) || memory_arrays.contains(arr);
-    }
-
-    auto load_vec_pair(const std::string &arr, size_t pair_idx) -> std::string {
-        if (vec_array_env.contains(arr))
-            return vec_array_env.at(arr).at(pair_idx);
-        const auto off = static_cast<uint32_t>(pair_idx * 16);
-        auto r = tmp();
-        emit(IRVecLoad{.result = r, .addr = mod.static_array_base(arr) + off});
-        return r;
-    }
-
-    void store_vec_pair(const std::string &dest, size_t pair_idx,
-                        const std::string &val, size_t n) {
-        if (memory_arrays.contains(dest)) {
-            const auto off = static_cast<uint32_t>(pair_idx * 16);
-            emit(IRVecStore{.addr = mod.static_array_base(dest) + off,
-                            .value = val});
-        } else {
-            if (pair_idx == 0) {
-                vec_array_env[dest].clear();
-                if (!array_env.contains(dest)) {
-                    std::vector<std::string> placeholders(n, "$vec");
-                    array_env[dest] = std::move(placeholders);
-                }
-            }
-            vec_array_env[dest].push_back(val);
-        }
-    }
-
-    auto try_emit_vec_map(const std::string &dest_name, const ExprPtr &lam_expr,
-                          const std::string &arr) -> bool {
-        if (!vec_src_eligible(arr)) return false;
-        const auto n = array_env.at(arr).size();
-        if (n == 0) return false;
-
-        std::vector<std::string> params;
-        const auto &body = peel_lambda(lam_expr, params);
-        if (params.size() != 1) return false;
-
-        const std::unordered_set<std::string> params_set(params.begin(),
-                                                         params.end());
-        if (!vec_eligible(body, params_set)) return false;
-
-        const size_t n_pairs = n / 2;
-        for (size_t pi = 0; pi < n_pairs; ++pi) {
-            auto vec_r = load_vec_pair(arr, pi);
-            std::unordered_map<std::string, std::string> pmap;
-            pmap[params[0]] = vec_r;
-            auto res_r = emit_as_vec(body, pmap);
-            store_vec_pair(dest_name, pi, res_r, n);
-        }
-        if (n % 2 != 0) {
-            const size_t i = n - 1;
-            auto v = read_array_elem(arr, i);
-            const auto &elem_local = std::get<IRLocalRef>(v).name;
-            inline_alias[params[0]] = elem_local;
-            auto bv = lower_expr(body);
-            inline_alias.erase(params[0]);
-            auto r = tmp();
-            define(r, IRType::Float);
-            emit(IRAssign{.result = r, .value = *bv, .type = IRType::Float});
-            if (memory_arrays.contains(dest_name))
-                emit(IRMemWrite{.addr = mod.static_array_base(dest_name) +
-                                        static_cast<uint32_t>(i * 8),
-                                .value = IRLocalRef{r}});
-        }
-        return true;
-    }
-
-    auto try_emit_vec_zip(const std::string &dest_name, const ExprPtr &lam_expr,
-                          const std::string &arr1, const std::string &arr2)
-        -> bool {
-        if (!vec_src_eligible(arr1)) return false;
-        if (!vec_src_eligible(arr2)) return false;
-        const auto n = array_env.at(arr1).size();
-        if (n == 0) return false;
-
-        std::vector<std::string> params;
-        const auto &body = peel_lambda(lam_expr, params);
-        if (params.size() != 2) return false;
-
-        const std::unordered_set<std::string> params_set(params.begin(),
-                                                         params.end());
-        if (!vec_eligible(body, params_set)) return false;
-
-        const size_t n_pairs = n / 2;
-        for (size_t pi = 0; pi < n_pairs; ++pi) {
-            auto v1 = load_vec_pair(arr1, pi);
-            auto v2 = load_vec_pair(arr2, pi);
-            std::unordered_map<std::string, std::string> pmap;
-            pmap[params[0]] = v1;
-            pmap[params[1]] = v2;
-            auto res_r = emit_as_vec(body, pmap);
-            store_vec_pair(dest_name, pi, res_r, n);
-        }
-        if (n % 2 != 0) {
-            const size_t i = n - 1;
-            auto v1 = read_array_elem(arr1, i);
-            auto v2 = read_array_elem(arr2, i);
-            const auto &l1 = std::get<IRLocalRef>(v1).name;
-            const auto &l2 = std::get<IRLocalRef>(v2).name;
-            inline_alias[params[0]] = l1;
-            inline_alias[params[1]] = l2;
-            auto bv = lower_expr(body);
-            inline_alias.erase(params[0]);
-            inline_alias.erase(params[1]);
-            auto r = tmp();
-            define(r, IRType::Float);
-            emit(IRAssign{.result = r, .value = *bv, .type = IRType::Float});
-            if (memory_arrays.contains(dest_name))
-                emit(IRMemWrite{.addr = mod.static_array_base(dest_name) +
-                                        static_cast<uint32_t>(i * 8),
-                                .value = IRLocalRef{r}});
-        }
-        return true;
-    }
-
     static auto flatten_calls(const ExprPtr &e)
         -> std::pair<const Expr *, std::vector<const ExprPtr *>> {
         std::vector<const ExprPtr *> args;
@@ -551,75 +433,6 @@ struct Lowerer {
         }
         std::ranges::reverse(args);
         return {node, args};
-    }
-
-    auto try_emit_vec_foldr(const std::vector<const ExprPtr *> &arg_ptrs,
-                            const IRValue &init_v) -> std::optional<IRValue> {
-        const auto *arr_var = std::get_if<Variable>(&(*arg_ptrs[2])->node);
-        if (arr_var == nullptr) return std::nullopt;
-        const auto &arr_name = arr_var->name.lexeme;
-        if (!vec_src_eligible(arr_name)) return std::nullopt;
-        const auto n = array_env.at(arr_name).size();
-        if (n == 0) return std::nullopt;
-
-        std::vector<std::string> params;
-        const auto &body = peel_lambda(*arg_ptrs[1], params);
-        if (params.size() != 2) return std::nullopt;
-
-        const auto *bop = std::get_if<BinaryOp>(&body->node);
-        if (bop == nullptr) return std::nullopt;
-
-        const bool is_commutative =
-            bop->op == Operation::Add || bop->op == Operation::Mul;
-        if (!is_commutative) return std::nullopt;
-
-        auto is_param = [&](const ExprPtr &e, size_t idx) -> bool {
-            const auto *v = std::get_if<Variable>(&e->node);
-            return v && v->name.lexeme == params[idx];
-        };
-        const bool body_ok =
-            (is_param(bop->left, 0) && is_param(bop->right, 1)) ||
-            (is_param(bop->left, 1) && is_param(bop->right, 0));
-        if (!body_ok) return std::nullopt;
-
-        auto vacc = tmp();
-        emit(IRVecSplat{.result = vacc, .scalar = init_v});
-
-        const size_t n_pairs = n / 2;
-        for (size_t pi = 0; pi < n_pairs; ++pi) {
-            auto velem = load_vec_pair(arr_name, pi);
-            auto res = tmp();
-            emit(IRVecBinOp{
-                .result = res, .op = bop->op, .lhs = vacc, .rhs = velem});
-            vacc = res;
-        }
-
-        auto lane0 = tmp();
-        auto lane1 = tmp();
-        define(lane0, IRType::Float);
-        define(lane1, IRType::Float);
-        emit(IRVecExtractLane{.result = lane0, .vec = vacc, .lane = 0});
-        emit(IRVecExtractLane{.result = lane1, .vec = vacc, .lane = 1});
-
-        auto acc = tmp();
-        define(acc, IRType::Float);
-        emit(IRBinOp{.result = acc,
-                     .op = bop->op,
-                     .left = IRLocalRef{lane0},
-                     .right = IRLocalRef{lane1}});
-
-        if (n % 2 != 0) {
-            const size_t i = n - 1;
-            auto elem = read_array_elem(arr_name, i);
-            auto r = tmp();
-            define(r, IRType::Float);
-            emit(IRBinOp{.result = r,
-                         .op = bop->op,
-                         .left = elem,
-                         .right = IRLocalRef{acc}});
-            acc = r;
-        }
-        return IRLocalRef{acc};
     }
 
     void lower_bind_map(const std::string &dest_name, const ExprPtr &value) {
@@ -649,9 +462,6 @@ struct Lowerer {
         if (!array_env.contains(arr))
             throw std::runtime_error("map: '" + arr + "' is not an array");
 
-        if (is_inline_lambda && try_emit_vec_map(dest_name, *arg_ptrs[0], arr))
-            return;
-
         const auto n = array_env.at(arr).size();
 
         std::vector<IRValue> results;
@@ -672,12 +482,8 @@ struct Lowerer {
                 std::vector<IRValue> call_args = {v};
                 for (const auto &fv : fn_info.free_vars)
                     call_args.emplace_back(IRLocalRef{fv});
-                emit(IRCall{
-                    .result = r,
-                    .callee = fn_name,
-                    .args = call_args,
-                    .result_type = IRType::Float,
-                });
+                emit(make_scalar_call(r, fn_name, std::move(call_args),
+                                      IRType::Float));
             }
             results.emplace_back(IRLocalRef{r});
         }
@@ -736,10 +542,6 @@ struct Lowerer {
         if (n != array_env.at(arr2).size())
             throw std::runtime_error("zip: arrays must have the same size");
 
-        if (is_inline_lambda &&
-            try_emit_vec_zip(dest_name, *arg_ptrs[0], arr1, arr2))
-            return;
-
         std::vector<IRValue> results;
         results.reserve(n);
         for (size_t i = 0; i < n; ++i) {
@@ -760,12 +562,8 @@ struct Lowerer {
                 std::vector<IRValue> call_args = {v1, v2};
                 for (const auto &fv : fn_info.free_vars)
                     call_args.emplace_back(IRLocalRef{fv});
-                emit(IRCall{
-                    .result = r,
-                    .callee = fn_name,
-                    .args = call_args,
-                    .result_type = IRType::Float,
-                });
+                emit(make_scalar_call(r, fn_name, std::move(call_args),
+                                      IRType::Float));
             }
             results.emplace_back(IRLocalRef{r});
         }
@@ -797,11 +595,6 @@ struct Lowerer {
 
         auto init_v = lower_expr(*arg_ptrs[0]);
         if (!init_v) throw std::runtime_error("foldr: void init value");
-
-        if (std::holds_alternative<Lambda>((*arg_ptrs[1])->node)) {
-            auto vec_result = try_emit_vec_foldr(arg_ptrs, *init_v);
-            if (vec_result) return vec_result;
-        }
 
         const bool is_inline_lambda =
             std::holds_alternative<Lambda>((*arg_ptrs[1])->node);
@@ -853,12 +646,8 @@ struct Lowerer {
                 std::vector<IRValue> call_args = {elem_v, IRLocalRef{acc}};
                 for (const auto &fv : fn_info.free_vars)
                     call_args.emplace_back(IRLocalRef{fv});
-                emit(IRCall{
-                    .result = r,
-                    .callee = fn_name,
-                    .args = call_args,
-                    .result_type = IRType::Float,
-                });
+                emit(make_scalar_call(r, fn_name, std::move(call_args),
+                                      IRType::Float));
             }
             emit(IRAssign{
                 .result = acc,
@@ -881,23 +670,23 @@ struct Lowerer {
                 if constexpr (std::is_same_v<T, Variable>) {
                     const auto &name = node.name.lexeme;
 
-                    if (inline_alias.contains(name))
-                        return IRLocalRef{inline_alias.at(name)};
-
                     if (name == "PI") return IRLiteral{std::numbers::pi};
 
                     if (name == "SAMPLE_RATE")
                         return emit_global_read(name, IRType::Float);
 
-                    if (statics.contains(name)) {
+                    if (inline_alias.contains(name))
+                        return IRLocalRef{inline_alias.at(name)};
+
+                    if (param_names.contains(name) && !locals.contains(name)) {
                         auto r = tmp();
-                        emit(IRStaticRead{r, name});
+                        emit(IRParamRead{.result = r, .name = name});
                         return IRLocalRef{r};
                     }
 
-                    if (param_names.contains(name)) {
+                    if (statics.contains(name) && !locals.contains(name)) {
                         auto r = tmp();
-                        emit(IRParamRead{.result = r, .name = name});
+                        emit(IRStaticRead{r, name});
                         return IRLocalRef{r};
                     }
 
@@ -909,19 +698,25 @@ struct Lowerer {
                     if (fns.contains(name)) {
                         const auto &info = fns.at(name);
                         if (info.arity == 0) {
+                            if (info.return_type.size() > 1)
+                                throw std::runtime_error(
+                                    "'" + name +
+                                    "' returns an array; call it via a "
+                                    "bind (x = " +
+                                    name + ") before indexing with @[i]");
                             std::vector<IRValue> call_args;
                             call_args.reserve(info.free_vars.size());
                             for (const auto &fv : info.free_vars)
                                 call_args.emplace_back(IRLocalRef{fv});
-                            if (info.return_type == IRType::Void) {
-                                emit(IRCall{.result = "",
+                            if (info.return_type.empty()) {
+                                emit(IRCall{.result = {},
                                             .callee = name,
                                             .args = call_args,
-                                            .result_type = IRType::Void});
+                                            .result_type = {}});
                                 return std::nullopt;
                             }
                             auto r = tmp();
-                            emit(IRCall{.result = r,
+                            emit(IRCall{.result = {r},
                                         .callee = name,
                                         .args = call_args,
                                         .result_type = info.return_type});
@@ -930,11 +725,27 @@ struct Lowerer {
                         return IRLiteral{(double)fn_indices.at(name)};
                     }
 
-                    return IRLocalRef{name};
+                    return IRLocalRef{
+                        node.resolved_name.empty() ? name : node.resolved_name};
                 }
 
                 if constexpr (std::is_same_v<T, DelayRead>) {
                     const auto &name = node.name.lexeme;
+                    if (array_env.contains(name)) {
+                        if (!node.delay)
+                            throw std::runtime_error(
+                                "'" + name + "' is an array; use @[i]" + name +
+                                " to access an element");
+                        const auto *idx_lit =
+                            std::get_if<Literal>(&(*node.delay)->node);
+                        if (!idx_lit)
+                            throw std::runtime_error(
+                                "Array index in @[i]" + name +
+                                " must be a compile-time integer literal");
+                        const size_t index =
+                            std::stoul(std::string(idx_lit->value.lexeme));
+                        return read_array_elem(name, index);
+                    }
                     if (!bufs.contains(name))
                         throw std::runtime_error("@" + name +
                                                  " is not a delay");
@@ -1009,12 +820,8 @@ struct Lowerer {
                     if (!val) throw std::runtime_error("unary op on void");
                     if (node.op == Operation::Not) {
                         auto ca = tmp();
-                        emit(IRCall{
-                            ca,
-                            "wasmwasm_clip",
-                            {*val},
-                            IRType::Float,
-                        });
+                        emit(make_scalar_call(ca, "wasmwasm_clip", {*val},
+                                              IRType::Float));
                         auto r = tmp();
                         emit(IRBinOp{
                             .result = r,
@@ -1035,19 +842,11 @@ struct Lowerer {
                     if (!l || !r) throw std::runtime_error("binary op on void");
                     if (node.op == Operation::And) {
                         auto ca = tmp();
-                        emit(IRCall{
-                            ca,
-                            "wasmwasm_clip",
-                            {*l},
-                            IRType::Float,
-                        });
+                        emit(make_scalar_call(ca, "wasmwasm_clip", {*l},
+                                              IRType::Float));
                         auto cb = tmp();
-                        emit(IRCall{
-                            cb,
-                            "wasmwasm_clip",
-                            {*r},
-                            IRType::Float,
-                        });
+                        emit(make_scalar_call(cb, "wasmwasm_clip", {*r},
+                                              IRType::Float));
                         auto res = tmp();
                         emit(IRBinOp{
                             .result = res,
@@ -1059,19 +858,11 @@ struct Lowerer {
                     }
                     if (node.op == Operation::Or) {
                         auto ca = tmp();
-                        emit(IRCall{
-                            ca,
-                            "wasmwasm_clip",
-                            {*l},
-                            IRType::Float,
-                        });
+                        emit(make_scalar_call(ca, "wasmwasm_clip", {*l},
+                                              IRType::Float));
                         auto cb = tmp();
-                        emit(IRCall{
-                            cb,
-                            "wasmwasm_clip",
-                            {*r},
-                            IRType::Float,
-                        });
+                        emit(make_scalar_call(cb, "wasmwasm_clip", {*r},
+                                              IRType::Float));
                         auto one_minus_cb = tmp();
                         emit(IRBinOp{
                             .result = one_minus_cb,
@@ -1097,12 +888,8 @@ struct Lowerer {
                     }
                     if (node.op == Operation::Pow) {
                         auto res = tmp();
-                        emit(IRCall{
-                            res,
-                            "wasmwasm_pow",
-                            {*l, *r},
-                            IRType::Float,
-                        });
+                        emit(make_scalar_call(res, "wasmwasm_pow", {*l, *r},
+                                              IRType::Float));
                         return IRLocalRef{res};
                     }
                     auto res = tmp();
@@ -1112,6 +899,9 @@ struct Lowerer {
 
                 if constexpr (std::is_same_v<T, Bind>) {
                     const auto &name = node.name.lexeme;
+                    const auto &scalar_name = node.resolved_name.empty()
+                                                  ? node.name.lexeme
+                                                  : node.resolved_name;
 
                     if (std::holds_alternative<ArrayLiteral>(
                             node.value->node)) {
@@ -1152,12 +942,9 @@ struct Lowerer {
                                 IRLiteral{static_cast<double>(i)}};
                             for (const auto &fv : fn_info.free_vars)
                                 call_args.emplace_back(IRLocalRef{fv});
-                            emit(IRCall{
-                                .result = t,
-                                .callee = fn_name,
-                                .args = call_args,
-                                .result_type = IRType::Float,
-                            });
+                            emit(make_scalar_call(t, fn_name,
+                                                  std::move(call_args),
+                                                  IRType::Float));
                             elems.push_back(t);
                         }
                         array_env[name] = std::move(elems);
@@ -1197,7 +984,7 @@ struct Lowerer {
 
                         IRFunction init_fn;
                         init_fn.name = init_name;
-                        init_fn.return_type = IRType::Float;
+                        init_fn.return_type = {IRType::Float};
                         init_fn.params.emplace_back(param_name, IRType::Float);
 
                         lower_fn_body(init_fn,
@@ -1218,24 +1005,64 @@ struct Lowerer {
                         return std::nullopt;
                     }
 
-                    if (statics.contains(name)) {
-                        const auto val = lower_expr(node.value);
-                        if (val) emit(IRStaticWrite{name, *val});
-                        return std::nullopt;
-                    }
+                    const bool shadows_locally = scalar_name != name;
 
-                    if (param_names.contains(name)) {
+                    if (param_names.contains(name) && !shadows_locally) {
                         const auto val = lower_expr(node.value);
                         if (val) emit(IRParamWrite{name, *val});
                         return std::nullopt;
                     }
 
+                    if (statics.contains(name) && !shadows_locally) {
+                        const auto val = lower_expr(node.value);
+                        if (val) emit(IRStaticWrite{name, *val});
+                        return std::nullopt;
+                    }
+
+                    {
+                        const auto [cn, ap] = flatten_calls(node.value);
+                        if (const auto *cv = std::get_if<Variable>(&cn->node);
+                            cv != nullptr && fns.contains(cv->name.lexeme)) {
+                            const auto &info = fns.at(cv->name.lexeme);
+                            if (info.return_type.size() > 1) {
+                                std::vector<IRValue> call_args;
+                                call_args.reserve(ap.size());
+                                for (const auto *arg_ptr : ap) {
+                                    auto av = lower_expr(*arg_ptr);
+                                    if (!av)
+                                        throw std::runtime_error(
+                                            "void argument in call to " +
+                                            cv->name.lexeme);
+                                    call_args.push_back(*av);
+                                }
+                                for (const auto &fv : info.free_vars)
+                                    call_args.emplace_back(IRLocalRef{fv});
+                                std::vector<std::string> results;
+                                results.reserve(info.return_type.size());
+                                for (size_t i = 0; i < info.return_type.size();
+                                     ++i) {
+                                    auto t = tmp();
+                                    define(t, info.return_type[i]);
+                                    results.push_back(t);
+                                }
+                                emit(IRCall{
+                                    .result = results,
+                                    .callee = cv->name.lexeme,
+                                    .args = std::move(call_args),
+                                    .result_type = info.return_type,
+                                });
+                                array_env[name] = std::move(results);
+                                return std::nullopt;
+                            }
+                        }
+                    }
+
                     const auto val = lower_expr(node.value);
                     if (!val) return std::nullopt;
                     const auto type = ir_type_of(node.value->type);
-                    define(name, type);
+                    define(scalar_name, type);
                     emit(IRAssign{
-                        .result = name,
+                        .result = scalar_name,
                         .value = *val,
                         .type = type,
                     });
@@ -1262,12 +1089,9 @@ struct Lowerer {
                             for (const auto &fv : fn_info.free_vars)
                                 call_args.emplace_back(IRLocalRef{fv});
                             auto r = "$sinit$" + std::to_string(tmp_n++);
-                            static_init_body.emplace_back(IRCall{
-                                .result = r,
-                                .callee = fn_name,
-                                .args = call_args,
-                                .result_type = IRType::Float,
-                            });
+                            static_init_body.emplace_back(make_scalar_call(
+                                r, fn_name, std::move(call_args),
+                                IRType::Float));
                             static_init_body.emplace_back(IRMemWrite{
                                 .addr = base + static_cast<uint32_t>(i * 8),
                                 .value = IRLocalRef{r},
@@ -1360,36 +1184,34 @@ struct Lowerer {
 
                         if (std::ranges::contains(math_builtins, name)) {
                             auto r = tmp();
-                            emit(IRCall{
-                                .result = r,
-                                .callee = "wasmwasm_" + name,
-                                .args = arg_vals,
-                                .result_type = IRType::Float,
-                            });
+                            emit(make_scalar_call(r, "wasmwasm_" + name,
+                                                  arg_vals, IRType::Float));
                             return IRLocalRef{r};
                         }
 
                         if (fns.contains(name)) {
                             const auto &info = fns.at(name);
+                            if (info.return_type.size() > 1)
+                                throw std::runtime_error(
+                                    "'" + name +
+                                    "' returns an array; call it via a "
+                                    "bind (x = " +
+                                    name + " ...) before indexing with @[i]");
                             for (const auto &fv : info.free_vars)
                                 arg_vals.emplace_back(IRLocalRef{fv});
 
-                            if (info.return_type == IRType::Void) {
+                            if (info.return_type.empty()) {
                                 emit(IRCall{
-                                    .result = "",
+                                    .result = {},
                                     .callee = name,
                                     .args = arg_vals,
-                                    .result_type = IRType::Void,
+                                    .result_type = {},
                                 });
                                 return std::nullopt;
                             }
                             const auto r = tmp();
-                            emit(IRCall{
-                                .result = r,
-                                .callee = name,
-                                .args = arg_vals,
-                                .result_type = info.return_type,
-                            });
+                            emit(make_scalar_call(r, name, arg_vals,
+                                                  info.return_type[0]));
                             return IRLocalRef{r};
                         }
 
@@ -1402,8 +1224,7 @@ struct Lowerer {
                             });
                             for (const auto &[fn_name, fn_info] : fns) {
                                 if (fn_info.arity != arg_vals.size()) continue;
-                                if (fn_info.return_type == IRType::Void)
-                                    continue;
+                                if (fn_info.return_type.size() != 1) continue;
                                 auto cond = tmp();
                                 emit(IRBinOp{
                                     .result = cond,
@@ -1420,12 +1241,9 @@ struct Lowerer {
                                 const auto callee = fn_info.is_math
                                                         ? "wasmwasm_" + fn_name
                                                         : fn_name;
-                                then_instrs.emplace_back(IRCall{
-                                    .result = call_r,
-                                    .callee = callee,
-                                    .args = call_args,
-                                    .result_type = fn_info.return_type,
-                                });
+                                then_instrs.emplace_back(
+                                    make_scalar_call(call_r, callee, call_args,
+                                                     fn_info.return_type[0]));
                                 then_instrs.emplace_back(IRAssign{
                                     .result = res,
                                     .value = IRLocalRef{call_r},
@@ -1500,7 +1318,7 @@ struct Lowerer {
     void lower_main(const ExprPtr &main_ast) {
         IRFunction fn;
         fn.name = "main$body";
-        fn.return_type = IRType::Void;
+        fn.return_type = {};
 
         auto *saved_cur = cur;
         cur = &fn.body;
@@ -1514,7 +1332,7 @@ struct Lowerer {
         if (!static_init_body.empty()) {
             IRFunction sfn;
             sfn.name = "static_init";
-            sfn.return_type = IRType::Void;
+            sfn.return_type = {};
             sfn.body = std::move(static_init_body);
             mod.functions.push_back(std::move(sfn));
             mod.static_init_fn = "static_init";
@@ -1548,7 +1366,7 @@ struct Lowerer {
                 t = &fn->result;
             }
             fns.emplace(name, FnInfo{.free_vars = {},
-                                     .return_type = IRType::Float,
+                                     .return_type = {IRType::Float},
                                      .arity = arity,
                                      .is_math = true});
             fn_indices.emplace(name, fn_indices.size());
@@ -1570,9 +1388,9 @@ struct Lowerer {
                     arity++;
                 ptr = &std::get<Lambda>((*ptr)->node).body;
             }
-            const auto ret_type = ir_type_of((*ptr)->type);
+            const auto ret_types = ir_types_of((*ptr)->type);
             fns.emplace(name, FnInfo{.free_vars = {},
-                                     .return_type = ret_type,
+                                     .return_type = ret_types,
                                      .arity = arity});
             fn_indices.emplace(name, fn_indices.size());
         }

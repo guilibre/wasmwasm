@@ -61,6 +61,16 @@ auto type_to_string(const TypePtr &type) -> std::string {
             if constexpr (std::is_same_v<T, TypeVar>) {
                 return "t" + std::to_string(node.id);
             }
+            if constexpr (std::is_same_v<T, TypeArray>) {
+                if (node.elements.empty()) return "Array";
+                std::string out = "[";
+                for (size_t i = 0; i < node.elements.size(); ++i) {
+                    if (i > 0) out += ", ";
+                    out += type_to_string(node.elements[i]);
+                }
+                out += "]";
+                return out;
+            }
             return "?";
         },
         type->node);
@@ -297,7 +307,13 @@ auto lsp_diagnostics(const std::string &src) -> std::string {
         auto env = make_builtin_env();
         Substitution subst;
         TypeGenerator gen;
+        pre_register_toplevel(*main_result, env);
         infer_expr(*main_result, env, subst, gen);
+    } catch (const TypeError &e) {
+        return R"([{"msg":")" + json_escape(e.what()) + R"(","line":)" +
+               std::to_string(e.pos.line) +
+               ",\"col\":" + std::to_string(e.pos.col) +
+               R"(,"severity":"error"}])";
     } catch (const std::exception &e) {
         return R"([{"msg":")" + json_escape(e.what()) +
                "\",\"line\":0,\"col\":0,"
@@ -487,6 +503,7 @@ auto lsp_hover(const std::string &src, size_t line, size_t col) -> std::string {
     Substitution subst;
     TypeGenerator gen;
     try {
+        pre_register_toplevel(*main_result, env);
         infer_expr(*main_result, env, subst, gen);
     } catch (...) { return "null"; }
 

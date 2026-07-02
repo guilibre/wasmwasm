@@ -66,7 +66,9 @@ auto Parser::parse_expression() -> ParseResult {
         advance();
         auto init = parse_expression();
         if (!init) return init;
-        return Expr::make<StaticBind>(name, std::move(*init));
+        auto e = Expr::make<StaticBind>(name, std::move(*init));
+        e->pos = {.line = name.line, .col = name.column};
+        return e;
     }
 
     if (match(TokenKind::Param)) {
@@ -88,10 +90,13 @@ auto Parser::parse_expression() -> ParseResult {
         advance();
         auto default_val = parse_expression();
         if (!default_val) return default_val;
-        return Expr::make<ParamBind>(name, std::move(*default_val));
+        auto e = Expr::make<ParamBind>(name, std::move(*default_val));
+        e->pos = {.line = name.line, .col = name.column};
+        return e;
     }
 
     if (match(TokenKind::Out)) {
+        const auto out_tok = current;
         advance();
         if (!match(TokenKind::LBracket))
             return std::unexpected(ParseError{
@@ -124,9 +129,12 @@ auto Parser::parse_expression() -> ParseResult {
         advance();
         auto rhs = parse_logical_or();
         if (!rhs) return rhs;
-        return Expr::make<OutputWrite>(index, std::move(*rhs));
+        auto e = Expr::make<OutputWrite>(index, std::move(*rhs));
+        e->pos = {.line = out_tok.line, .col = out_tok.column};
+        return e;
     }
 
+    const auto expr_start = current;
     auto expr = parse_logical_or();
     if (!expr) return std::unexpected(expr.error());
 
@@ -141,8 +149,10 @@ auto Parser::parse_expression() -> ParseResult {
             if (!eb) return eb;
             else_b = std::move(*eb);
         }
-        return Expr::make<Conditional>(std::move(*expr), std::move(*then_b),
-                                       std::move(else_b));
+        auto e = Expr::make<Conditional>(std::move(*expr), std::move(*then_b),
+                                         std::move(else_b));
+        e->pos = {.line = expr_start.line, .col = expr_start.column};
+        return e;
     }
 
     if (match(TokenKind::Eq)) {
@@ -153,8 +163,10 @@ auto Parser::parse_expression() -> ParseResult {
             advance();
             auto rhs = parse_expression();
             if (!rhs) return rhs;
-            return Expr::make<DelayWriteQuiet>(target, std::move(delay),
-                                               std::move(*rhs));
+            auto e = Expr::make<DelayWriteQuiet>(target, std::move(delay),
+                                                 std::move(*rhs));
+            e->pos = {.line = target.line, .col = target.column};
+            return e;
         }
         auto name = expect_variable(*expr);
         if (!name)
@@ -166,7 +178,9 @@ auto Parser::parse_expression() -> ParseResult {
         advance();
         auto rhs = parse_expression();
         if (!rhs) return rhs;
-        return Expr::make<Bind>(*name, std::move(*rhs));
+        auto e = Expr::make<Bind>(*name, std::move(*rhs), std::string{});
+        e->pos = {.line = name->line, .col = name->column};
+        return e;
     }
 
     if (match(TokenKind::LeftArrow)) {
@@ -180,7 +194,9 @@ auto Parser::parse_expression() -> ParseResult {
         advance();
         auto rhs = parse_logical_or();
         if (!rhs) return rhs;
-        return Expr::make<DelayWrite>(*target, std::move(*rhs));
+        auto e = Expr::make<DelayWrite>(*target, std::move(*rhs));
+        e->pos = {.line = target->line, .col = target->column};
+        return e;
     }
 
     return expr;
@@ -310,6 +326,7 @@ auto Parser::parse_unary() -> ParseResult {
 }
 
 auto Parser::parse_application() -> ParseResult {
+    const auto call_pos = current;
     auto expr = parse_factor();
     if (!expr) return expr;
 
@@ -317,6 +334,7 @@ auto Parser::parse_application() -> ParseResult {
         auto arg = parse_factor();
         if (!arg) break;
         expr = Expr::make<Call>(std::move(*expr), std::move(*arg));
+        (*expr)->pos = {.line = call_pos.line, .col = call_pos.column};
     }
     return expr;
 }
@@ -388,14 +406,14 @@ auto Parser::parse_factor() -> ParseResult {
 
     if (match(TokenKind::Identifier)) {
         advance();
-        auto e = Expr::make<Variable>(tok);
+        auto e = Expr::make<Variable>(tok, std::string{});
         e->pos = {.line = tok.line, .col = tok.column};
         return e;
     }
 
     if (match(TokenKind::LParen)) {
         advance();
-        auto expr = parse_expression();
+        auto expr = parse_block();
         if (!expr) return std::unexpected(expr.error());
         if (!match(TokenKind::RParen))
             return std::unexpected(ParseError{
@@ -495,8 +513,10 @@ auto Parser::parse_block() -> ParseResult {
 }
 
 auto Parser::parse_array_literal() -> ParseResult {
+    const auto start_tok = current;
     advance(); // consume '['
     std::vector<ExprPtr> elements;
+    while (match(TokenKind::Eol)) advance();
     while (!match(TokenKind::RBracket)) {
         if (match(TokenKind::Eof))
             return std::unexpected(ParseError{
@@ -508,6 +528,7 @@ auto Parser::parse_array_literal() -> ParseResult {
         if (!elem) return elem;
         elements.emplace_back(std::move(*elem));
         if (match(TokenKind::Comma)) advance();
+        while (match(TokenKind::Eol)) advance();
     }
     if (elements.empty())
         return std::unexpected(ParseError{
@@ -516,7 +537,9 @@ auto Parser::parse_array_literal() -> ParseResult {
             .col = current.column,
         });
     advance(); // consume ']'
-    return Expr::make<ArrayLiteral>(std::move(elements));
+    auto e = Expr::make<ArrayLiteral>(std::move(elements));
+    e->pos = {.line = start_tok.line, .col = start_tok.column};
+    return e;
 }
 
 auto Parser::parse_array_ctor() -> ParseResult {

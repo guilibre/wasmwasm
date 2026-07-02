@@ -3,6 +3,7 @@
 #include "binaryen-c.h"
 #include <memory>
 #include <variant>
+#include <vector>
 
 struct Type;
 
@@ -23,7 +24,9 @@ struct TypeVar {
     size_t id;
 };
 
-struct TypeArray {};
+struct TypeArray {
+    std::vector<TypePtr> elements;
+};
 
 using TypeNode = std::variant<TypeBase, TypeFun, TypeVar, TypeArray>;
 
