@@ -5,6 +5,11 @@ add_library(${PROJECT_NAME}_lib STATIC
     ir/emit.cpp
     ir/emit_main_loop.cpp
     ir/lower.cpp
+    ir/lower_arrays.cpp
+    ir/lower_bind.cpp
+    ir/lower_call.cpp
+    ir/lower_closures.cpp
+    ir/lower_expr.cpp
     lsp/lsp.cpp
     parser/parser.cpp
     parser/tokenizer.cpp
