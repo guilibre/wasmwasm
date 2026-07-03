@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { Handle, Position, useUpdateNodeInternals } from '@xyflow/react';
 import type { NodeProps } from '@xyflow/react';
+import { handle_offset } from './handle_layout';
 
 export function InNode({ id, data, selected }: NodeProps) {
     const { name, num_channels } = data as unknown as { name: string; num_channels: number };
@@ -18,7 +19,7 @@ export function InNode({ id, data, selected }: NodeProps) {
                     id={`in_${i}`}
                     type="source"
                     position={Position.Bottom}
-                    style={{ left: `${((i + 1) / (num_channels + 1)) * 100}%` }}
+                    style={{ left: handle_offset(i, num_channels) }}
                     className="ww-handle ww-handle--out"
                 />
             ))}

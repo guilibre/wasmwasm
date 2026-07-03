@@ -7,6 +7,7 @@ import type {
     IsValidConnection,
     Node,
     Edge,
+    DefaultEdgeOptions,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { BlockNode } from './block_node';
@@ -201,6 +202,9 @@ export function PatchEditor({ store }: Props) {
                 edges={edges}
                 nodeTypes={NODE_TYPES}
                 edgeTypes={EDGE_TYPES}
+                defaultEdgeOptions={
+                    { type: 'bezier', pathOptions: { offset: 0 } } as DefaultEdgeOptions
+                }
 
                 onNodesChange={on_nodes_change}
                 onEdgesChange={on_edges_change}

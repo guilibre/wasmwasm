@@ -8,8 +8,8 @@ import './left_pane.scss';
 
 const MIN_WIDTH = 200;
 const MAX_WIDTH = 900;
-const MIN_ORCH_HEIGHT = 80;
-const MAX_ORCH_HEIGHT = 700;
+const MIN_ORCH_HEIGHT = 200;
+const MAX_ORCH_HEIGHT = 600;
 
 interface Props {
     orchestra: OrchestraState;

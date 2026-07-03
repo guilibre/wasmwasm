@@ -8,14 +8,14 @@ export function DacNode({ selected }: NodeProps) {
                 id="dac_l"
                 type="target"
                 position={Position.Top}
-                style={{ left: '33%' }}
+                style={{ left: '0%' }}
                 className="ww-handle ww-handle--in"
             />
             <Handle
                 id="dac_r"
                 type="target"
                 position={Position.Top}
-                style={{ left: '67%' }}
+                style={{ left: '100%' }}
                 className="ww-handle ww-handle--in"
             />
             <div className="ww-node__label">dac</div>

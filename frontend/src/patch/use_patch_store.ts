@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 import ELK from 'elkjs/lib/elk.bundled.js';
 import { get_default_code } from './block_templates';
+import { handle_fraction } from './handle_layout';
 import { applyNodeChanges, applyEdgeChanges } from '@xyflow/react';
 import type { Node, Edge, NodeChange, EdgeChange, Connection } from '@xyflow/react';
 
@@ -123,23 +124,28 @@ const STORAGE_KEY = 'wasmwasm_patch';
 
 const elk = new ELK();
 
-const NODE_W = 200;
-const NODE_H = 40;
-
 function spaced(count: number, width: number): number[] {
-    return Array.from({ length: count }, (_, i) => (width * (i + 1)) / (count + 1));
+    return Array.from({ length: count }, (_, i) => handle_fraction(i, count) * width);
+}
+
+function node_size(node: Node): { width: number; height: number } {
+    return {
+        width: node.measured?.width ?? 0,
+        height: node.measured?.height ?? 0,
+    };
 }
 
 function node_ports(node: Node) {
+    const { width, height } = node_size(node);
     if (node.type === 'capture') {
-        const [xl, xr] = spaced(2, NODE_W);
+        const [xl, xr] = spaced(2, width);
         return [
-            { id: `${node.id}__capture_l`, x: xl, y: NODE_H },
-            { id: `${node.id}__capture_r`, x: xr, y: NODE_H },
+            { id: `${node.id}__capture_l`, x: xl, y: height },
+            { id: `${node.id}__capture_r`, x: xr, y: height },
         ];
     }
     if (node.type === 'dac') {
-        const [xl, xr] = spaced(2, NODE_W);
+        const [xl, xr] = spaced(2, width);
         return [
             { id: `${node.id}__dac_l`, x: xl, y: 0 },
             { id: `${node.id}__dac_r`, x: xr, y: 0 },
@@ -147,7 +153,7 @@ function node_ports(node: Node) {
     }
     if (node.type === 'out') {
         const num_channels = (node.data as Partial<OutData>).num_channels ?? 0;
-        return spaced(num_channels, NODE_W).map((x, i) => ({
+        return spaced(num_channels, width).map((x, i) => ({
             id: `${node.id}__out_${i}`,
             x,
             y: 0,
@@ -155,32 +161,31 @@ function node_ports(node: Node) {
     }
     if (node.type === 'in') {
         const num_channels = (node.data as Partial<InData>).num_channels ?? 0;
-        return spaced(num_channels, NODE_W).map((x, i) => ({
+        return spaced(num_channels, width).map((x, i) => ({
             id: `${node.id}__in_${i}`,
             x,
-            y: NODE_H,
+            y: height,
         }));
     }
     const data = node.data as Partial<BlockData>;
     const num_in = data.num_inputs ?? 0;
     const num_out = data.num_outputs ?? 0;
     const ports = [];
-    for (const [i, x] of spaced(num_in, NODE_W).entries())
+    for (const [i, x] of spaced(num_in, width).entries())
         ports.push({ id: `${node.id}__in_${i}`, x, y: 0 });
-    for (const [i, x] of spaced(num_out, NODE_W).entries())
-        ports.push({ id: `${node.id}__out_${i}`, x, y: NODE_H });
+    for (const [i, x] of spaced(num_out, width).entries())
+        ports.push({ id: `${node.id}__out_${i}`, x, y: height });
     return ports;
 }
 
 async function elk_layout(nodes: Node[], edges: Edge[]): Promise<Node[]> {
     const children = nodes.map((n) => ({
-        width: 100,
-        height: 10,
+        ...n,
+        ...node_size(n),
         ports: node_ports(n),
         layoutOptions: { 'elk.portConstraints': 'FIXED_POS' },
         x: 0,
         y: 0,
-        ...n,
     }));
     const capture_node_idx = children.findIndex((x) => x.type === 'capture');
     const capture_node = capture_node_idx === -1 ? null : children[capture_node_idx];
@@ -193,19 +198,19 @@ async function elk_layout(nodes: Node[], edges: Edge[]): Promise<Node[]> {
         layoutOptions: {
             'elk.algorithm': 'layered',
             'elk.direction': 'DOWN',
-            'elk.layered.spacing.nodeNodeBetweenLayers': '20',
+            'elk.layered.spacing.nodeNodeBetweenLayers': '10',
             'elk.spacing.nodeNode': '10',
-            'elk.spacing.edgeNode': '5',
-            'elk.spacing.edgeEdge': '5',
-            'elk.layered.spacing.edgeNodeBetweenLayers': '5',
+            'elk.spacing.edgeNode': '10',
+            'elk.spacing.edgeEdge': '10',
+            'elk.layered.spacing.edgeNodeBetweenLayers': '10',
             'elk.separateConnectedComponents': 'false',
             'elk.layered.crossingMinimization.strategy': 'LAYER_SWEEP',
             'elk.layered.crossingMinimization.greedySwitch.type': 'TWO_SIDED',
             'elk.layered.nodePlacement.strategy': 'BRANDES_KOEPF',
-            'elk.layered.nodePlacement.bk.fixedAlignment': 'BALANCED',
+            'elk.layered.nodePlacement.bk.fixedAlignment': 'LEFTDOWN',
             'elk.layered.compaction.postCompaction.strategy': 'EDGE_LENGTH',
             'elk.layered.compaction.postCompaction.constraints': 'QUADRATIC',
-            'elk.edgeRouting': 'SPLINES',
+            'elk.edgeRouting': 'ORTHOGONAL',
         },
         children: children,
         edges: edges
@@ -226,22 +231,20 @@ async function elk_layout(nodes: Node[], edges: Edge[]): Promise<Node[]> {
     const laid_out = await elk.layout(graph);
 
     const all_lefts = children.map((c) => c.x ?? 0);
-    const all_rights = children.map((c) => c.x ?? 0);
     const all_tops = children.map((c) => c.y ?? 0);
-    const all_bottoms = children.map((c) => (c.y ?? 0) + (c.height ?? NODE_H));
+    const all_bottoms = children.map((c) => (c.y ?? 0) + (c.height ?? 0));
 
     const min_x = all_lefts.length > 0 ? Math.min(...all_lefts) : 0;
-    const max_x = all_rights.length > 0 ? Math.max(...all_rights) : 0;
     const min_y = all_tops.length > 0 ? Math.min(...all_tops) : 0;
     const max_y = all_bottoms.length > 0 ? Math.max(...all_bottoms) : 0;
 
     if (capture_node) {
-        capture_node.x = (max_x + min_x) / 2;
+        capture_node.x = min_x;
         capture_node.y = min_y - 40;
     }
     if (dac_node) {
-        dac_node.x = (max_x + min_x) / 2;
-        dac_node.y = max_y + NODE_H + 40;
+        dac_node.x = min_x;
+        dac_node.y = max_y + 20;
     }
 
     const fixed_nodes = [capture_node, dac_node].filter(
@@ -733,6 +736,8 @@ function serialize_orchestra(orchestra: OrchestraState) {
                 id: n.id,
                 type: n.type,
                 data: n.data,
+                height: n.measured?.height,
+                width: n.measured?.width,
             })),
             edges: i.edges.map((e) => ({
                 id: e.id,
@@ -747,6 +752,8 @@ function serialize_orchestra(orchestra: OrchestraState) {
             id: n.id,
             type: n.type,
             data: n.data,
+            height: n.measured?.height,
+            width: n.measured?.width,
         })),
         global_edges: orchestra.global_edges.map((e) => ({
             id: e.id,

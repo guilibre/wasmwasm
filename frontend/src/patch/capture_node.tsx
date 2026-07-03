@@ -9,14 +9,14 @@ export function CaptureNode({ selected }: NodeProps) {
                 id="capture_l"
                 type="source"
                 position={Position.Bottom}
-                style={{ left: '33%' }}
+                style={{ left: '0%' }}
                 className="ww-handle ww-handle--out"
             />
             <Handle
                 id="capture_r"
                 type="source"
                 position={Position.Bottom}
-                style={{ left: '67%' }}
+                style={{ left: '100%' }}
                 className="ww-handle ww-handle--out"
             />
         </div>
