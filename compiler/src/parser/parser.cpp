@@ -402,10 +402,33 @@ auto Parser::parse_factor() -> ParseResult {
 
     if (match(TokenKind::Array)) { return parse_array_ctor(); }
 
-    if (match(TokenKind::LBracket)) { return parse_array_literal(); }
+    if (match(TokenKind::LBracket)) {
+        auto lit = parse_array_literal();
+        if (!lit) return lit;
+        return parse_postfix_index(std::move(*lit), tok);
+    }
 
     if (match(TokenKind::Identifier)) {
         advance();
+        const bool bracket_is_adjacent =
+            match(TokenKind::LBracket) && current.line == tok.line &&
+            current.column == tok.column + tok.lexeme.size();
+        if (bracket_is_adjacent) {
+            advance();
+            auto idx = parse_expression();
+            if (!idx) return std::unexpected(idx.error());
+            if (!match(TokenKind::RBracket))
+                return std::unexpected(ParseError{
+                    .msg = "Expected ']' after array index",
+                    .line = current.line,
+                    .col = current.column,
+                });
+            advance();
+            auto e =
+                Expr::make<ArrayIndex>(tok, std::move(*idx), std::string{});
+            e->pos = {.line = tok.line, .col = tok.column};
+            return e;
+        }
         auto e = Expr::make<Variable>(tok, std::string{});
         e->pos = {.line = tok.line, .col = tok.column};
         return e;
@@ -421,8 +444,9 @@ auto Parser::parse_factor() -> ParseResult {
                 .line = current.line,
                 .col = current.column,
             });
+        const auto close_tok = current;
         advance();
-        return expr;
+        return parse_postfix_index(std::move(*expr), close_tok);
     }
 
     if (match(TokenKind::LBrace)) {
@@ -512,9 +536,27 @@ auto Parser::parse_block() -> ParseResult {
     return Expr::make<CodeBlock>(std::move(expressions));
 }
 
+auto Parser::parse_postfix_index(ExprPtr base, const Token &pos_tok)
+    -> ParseResult {
+    if (!match(TokenKind::LBracket)) return base;
+    advance();
+    auto idx = parse_expression();
+    if (!idx) return std::unexpected(idx.error());
+    if (!match(TokenKind::RBracket))
+        return std::unexpected(ParseError{
+            .msg = "Expected ']' after array index",
+            .line = current.line,
+            .col = current.column,
+        });
+    advance();
+    auto e = Expr::make<ExprIndex>(std::move(base), std::move(*idx));
+    e->pos = {.line = pos_tok.line, .col = pos_tok.column};
+    return e;
+}
+
 auto Parser::parse_array_literal() -> ParseResult {
     const auto start_tok = current;
-    advance(); // consume '['
+    advance();
     std::vector<ExprPtr> elements;
     while (match(TokenKind::Eol)) advance();
     while (!match(TokenKind::RBracket)) {
@@ -536,14 +578,14 @@ auto Parser::parse_array_literal() -> ParseResult {
             .line = current.line,
             .col = current.column,
         });
-    advance(); // consume ']'
+    advance();
     auto e = Expr::make<ArrayLiteral>(std::move(elements));
     e->pos = {.line = start_tok.line, .col = start_tok.column};
     return e;
 }
 
 auto Parser::parse_array_ctor() -> ParseResult {
-    advance(); // consume 'array'
+    advance();
     if (!match(TokenKind::Number))
         return std::unexpected(ParseError{
             .msg = "Expected a size after 'array': " + current.to_string(),

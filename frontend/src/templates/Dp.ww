@@ -1,15 +1,15 @@
-param dt = 0.01
+param dt = 0.0005
 param g  = 9.8
 param l1 = 7
 param l2 = 11
 param m1 = 29
 param m2 = 13
-param c  = 0
+param c  = 0.001
 
 static t1 = 0
-static t2 = 0
-static p1 = 1000
-static p2 = -2000
+static t2 = PI
+static p1 = 1
+static p2 = 0
 
 theta1_dot = {p1 p2 a1 a2.
   a12 = a1 - a2
@@ -39,41 +39,35 @@ p2_dot = {p1 p2 a1 a2.
   -m2*g*l2*sin (a2) + c1 - c2 - c*p2
 }
 
-fixed_point = {n t1 t2 p1 p2.
+fixedpoint = {n t1 t2 p1 p2.
   n < 1 ? [t1, t2, p1, p2] : (
-    prev = fixed_point (n - 1) t1 t2 p1 p2
-    pt1 = @[0]prev
-    pt2 = @[1]prev
-    pp1 = @[2]prev
-    pp2 = @[3]prev
-    [
-      t1 + dt/2*(theta1_dot pp1 pp2 pt1 pt2),
-      t2 + dt/2*(theta2_dot pp1 pp2 pt1 pt2),
-      p1 + dt/2*(p1_dot     pp1 pp2 pt1 pt2),
-      p2 + dt/2*(p2_dot     pp1 pp2 pt1 pt2),
-    ]
+    t1_ = t1 + dt/2*(theta1_dot p1 p2 t1 t2)
+    t2_ = t2 + dt/2*(theta2_dot p1 p2 t1 t2)
+    p1_ = p1 + dt/2*(    p1_dot p1 p2 t1 t2)
+    p2_ = p2 + dt/2*(    p2_dot p1 p2 t1 t2)
+    fixedpoint (n - 1) t1_ t2_ p1_ p2_
   )
 }
 
 step = {n.
   n >= 1 ? (
-    mid = fixed_point 4 t1 t2 p1 p2
-    t1 = 2*@[0]mid - t1
-    t2 = 2*@[1]mid - t2
-    p1 = 2*@[2]mid - p1
-    p2 = 2*@[3]mid - p2
+    mid = fixedpoint 4 t1 t2 p1 p2
+    t1 = 2*mid[0] - t1
+    t2 = 2*mid[1] - t2
+    p1 = 2*mid[2] - p1
+    p2 = 2*mid[3] - p2
     step (n - 1)
   )
 }
 
-x1 = l1 * sin(t1)
-y1 = -l1 * cos(t1)
+x1 =      l1 * sin(t1)
+y1 =     -l1 * cos(t1)
 x2 = x1 + l2 * sin(t2)
 y2 = y1 - l2 * cos(t2)
 
 OUT[0] <- x1/l1
-OUT[2] <- y1/l1
-OUT[1] <- x2/(l1 + l2)
+OUT[1] <- y1/l1
+OUT[2] <- x2/(l1 + l2)
 OUT[3] <- y2/(l1 + l2)
 
-step 4
+step 8

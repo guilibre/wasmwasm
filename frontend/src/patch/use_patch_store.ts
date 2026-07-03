@@ -174,8 +174,8 @@ function node_ports(node: Node) {
 
 async function elk_layout(nodes: Node[], edges: Edge[]): Promise<Node[]> {
     const children = nodes.map((n) => ({
-        width: 160,
-        height: 40,
+        width: 100,
+        height: 10,
         ports: node_ports(n),
         layoutOptions: { 'elk.portConstraints': 'FIXED_POS' },
         x: 0,
@@ -235,15 +235,13 @@ async function elk_layout(nodes: Node[], edges: Edge[]): Promise<Node[]> {
     const min_y = all_tops.length > 0 ? Math.min(...all_tops) : 0;
     const max_y = all_bottoms.length > 0 ? Math.max(...all_bottoms) : 0;
 
-    const margin = 50;
-
     if (capture_node) {
         capture_node.x = (max_x + min_x) / 2;
-        capture_node.y = min_y - NODE_H - margin;
+        capture_node.y = min_y - 40;
     }
     if (dac_node) {
         dac_node.x = (max_x + min_x) / 2;
-        dac_node.y = max_y + margin;
+        dac_node.y = max_y + NODE_H + 40;
     }
 
     const fixed_nodes = [capture_node, dac_node].filter(

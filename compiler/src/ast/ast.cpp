@@ -224,6 +224,25 @@ auto ASTPrinter::dispatch(const ExprPtr &expr, ArrayCtor &ac, size_t indent)
     return out.str();
 }
 
+auto ASTPrinter::dispatch(const ExprPtr &expr, ArrayIndex &ai, size_t indent)
+    -> std::string {
+    std::ostringstream out;
+    out << indent_str(indent);
+    out << attach_type("ArrayIndex(" + ai.name.lexeme + ")", expr);
+    out << print(ai.index, indent + 2);
+    return out.str();
+}
+
+auto ASTPrinter::dispatch(const ExprPtr &expr, ExprIndex &ei, size_t indent)
+    -> std::string {
+    std::ostringstream out;
+    out << indent_str(indent);
+    out << attach_type("ExprIndex", expr);
+    out << print(ei.base, indent + 2);
+    out << print(ei.index, indent + 2);
+    return out.str();
+}
+
 auto ASTPrinter::tokenkind_to_string(TokenKind kind) -> std::string {
     switch (kind) {
     case TokenKind::Eq:

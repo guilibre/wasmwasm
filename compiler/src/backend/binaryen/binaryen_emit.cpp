@@ -95,6 +95,9 @@ struct FnCtx {
     }
 
     auto local_type(const std::string &name) -> BinaryenType {
+        if (!idx.contains(name))
+            throw std::runtime_error("internal error: local '" + name +
+                                     "' not defined");
         const auto i = idx.at(name);
         if (i < param_types.size()) return param_types[i];
         return var_types[i - param_types.size()];
@@ -106,15 +109,22 @@ struct FnCtx {
                 using T = std::decay_t<decltype(x)>;
                 if constexpr (std::is_same_v<T, IRLiteral>)
                     return BinaryenConst(mod, BinaryenLiteralFloat64(x.value));
-                else
+                else {
+                    if (!idx.contains(x.name))
+                        throw std::runtime_error("internal error: local '" +
+                                                 x.name + "' not defined");
                     return BinaryenLocalGet(mod, idx.at(x.name),
                                             local_type(x.name));
+                }
             },
             v);
     }
 
     auto set(const std::string &name, BinaryenExpressionRef val)
         -> BinaryenExpressionRef {
+        if (!idx.contains(name))
+            throw std::runtime_error("internal error: local '" + name +
+                                     "' not defined");
         return BinaryenLocalSet(mod, idx.at(name), val);
     }
 };
@@ -594,7 +604,13 @@ void emit_function(
     for (const auto &p : fn.params) ctx.add_param(p.name, p.type);
     prescan(ctx, fn.body);
 
-    auto *body = emit_body(ctx, fn.body, fn.return_type);
+    BinaryenExpressionRef body;
+    try {
+        body = emit_body(ctx, fn.body, fn.return_type);
+    } catch (const std::exception &ex) {
+        throw std::runtime_error(std::string(ex.what()) + " (in function '" +
+                                 fn.name + "')");
+    }
 
     const auto wasm_name = pfx(ir, fn.name);
     BinaryenAddFunction(

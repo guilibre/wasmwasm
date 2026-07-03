@@ -54,13 +54,15 @@ export function TsEditor({ initial_value, on_change, env }: TsEditorProps) {
         on_change_ref.current = on_change;
     });
 
+    const initial_value_ref = useRef(initial_value);
+
     const ts_compartment = useMemo(() => new Compartment(), []);
     const view_ref = useRef<EditorView | null>(null);
 
     useEffect(() => {
         const view = new EditorView({
             state: EditorState.create({
-                doc: initial_value,
+                doc: initial_value_ref.current,
                 extensions: [
                     history(),
                     keymap.of([indentWithTab, ...historyKeymap, ...defaultKeymap]),
@@ -80,7 +82,7 @@ export function TsEditor({ initial_value, on_change, env }: TsEditorProps) {
             view.destroy();
             view_ref.current = null;
         };
-    }, [initial_value, ts_compartment]);
+    }, [ts_compartment]);
 
     useEffect(() => {
         const view = view_ref.current;

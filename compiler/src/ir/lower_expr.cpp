@@ -71,7 +71,7 @@ auto Lowerer::lower_expr(const ExprPtr &e) -> std::optional<IRValue> {
                                 "'" + name +
                                 "' returns an array; call it via a "
                                 "bind (x = " +
-                                name + ") before indexing with @[i]");
+                                name + ") before indexing with x[i]");
                         std::vector<IRValue> call_args;
                         call_args.reserve(info.free_vars.size());
                         for (const auto &fv : info.free_vars)
@@ -90,6 +90,10 @@ auto Lowerer::lower_expr(const ExprPtr &e) -> std::optional<IRValue> {
                                     .result_type = info.return_type});
                         return IRLocalRef{r};
                     }
+                    if (!fn_indices.contains(name))
+                        throw std::runtime_error(
+                            "internal error: '" + name +
+                            "' registered in fns but not fn_indices");
                     return IRLiteral{(double)fn_indices.at(name)};
                 }
 
@@ -99,21 +103,10 @@ auto Lowerer::lower_expr(const ExprPtr &e) -> std::optional<IRValue> {
 
             if constexpr (std::is_same_v<T, DelayRead>) {
                 const auto &name = node.name.lexeme;
-                if (array_env.contains(name)) {
-                    if (!node.delay)
-                        throw std::runtime_error(
-                            "'" + name + "' is an array; use @[i]" + name +
-                            " to access an element");
-                    const auto *idx_lit =
-                        std::get_if<Literal>(&(*node.delay)->node);
-                    if (!idx_lit)
-                        throw std::runtime_error(
-                            "Array index in @[i]" + name +
-                            " must be a compile-time integer literal");
-                    const size_t index =
-                        std::stoul(std::string(idx_lit->value.lexeme));
-                    return read_array_elem(name, index);
-                }
+                if (array_env.contains(name))
+                    throw std::runtime_error("'" + name +
+                                             "' is an array; use " + name +
+                                             "[i] to access an element");
                 if (!bufs.contains(name))
                     throw std::runtime_error("@" + name + " is not a delay");
                 auto r = tmp();
@@ -130,6 +123,54 @@ auto Lowerer::lower_expr(const ExprPtr &e) -> std::optional<IRValue> {
                     emit(IRDelayRead{.result = r, .delay = name});
                 }
                 return IRLocalRef{r};
+            }
+
+            if constexpr (std::is_same_v<T, ArrayIndex>) {
+                const auto &name = node.name.lexeme;
+                if (!array_env.contains(name))
+                    throw std::runtime_error("'" + node.name.lexeme +
+                                             "' is not an array");
+                const auto *idx_lit = std::get_if<Literal>(&node.index->node);
+                if (!idx_lit)
+                    throw std::runtime_error(
+                        "Array index in " + node.name.lexeme +
+                        "[i] must be a compile-time integer literal");
+                const size_t index =
+                    std::stoul(std::string(idx_lit->value.lexeme));
+                return read_array_elem(name, index);
+            }
+
+            if constexpr (std::is_same_v<T, ExprIndex>) {
+                const auto *idx_lit = std::get_if<Literal>(&node.index->node);
+                if (!idx_lit)
+                    throw std::runtime_error(
+                        "Array index must be a compile-time integer literal");
+                const size_t index =
+                    std::stoul(std::string(idx_lit->value.lexeme));
+
+                const ExprPtr *base_ptr = &node.base;
+                while (const auto *block =
+                           std::get_if<CodeBlock>(&(*base_ptr)->node)) {
+                    if (block->expressions.empty()) break;
+                    base_ptr = &block->expressions.back();
+                }
+
+                size_t n = 0;
+                if (std::holds_alternative<Call>((*base_ptr)->node)) {
+                    const auto [callee_node, arg_ptrs] =
+                        flatten_calls(*base_ptr);
+                    if (const auto *cv =
+                            std::get_if<Variable>(&(*callee_node)->node);
+                        cv != nullptr && fns.contains(cv->name.lexeme)) {
+                        n = fns.at(cv->name.lexeme).return_type.size();
+                    }
+                }
+                if (n == 0) n = ir_types_of(node.base->type).size();
+
+                auto values = lower_tail_as_array(node.base, n);
+                if (index >= values.size())
+                    throw std::runtime_error("Array index out of bounds");
+                return values[index];
             }
 
             if constexpr (std::is_same_v<T, DelayWrite>) {

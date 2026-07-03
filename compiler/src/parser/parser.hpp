@@ -37,6 +37,7 @@ class Parser {
     auto parse_delay_ctor() -> ParseResult;
     auto parse_array_ctor() -> ParseResult;
     auto parse_array_literal() -> ParseResult;
+    auto parse_postfix_index(ExprPtr base, const Token &pos_tok) -> ParseResult;
 
   public:
     explicit Parser(Tokenizer tokenizer);

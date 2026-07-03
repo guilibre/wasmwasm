@@ -161,8 +161,6 @@ void unify(const TypePtr &a, const TypePtr &b, Substitution &subst,
                             if (occurs_in(nb.id, ta))
                                 error("Occurs check failed (right)");
                             subst.emplace(nb.id, ta);
-                        } else {
-                            error("Cannot unify base type with non-base");
                         }
                     },
                     tb->node);
@@ -177,9 +175,6 @@ void unify(const TypePtr &a, const TypePtr &b, Substitution &subst,
                             if (occurs_in(nb.id, ta))
                                 error("Occurs check failed (right)");
                             subst.emplace(nb.id, ta);
-                        } else {
-                            error(
-                                "Cannot unify function type with non-function");
                         }
                     },
                     tb->node);
@@ -205,8 +200,6 @@ void unify(const TypePtr &a, const TypePtr &b, Substitution &subst,
                             if (occurs_in(nb.id, ta))
                                 error("Occurs check failed (right)");
                             subst.emplace(nb.id, ta);
-                        } else {
-                            error("Cannot unify array type with non-array");
                         }
                     },
                     tb->node);
@@ -312,35 +305,73 @@ void infer_expr_impl(const ExprPtr &expr,
                     throw TypeError("Unbound delay: @" + node.name.lexeme,
                                     expr->pos);
                 auto resolved = apply_subst(subst, *type);
-                if (const auto *arr = std::get_if<TypeArray>(&resolved->node)) {
-                    if (!node.delay)
-                        throw TypeError("'@" + node.name.lexeme +
-                                            "' is an array; use @[i]" +
-                                            node.name.lexeme +
-                                            " to access an element",
-                                        expr->pos);
-                    const auto *idx_lit =
-                        std::get_if<Literal>(&(*node.delay)->node);
-                    if (!idx_lit)
-                        throw TypeError(
-                            "Array index in @[i]" + node.name.lexeme +
-                                " must be a compile-time integer literal",
-                            expr->pos);
-                    const size_t index =
-                        std::stoul(std::string(idx_lit->value.lexeme));
-                    if (index >= arr->elements.size())
-                        throw TypeError(
-                            "Array index " + std::to_string(index) +
-                                " out of bounds for '" + node.name.lexeme +
-                                "' (size " +
-                                std::to_string(arr->elements.size()) + ")",
-                            expr->pos);
-                    return arr->elements[index];
-                }
+                if (std::holds_alternative<TypeArray>(resolved->node))
+                    throw TypeError(
+                        "'@" + node.name.lexeme + "' is an array; use " +
+                            node.name.lexeme + "[i] to access an element",
+                        expr->pos);
                 if (node.delay)
                     infer_expr_impl(*node.delay, env, names, shadow_counter,
                                     subst, gen);
                 return resolved;
+            }
+
+            if constexpr (std::is_same_v<T, ArrayIndex>) {
+                auto type = lookup_env(node.name.lexeme, env);
+                if (!type)
+                    throw TypeError("Unbound variable: " + node.name.lexeme,
+                                    expr->pos);
+                auto resolved = apply_subst(subst, *type);
+                const auto *idx_lit = std::get_if<Literal>(&node.index->node);
+                if (!idx_lit)
+                    throw TypeError(
+                        "Array index in " + node.name.lexeme +
+                            "[i] must be a compile-time integer literal",
+                        expr->pos);
+                const size_t index =
+                    std::stoul(std::string(idx_lit->value.lexeme));
+
+                auto resolved_name = lookup_name(node.name.lexeme, names);
+                node.resolved_name =
+                    resolved_name ? *resolved_name : node.name.lexeme;
+
+                const auto *arr = std::get_if<TypeArray>(&resolved->node);
+                if (!arr) return Type::make<TypeBase>(BaseTypeKind::Float);
+                if (!arr->elements.empty() && index >= arr->elements.size())
+                    throw TypeError("Array index " + std::to_string(index) +
+                                        " out of bounds for '" +
+                                        node.name.lexeme + "' (size " +
+                                        std::to_string(arr->elements.size()) +
+                                        ")",
+                                    expr->pos);
+                return arr->elements.empty()
+                           ? Type::make<TypeBase>(BaseTypeKind::Float)
+                           : arr->elements[index];
+            }
+
+            if constexpr (std::is_same_v<T, ExprIndex>) {
+                infer_expr_impl(node.base, env, names, shadow_counter, subst,
+                                gen);
+                auto resolved = apply_subst(subst, node.base->type);
+                const auto *idx_lit = std::get_if<Literal>(&node.index->node);
+                if (!idx_lit)
+                    throw TypeError(
+                        "Array index must be a compile-time integer literal",
+                        expr->pos);
+                const size_t index =
+                    std::stoul(std::string(idx_lit->value.lexeme));
+
+                const auto *arr = std::get_if<TypeArray>(&resolved->node);
+                if (!arr) return Type::make<TypeBase>(BaseTypeKind::Float);
+                if (!arr->elements.empty() && index >= arr->elements.size())
+                    throw TypeError("Array index " + std::to_string(index) +
+                                        " out of bounds (size " +
+                                        std::to_string(arr->elements.size()) +
+                                        ")",
+                                    expr->pos);
+                return arr->elements.empty()
+                           ? Type::make<TypeBase>(BaseTypeKind::Float)
+                           : arr->elements[index];
             }
 
             if constexpr (std::is_same_v<T, DelayWrite>) {
@@ -543,6 +574,12 @@ void finalize_types(const ExprPtr &expr, const Substitution &subst) {
                 finalize_types(node.init_fn, subst);
             if constexpr (std::is_same_v<T, DelayRead>) {
                 if (node.delay) finalize_types(*node.delay, subst);
+            }
+            if constexpr (std::is_same_v<T, ArrayIndex>)
+                finalize_types(node.index, subst);
+            if constexpr (std::is_same_v<T, ExprIndex>) {
+                finalize_types(node.base, subst);
+                finalize_types(node.index, subst);
             }
             if constexpr (std::is_same_v<T, OutputWrite>)
                 finalize_types(node.value, subst);

@@ -181,6 +181,17 @@ auto find_node_at(const ExprPtr &expr, size_t line, size_t col)
             if constexpr (std::is_same_v<T, ArrayCtor>) {
                 return find_node_at(node.init_fn, line, col);
             }
+            if constexpr (std::is_same_v<T, ArrayIndex>) {
+                const auto &tok = node.name;
+                if (tok.line == line && col >= tok.column &&
+                    col < tok.column + tok.lexeme.size())
+                    return expr.get();
+                return find_node_at(node.index, line, col);
+            }
+            if constexpr (std::is_same_v<T, ExprIndex>) {
+                const auto *hit = find_node_at(node.base, line, col);
+                return hit ? hit : find_node_at(node.index, line, col);
+            }
             return nullptr;
         },
         expr->node);

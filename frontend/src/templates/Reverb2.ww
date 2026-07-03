@@ -64,16 +64,6 @@ cf2r_buf <- inr + g*cf2r_filt
 cf3r_buf <- inr + g*cf3r_filt
 cf4r_buf <- inr + g*cf4r_filt
 
-cf1l_idx = cf1l_idx < 1556 ? cf1l_idx + 1 : 0
-cf2l_idx = cf2l_idx < 1616 ? cf2l_idx + 1 : 0
-cf3l_idx = cf3l_idx < 1490 ? cf3l_idx + 1 : 0
-cf4l_idx = cf4l_idx < 1421 ? cf4l_idx + 1 : 0
-
-cf1r_idx = cf1r_idx < 1579 ? cf1r_idx + 1 : 0
-cf2r_idx = cf2r_idx < 1639 ? cf2r_idx + 1 : 0
-cf3r_idx = cf3r_idx < 1513 ? cf3r_idx + 1 : 0
-cf4r_idx = cf4r_idx < 1444 ? cf4r_idx + 1 : 0
-
 wet_l = (cf1l_out + cf2l_out + cf3l_out + cf4l_out)*0.25
 wet_r = (cf1r_out + cf2r_out + cf3r_out + cf4r_out)*0.25
 

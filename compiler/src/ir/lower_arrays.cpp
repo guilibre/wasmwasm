@@ -110,41 +110,25 @@ auto Lowerer::lower_tail_as_array(const ExprPtr &e, size_t n)
     }
 
     if (std::holds_alternative<Call>(e->node)) {
-        const auto [callee_node, arg_ptrs] = flatten_calls(e);
-        const auto *var = std::get_if<Variable>(&(*callee_node)->node);
-        if (var != nullptr && fns.contains(var->name.lexeme)) {
-            const auto &info = fns.at(var->name.lexeme);
-            if (info.return_type.size() == n) {
-                std::vector<IRValue> call_args;
-                call_args.reserve(arg_ptrs.size() + info.free_vars.size());
-                for (const auto *arg_ptr : arg_ptrs) {
-                    auto av = lower_expr(*arg_ptr);
-                    if (!av)
-                        throw std::runtime_error("void argument in call to " +
-                                                 var->name.lexeme);
-                    call_args.push_back(*av);
-                }
-                for (const auto &fv : info.free_vars)
-                    call_args.emplace_back(IRLocalRef{fv});
-                std::vector<std::string> results;
-                results.reserve(n);
-                for (size_t i = 0; i < n; ++i) {
-                    auto t = tmp();
-                    define(t, info.return_type[i]);
-                    results.push_back(t);
-                }
-                emit(IRCall{
-                    .result = results,
-                    .callee = var->name.lexeme,
-                    .args = std::move(call_args),
-                    .result_type = info.return_type,
-                });
-                std::vector<IRValue> out;
-                out.reserve(n);
-                for (const auto &r : results) out.emplace_back(IRLocalRef{r});
-                return out;
-            }
-        }
+        auto result = lower_call(e);
+        if (!result)
+            throw std::runtime_error("void call in array-returning position");
+        const auto *ref = std::get_if<IRLocalRef>(&*result);
+        if (ref == nullptr)
+            throw std::runtime_error("call did not produce a result");
+        if (!array_env.contains(ref->name))
+            throw std::runtime_error(
+                "call did not produce an array as a result");
+        if (array_env.at(ref->name).size() != n)
+            throw std::runtime_error(
+                "call produce an array of size " +
+                std::to_string(array_env.at(ref->name).size()) +
+                " but the expected size is " + std::to_string(n));
+        std::vector<IRValue> out;
+        out.reserve(n);
+        for (size_t i = 0; i < n; ++i)
+            out.push_back(read_array_elem(ref->name, i));
+        return out;
     }
 
     throw std::runtime_error(

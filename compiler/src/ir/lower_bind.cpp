@@ -124,31 +124,15 @@ auto Lowerer::lower_bind(const Bind &node) -> std::optional<IRValue> {
             cv != nullptr && fns.contains(cv->name.lexeme)) {
             const auto &info = fns.at(cv->name.lexeme);
             if (info.return_type.size() > 1) {
-                std::vector<IRValue> call_args;
-                call_args.reserve(ap.size());
-                for (const auto *arg_ptr : ap) {
-                    auto av = lower_expr(*arg_ptr);
-                    if (!av)
-                        throw std::runtime_error("void argument in call to " +
-                                                 cv->name.lexeme);
-                    call_args.push_back(*av);
-                }
-                for (const auto &fv : info.free_vars)
-                    call_args.emplace_back(IRLocalRef{fv});
-                std::vector<std::string> results;
-                results.reserve(info.return_type.size());
-                for (auto i : info.return_type) {
-                    auto t = tmp();
-                    define(t, i);
-                    results.push_back(t);
-                }
-                emit(IRCall{
-                    .result = results,
-                    .callee = cv->name.lexeme,
-                    .args = std::move(call_args),
-                    .result_type = info.return_type,
-                });
-                array_env[name] = std::move(results);
+                auto result = lower_call(node.value);
+                if (!result)
+                    throw std::runtime_error(
+                        "void call in array-returning bind");
+                const auto *ref = std::get_if<IRLocalRef>(&*result);
+                if (ref == nullptr || !array_env.contains(ref->name))
+                    throw std::runtime_error(
+                        "call did not produce an array-returning bind");
+                array_env[name] = array_env.at(ref->name);
                 return std::nullopt;
             }
         }

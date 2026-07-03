@@ -49,7 +49,7 @@
         "sass-embedded": "^1.100.0",
         "typescript": "~6.0.3",
         "typescript-eslint": "^8.62.1",
-        "vite": "^8.1.2"
+        "vite": "^8.1.3"
     },
     "homepage": "https://guilibre.github.io/wasmwasm",
     "allowScripts": {
