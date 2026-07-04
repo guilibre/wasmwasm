@@ -92,8 +92,7 @@ auto Lowerer::is_special(const std::string &name) const -> bool {
     return std::ranges::contains(language_globals, name) ||
            std::ranges::contains(math_builtins, name) || fns.contains(name) ||
            bufs.contains(name) || param_names.contains(name) ||
-           array_env.contains(name) || name == "foldr" || name == "zip" ||
-           name == "map";
+           array_env.contains(name);
 }
 
 auto Lowerer::emit_global_read(const std::string &name, IRType type)

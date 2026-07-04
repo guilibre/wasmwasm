@@ -340,9 +340,6 @@ auto lsp_tokens(const std::string &src) -> std::string {
         std::unordered_set<std::string> s(math_builtins.begin(),
                                           math_builtins.end());
         for (const auto &g : language_globals) s.insert(std::string(g));
-        s.insert("foldr");
-        s.insert("map");
-        s.insert("zip");
         return s;
     }();
 

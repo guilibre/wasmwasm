@@ -4,6 +4,7 @@ import WasmWasm, { type PatchParams, type CompiledPatch } from '../audio/compile
 import { patch_to_json } from '../patch/patch_to_json';
 import type { OrchestraState } from '../patch/use_patch_store';
 import { setup_midi, add_on_midi_event, remove_on_midi_event } from '../audio/helpers';
+import { compile_score } from '../score_lsp/lsp';
 import { GLOBAL_CACHE_KEY } from './constants';
 import { encode_wav, download_blob } from './wav_encoder';
 
@@ -277,6 +278,22 @@ export function useAudioEngine(
             }
         }
 
+        let compiled_score = '';
+        if (orchestra.score_code.trim()) {
+            try {
+                const score_ts = compile_score(orchestra.score_code);
+                const score_js = score_ts.replace(/^export\s+/gm, '');
+                compiled_score = ts.transpileModule(score_js, {
+                    compilerOptions: {
+                        target: ts.ScriptTarget.ES2025,
+                        module: ts.ModuleKind.ESNext,
+                    },
+                }).outputText;
+            } catch (e) {
+                set_error(`[score] ${String(e)}`);
+            }
+        }
+
         let compiled_global_code = '';
         if (orchestra.global_patch_code.trim()) {
             try {
@@ -540,6 +557,7 @@ export function useAudioEngine(
             type: 'run',
             session: my_session,
             orchestra_code: compiled_orchestra,
+            score_code: compiled_score,
             bpm: orchestra.bpm,
             sampleRate: context.sampleRate,
             audioCurrentTime: context.currentTime,

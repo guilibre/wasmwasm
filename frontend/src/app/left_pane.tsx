@@ -4,7 +4,10 @@ import type { OrchestraState, PatchView } from '../patch/use_patch_store';
 
 import { OrchestraPanel } from './orchestra';
 import { InstrumentPanel } from './instruments';
+import type { ScoreEditorHandle } from './score_editor';
 import './left_pane.scss';
+
+type CompileStatus = 'idle' | 'compiling' | 'ok' | 'error';
 
 const MIN_WIDTH = 200;
 const MAX_WIDTH = 900;
@@ -30,6 +33,11 @@ interface Props {
     global_env: VirtualTypeScriptEnvironment | null;
     view: PatchView;
     on_view_change: (view: PatchView) => void;
+    score_code: string;
+    on_score_code_change: (code: string) => void;
+    on_score_compile: () => void;
+    score_compile_status: CompileStatus;
+    score_editor_ref: React.Ref<ScoreEditorHandle>;
 }
 
 export function LeftPane({
@@ -51,6 +59,11 @@ export function LeftPane({
     global_env,
     view,
     on_view_change,
+    score_code,
+    on_score_code_change,
+    on_score_compile,
+    score_compile_status,
+    score_editor_ref,
 }: Props) {
     const [width, set_width] = useState(() => window.innerWidth * 0.4);
     const width_ref = useRef(width);
@@ -107,6 +120,11 @@ export function LeftPane({
                 on_compile={on_compile_orchestra}
                 compile_status={compile_status.get('orchestra') ?? 'idle'}
                 env={orchestra_env}
+                score_code={score_code}
+                on_score_code_change={on_score_code_change}
+                on_score_compile={on_score_compile}
+                score_compile_status={score_compile_status}
+                score_editor_ref={score_editor_ref}
             />
             <div className="app__panel-divider" onMouseDown={on_height_mousedown} />
             <InstrumentPanel

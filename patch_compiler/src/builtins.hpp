@@ -14,10 +14,8 @@ inline constexpr std::array<std::string_view, 18> math_builtins = {
     "round", "log",     "abs",      "tanh",  "min",   "max",
 };
 
-inline constexpr std::array<std::string_view, 3> language_globals = {
-    "PI",
-    "SAMPLE_RATE",
-    "OUT",
+inline constexpr std::array<std::string_view, 6> language_globals = {
+    "PI", "SAMPLE_RATE", "OUT", "foldr", "zip", "map",
 };
 
 auto make_builtin_env()

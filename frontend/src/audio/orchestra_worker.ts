@@ -208,6 +208,7 @@ self.onmessage = async (event: MessageEvent) => {
     const {
         session,
         orchestra_code,
+        score_code,
         bpm,
         sampleRate,
         audioCurrentTime,
@@ -219,6 +220,7 @@ self.onmessage = async (event: MessageEvent) => {
     } = event.data as {
         session: number;
         orchestra_code: string;
+        score_code?: string;
         bpm: number;
         sampleRate: number;
         audioCurrentTime: number;
@@ -369,6 +371,12 @@ self.onmessage = async (event: MessageEvent) => {
 
     const instrument_fns = instrument_names.map((name) => () => instrument(name));
 
+    const ScoreClass = score_code
+        ? (new Function(`${score_code}\nreturn Score;`)() as new () => {
+              run: (runtime: unknown) => Promise<void>;
+          })
+        : undefined;
+
     try {
         const stop = (dur: number = 1) => {
             const ctx = spawn_ctx_ref.current;
@@ -386,6 +394,7 @@ self.onmessage = async (event: MessageEvent) => {
             current_time,
             spawn,
             stop,
+            Score: ScoreClass,
         };
         const fn = new async_function(
             ...Object.keys(builtins),

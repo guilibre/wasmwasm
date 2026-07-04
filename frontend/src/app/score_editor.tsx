@@ -17,15 +17,13 @@ import {
     get_completions,
     get_hover,
     type LspCompletion,
-} from '../patch_lsp/lsp';
+} from '../score_lsp/lsp';
 
 const TOKEN_CLASS: Record<string, string> = {
     keyword: 'ww-keyword',
+    note: 'ww-note',
     number: 'ww-number',
-    function: 'ww-function',
-    variable: 'ww-variable',
     operator: 'ww-operator',
-    comment: 'ww-comment',
 };
 
 const force_highlight = StateEffect.define<void>();
@@ -113,7 +111,7 @@ const hover_plugin = hoverTooltip((view, pos) => {
         create() {
             const dom = document.createElement('div');
             dom.className = 'app__hover-tooltip';
-            dom.textContent = result.type;
+            dom.textContent = result.text;
             return { dom };
         },
     };
@@ -137,7 +135,7 @@ const editor_theme = EditorView.theme(
     { dark: true },
 );
 
-export interface WWEditorHandle {
+export interface ScoreEditorHandle {
     set_value(code: string): void;
     refresh(): void;
 }
@@ -147,7 +145,7 @@ interface Props {
     on_change: (v: string) => void;
 }
 
-const WWEditor = forwardRef<WWEditorHandle, Props>(function WWEditor(
+const ScoreEditor = forwardRef<ScoreEditorHandle, Props>(function ScoreEditor(
     { initial_value, on_change },
     ref,
 ) {
@@ -311,8 +309,8 @@ const WWEditor = forwardRef<WWEditorHandle, Props>(function WWEditor(
     }, []);
 
     return (
-        <div ref={wrapper_ref} className="app__code-wrapper">
-            <div ref={container_ref} className="app__code" />
+        <div ref={wrapper_ref} className="app__code-wrapper" style={{ height: '100%' }}>
+            <div ref={container_ref} className="app__code" style={{ height: '100%' }} />
             {completions.length > 0 && (
                 <div
                     className="app__completions"
@@ -340,4 +338,4 @@ const WWEditor = forwardRef<WWEditorHandle, Props>(function WWEditor(
     );
 });
 
-export default WWEditor;
+export default ScoreEditor;

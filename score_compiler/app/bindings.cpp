@@ -5,17 +5,9 @@
 
 namespace {
 
-auto run_compiler_js(float sample_rate, const std::string &patch_json,
-                     const emscripten::val &math_bin) -> emscripten::val {
-    auto math_data =
-        emscripten::convertJSArrayToNumberVector<uint8_t>(math_bin);
-
+auto compile_score_js(const std::string &source) -> emscripten::val {
     try {
-        auto binary = compile_to_binary(
-            sample_rate, patch_json, reinterpret_cast<char *>(math_data.data()),
-            math_data.size());
-        auto view = emscripten::typed_memory_view(binary.size(), binary.data());
-        return emscripten::val::global("Uint8Array").new_(view);
+        return emscripten::val(compile_to_typescript(source));
     } catch (const std::exception &e) {
         emscripten::val::global("Error")
             .new_(emscripten::val(e.what()))
@@ -27,7 +19,7 @@ auto run_compiler_js(float sample_rate, const std::string &patch_json,
 } // namespace
 
 EMSCRIPTEN_BINDINGS(wasmwasm) {
-    emscripten::function("run_compiler", &run_compiler_js);
+    emscripten::function("compile_score", &compile_score_js);
     emscripten::function("lsp_diagnostics", &lsp_diagnostics);
     emscripten::function("lsp_tokens", &lsp_tokens);
     emscripten::function("lsp_completions", &lsp_completions);

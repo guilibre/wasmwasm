@@ -45,6 +45,18 @@ declare function from_beats(beats: number): number;
 declare function to_beats(num: number): number;
 declare function current_time(): number;
 declare function spawn(fn: () => Promise<void>);
+interface ScoreEvent {
+    readonly midinote: number;
+    readonly velocity: number;
+    readonly duration: number;
+}
+interface ScoreRuntime {
+    emit(event: ScoreEvent): Promise<void>;
+    wait(beats: number): Promise<void>;
+}
+declare class Score {
+    run(runtime: ScoreRuntime): Promise<void>;
+}
 `;
 
 const INSTRUMENT_DEFS = `

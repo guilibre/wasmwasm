@@ -14,11 +14,23 @@ try {
     else {
         cmake --build build
     }
+    Set-Location -Path "..\score_compiler"
+    emcmake cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+    if ($Jobs -gt 0) {
+        cmake --build build -- "-j$Jobs"
+    }
+    else {
+        cmake --build build
+    }
     Set-Location -Path "..\frontend"
-    if (!(Test-Path "public")) { New-Item -ItemType Directory -Path "public" | Out-Null }
     Copy-Item "..\patch_compiler\build\math\math.wasm" "public\"
+
+    Copy-Item "..\score_compiler\build\app\scorewasm.wasm" "src\scorewasm\"
+    Copy-Item "..\score_compiler\build\app\scorewasm.js" "src\scorewasm\"
+
     Copy-Item "..\patch_compiler\build\app\wasmwasm.wasm" "src\wasmwasm\"
     Copy-Item "..\patch_compiler\build\app\wasmwasm.js" "src\wasmwasm\"
+
     Write-Host "Build complete and files copied."
     Set-Location -Path "..\"
 }

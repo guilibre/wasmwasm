@@ -1,5 +1,6 @@
 **/*.tsbuildinfo
 **/*.wasm
+**/scorewasm.js
 **/wasmwasm.js
 dist
 node_modules

@@ -61,6 +61,7 @@ export interface OrchestraState {
     global_nodes: Node[];
     global_edges: Edge[];
     global_patch_code: string;
+    score_code: string;
 }
 
 export type PatchView = 'instrument' | 'global';
@@ -94,6 +95,7 @@ type PatchAction =
     | { type: 'set_active_instrument'; id: string }
     | { type: 'set_orchestra_code'; code: string }
     | { type: 'set_global_patch_code'; code: string }
+    | { type: 'set_score_code'; code: string }
     | { type: 'load'; orchestra: OrchestraState }
     | { type: 'apply_layout'; instrument_id: string; nodes: Node[] }
     | { type: 'apply_global_layout'; nodes: Node[] }
@@ -107,6 +109,7 @@ const NO_HISTORY = new Set<PatchAction['type']>([
     'set_instrument_code',
     'set_orchestra_code',
     'set_global_patch_code',
+    'set_score_code',
     'apply_layout',
     'apply_global_layout',
     'load',
@@ -318,6 +321,7 @@ const DEFAULT_ORCHESTRA: OrchestraState = {
     global_nodes: default_global_nodes(),
     global_edges: [],
     global_patch_code: '',
+    score_code: '',
 };
 
 function normalize_orchestra(orchestra: Partial<OrchestraState>): OrchestraState {
@@ -342,6 +346,7 @@ function normalize_orchestra(orchestra: Partial<OrchestraState>): OrchestraState
         global_nodes,
         global_edges: orchestra.global_edges ?? [],
         global_patch_code: orchestra.global_patch_code ?? '',
+        score_code: orchestra.score_code ?? '',
     };
 }
 
@@ -697,6 +702,8 @@ function patch_reducer(state: PatchState, action: PatchAction): PatchState {
             return { ...state, orchestra: { ...state.orchestra, code: action.code } };
         case 'set_global_patch_code':
             return { ...state, orchestra: { ...state.orchestra, global_patch_code: action.code } };
+        case 'set_score_code':
+            return { ...state, orchestra: { ...state.orchestra, score_code: action.code } };
         case 'load':
             return {
                 orchestra: normalize_orchestra(action.orchestra),
@@ -760,6 +767,7 @@ function serialize_orchestra(orchestra: OrchestraState) {
             targetHandle: e.targetHandle,
         })),
         global_patch_code: orchestra.global_patch_code,
+        score_code: orchestra.score_code,
     };
 }
 
@@ -962,6 +970,10 @@ export function usePatchStore() {
         (code: string) => dispatch({ type: 'set_global_patch_code', code }),
         [],
     );
+    const set_score_code = useCallback(
+        (code: string) => dispatch({ type: 'set_score_code', code }),
+        [],
+    );
 
     const undo = useCallback(() => dispatch({ type: 'undo' }), []);
     const redo = useCallback(() => dispatch({ type: 'redo' }), []);
@@ -1023,6 +1035,7 @@ export function usePatchStore() {
         set_active_instrument,
         set_orchestra_code,
         set_global_patch_code,
+        set_score_code,
         export_patch,
         import_patch,
         load_patch,

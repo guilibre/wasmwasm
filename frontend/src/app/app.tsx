@@ -1,7 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { ReactFlowProvider } from '@xyflow/react';
 import WasmWasm from '../audio/compiler';
+import ScoreWasm from '../audio/score_compiler';
 import WWEditor, { type WWEditorHandle } from './ww_editor';
+import type { ScoreEditorHandle } from './score_editor';
+import { compile_score as compile_score_wasm } from '../score_lsp/lsp';
 import { Sidebar } from './sidebar';
 import { LeftPane } from './left_pane';
 import { PatchEditor } from '../patch/patch_editor';
@@ -18,6 +21,11 @@ export default function App() {
     const [error, set_error] = useState<string | null>(null);
     const import_ref = useRef<HTMLInputElement>(null);
     const editor_ref = useRef<WWEditorHandle>(null);
+    const score_editor_ref = useRef<ScoreEditorHandle>(null);
+    const [score_compile_status, set_score_compile_status] = useState<
+        'idle' | 'compiling' | 'ok' | 'error'
+    >('idle');
+    const score_ts_output_ref = useRef<string | null>(null);
 
     const store = usePatchStore();
     const {
@@ -31,6 +39,7 @@ export default function App() {
         set_orchestra_bpm,
         set_orchestra_code,
         set_global_patch_code,
+        set_score_code,
         add_instrument,
         remove_instrument,
         set_instrument_code,
@@ -64,6 +73,18 @@ export default function App() {
 
     const compile_patch = () => compile_patch_impl(get_sample_rate());
 
+    const compile_score = () => {
+        set_score_compile_status('compiling');
+        try {
+            score_ts_output_ref.current = compile_score_wasm(orchestra.score_code);
+            set_score_compile_status('ok');
+        } catch (e) {
+            console.error('[score] compile failed:', e);
+            score_ts_output_ref.current = null;
+            set_score_compile_status('error');
+        }
+    };
+
     const {
         name_draft,
         set_name_draft,
@@ -77,6 +98,10 @@ export default function App() {
 
     useEffect(() => {
         WasmWasm.ensureReady().then(() => editor_ref.current?.refresh());
+    }, []);
+
+    useEffect(() => {
+        ScoreWasm.ensureReady().then(() => score_editor_ref.current?.refresh());
     }, []);
 
     return (
@@ -123,6 +148,11 @@ export default function App() {
                     global_env={instrument_envs.get(GLOBAL_CACHE_KEY) ?? null}
                     view={view}
                     on_view_change={set_view}
+                    score_code={orchestra.score_code}
+                    on_score_code_change={set_score_code}
+                    on_score_compile={compile_score}
+                    score_compile_status={score_compile_status}
+                    score_editor_ref={score_editor_ref}
                 />
 
                 <div className="app__patch-pane">

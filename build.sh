@@ -13,9 +13,22 @@ else
     cmake --build build
 fi
 
+cd score_compiler
+
+emcmake cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+if [ "$JOBS" -gt 0 ]; then
+    cmake --build build -- -j$JOBS
+else
+    cmake --build build
+fi
+
 cd ../frontend
-mkdir -p public
+
 cp ../patch_compiler/build/math/math.wasm public/
+
+cp ../score_compiler/build/app/scorewasm.wasm src/scorewasm
+cp ../score_compiler/build/app/scorewasm.js src/scorewasm
+
 cp ../patch_compiler/build/app/wasmwasm.wasm src/wasmwasm
 cp ../patch_compiler/build/app/wasmwasm.js src/wasmwasm
 
