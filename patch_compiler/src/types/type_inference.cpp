@@ -1,7 +1,6 @@
 #include "type_inference.hpp"
 
 #include "type.hpp"
-
 #include <algorithm>
 #include <cstddef>
 #include <optional>
@@ -91,6 +90,34 @@ void pre_register_toplevel(
                 Type::make<TypeBase>(BaseTypeKind::Float), ret_type);
         env.back().emplace(bind->name.lexeme, ret_type);
     }
+}
+
+auto scalar_kind_of(const TypePtr &t) -> BaseTypeKind {
+    if (const auto *base = std::get_if<TypeBase>(&t->node)) return base->kind;
+    return BaseTypeKind::Float;
+}
+
+auto scalar_kinds_of(const TypePtr &t) -> std::vector<BaseTypeKind> {
+    if (const auto *arr = std::get_if<TypeArray>(&t->node)) {
+        std::vector<BaseTypeKind> out;
+        out.reserve(arr->elements.size());
+        for (const auto &elem : arr->elements)
+            out.push_back(scalar_kind_of(elem));
+        return out;
+    }
+    const auto scalar = scalar_kind_of(t);
+    if (scalar == BaseTypeKind::Void) return {};
+    return {scalar};
+}
+
+auto arity_of(const TypePtr &t) -> size_t {
+    size_t arity = 0;
+    const TypePtr *cur = &t;
+    while (const auto *fn = std::get_if<TypeFun>(&(*cur)->node)) {
+        arity++;
+        cur = &fn->result;
+    }
+    return arity;
 }
 
 auto occurs_in(size_t var_id, const TypePtr &type) -> bool {

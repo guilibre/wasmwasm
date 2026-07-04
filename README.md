@@ -8,9 +8,13 @@ A functional audio synthesis language that compiles to WebAssembly in the browse
 
 wasmwasm is a small compiled language designed for audio synthesis. Programs describe how to compute a single audio sample per frame. The compiler (written in C++, built with Emscripten) runs entirely in the browser — source code is compiled on-the-fly to a WebAssembly module, which is then executed inside a Web Audio `AudioWorkletProcessor`.
 
-```
+``` text
 source code → tokenizer → parser → AST → type inference → Binaryen IR → .wasm → AudioWorklet
 ```
+
+The IR lowering pass includes a small optimizer: bounded recursive functions called with a
+compile-time-constant counter (e.g. fixed-step numerical integrators) are unrolled into
+straight-line code instead of real recursive calls. See [docs/language.md](docs/language.md#automatic-unrolling).
 
 ## Language
 
@@ -20,7 +24,7 @@ See [docs/language.md](docs/language.md) for the full language reference and [do
 
 ### Quick example
 
-```
+```WASMWASM
 freq = 440
 static two_pi = 2 * PI
 static dt = freq * two_pi / SAMPLE_RATE
@@ -51,17 +55,18 @@ npm run dev   # http://localhost:5173
 
 ## Project structure
 
-```
-compiler/         C++ compiler source
+```text
+patch_compiler/         C++ compiler source
   src/
     parser/       tokenizer and parser
     ast/          AST nodes
     types/        type inference (Hindley-Milner)
-    ir/           intermediate representation and code generation
+    ir/           intermediate representation, lowering, and optimization passes
     routing/      audio graph routing for patches
     lsp/          Language Server Protocol support
   math/           math intrinsics compiled separately
   app/            Emscripten bindings
+  tests/          compiler test suite (ctest)
 frontend/         Vite + React frontend
   src/
     app/          editor, oscilloscope, spectrogram

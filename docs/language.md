@@ -4,7 +4,7 @@ A wasmwasm program runs once per audio frame. Each line is either a binding or a
 
 ## Variables
 
-```
+```WASMWASM
 param amp = 0
 param amp_ = 0
 param freq = 440
@@ -25,7 +25,7 @@ Variables are re-evaluated every frame in order. Bindings later in the file can 
 
 ## Output
 
-```
+```WASMWASM
 OUT[0] <- left_signal
 OUT[1] <- right_signal
 ```
@@ -34,7 +34,7 @@ OUT[1] <- right_signal
 
 A `static` binding is initialized once at startup and retains its value across frames. Use it to accumulate phase, counters, or any state that must persist without an explicit delay.
 
-```
+```WASMWASM
 static t = 0
 t = t + 1
 ```
@@ -43,7 +43,7 @@ t = t + 1
 
 Functions are defined with `{params. body}` and applied by juxtaposition. Multiple parameters are curried automatically.
 
-```
+```WASMWASM
 param amp = 0
 param amp_ = 0
 param freq = 440
@@ -66,7 +66,7 @@ freq_ = freq_ + 0.1*(freq - freq_)
 
 Nested application:
 
-```
+```WASMWASM
 clip_osc = {amp freq. clip (osc amp freq)}
 ```
 
@@ -74,15 +74,39 @@ clip_osc = {amp freq. clip (osc amp freq)}
 
 Functions can call themselves by name:
 
-```
+```WASMWASM
 sum = {n. n < 1 ? 0 : n + sum (n - 1)}
 ```
+
+### Automatic unrolling
+
+When a recursive function is called with a compile-time constant and its body has the shape
+`counter <cmp> literal ? base : ... recurse (counter - literal) ...`, the compiler unrolls it into
+straight-line code instead of a real recursive call — no runtime branching, no call overhead. This
+matters for tight per-sample loops, like fixed-step numerical integrators:
+
+```WASMWASM
+fixedpoint = {n t1 t2.
+  n < 1 ? [t1, t2] : (
+    t1_ = t1 + step t1 t2
+    t2_ = t2 + step t2 t1
+    fixedpoint (n - 1) t1_ t2_
+  )
+}
+
+result = fixedpoint 4 t1 t2   # unrolled into 4 straight-line steps at compile time
+```
+
+Unrolling only fires when the whole function body is a single conditional, the condition compares
+one parameter against a literal, the counter decreases by a literal amount each recursive call, and
+the call site's counter argument is itself a constant. Anything else falls back to an ordinary
+recursive call — unrolling is purely a speed optimization and never changes program behavior.
 
 ## Params
 
 `param` declares a named parameter with a default value. Params are exposed as controllable inputs in the UI and can be overwritten from the orchestra.
 
-```
+```WASMWASM
 param amp = 0.2
 param freq = 440
 ```
@@ -93,16 +117,16 @@ Fixed-size arrays of floats. Elements are re-evaluated every frame.
 
 ### Declaration
 
-```
-a = [1, 2, 3]                    # array literal
-b = array 3 {i. i + 1}          # constructor: index lambda, size must be >= 1
+```WASMWASM
+a = [1, 2, 3]          # array literal
+b = array 3 {i. i + 1} # constructor: index lambda, size must be >= 1
 ```
 
 ### Static arrays
 
 A `static` array behaves like N individual static variables — each element persists across frames.
 
-```
+```WASMWASM
 static ts = array 5 {_. 0}
 ```
 
@@ -116,7 +140,7 @@ static ts = array 5 {_. 0}
 
 ### Example — additive synthesis with phase accumulation
 
-```
+```WASMWASM
 static two_pi = 2 * PI
 static ts  = array 5 {_. 0}
 static dts = array 5 {i. (i + 1) * two_pi / SAMPLE_RATE}
@@ -129,7 +153,7 @@ ts = zip {x y. x + y} ts dts
 
 Delays hold arrays of values that persist across frames — essential for filters, delays, and feedback.
 
-```
+```WASMWASM
 x = delay N {i. init_expr}
 ```
 
@@ -143,7 +167,7 @@ x = delay N {i. init_expr}
 
 Example — one-pole lowpass filter:
 
-```
+```WASMWASM
 param cutoff = 0.1
 x = delay 1 {_. 0}
 x <- @x + cutoff * (IN[0] - @x)

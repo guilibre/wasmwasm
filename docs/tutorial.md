@@ -6,7 +6,7 @@ This tutorial introduces wasmwasm step by step. Each section builds on the previ
 
 The simplest possible program: a sine oscillator at 440 Hz.
 
-```
+```WASMWASM
 static two_pi = 2 * PI
 static t = 0
 static dt_base = two_pi / SAMPLE_RATE
@@ -23,7 +23,7 @@ t = t < two_pi ? t + dt : t + dt - two_pi
 
 Pull the frequency and amplitude out into named variables:
 
-```
+```WASMWASM
 freq = 440
 amp = 0.2
 static two_pi = 2 * PI
@@ -40,7 +40,7 @@ Variables are re-evaluated every frame in document order.
 
 Package the oscillator into a reusable function:
 
-```
+```WASMWASM
 osc = {amp freq.
   static two_pi = 2 * PI
   static t = 0
@@ -61,7 +61,7 @@ Functions are defined with `{params. body}` and applied by juxtaposition. Multip
 
 `param` exposes a value as a controllable input in the UI. It has a default and can be overwritten from the orchestra or the patch editor.
 
-```
+```WASMWASM
 param amp = 0.2
 param freq = 440
 static two_pi = 2 * PI
@@ -80,7 +80,7 @@ Delays store arrays that persist across frames. Use them for filters, echoes, an
 
 A simple one-pole lowpass filter:
 
-```
+```WASMWASM
 param cutoff = 0.1
 x = delay 1 {_. 0}
 x <- @x + cutoff * (IN[0] - @x)
@@ -91,7 +91,7 @@ OUT[0] <- @x
 
 An echo with 0.5 s feedback:
 
-```
+```WASMWASM
 buf_size = floor (SAMPLE_RATE * 0.5)
 echo = delay buf_size {_. 0}
 write_head = delay 1 {_. 0}
@@ -105,7 +105,7 @@ write_head <- fract (@write_head + 1 / buf_size)
 
 Functions can call themselves:
 
-```
+```WASMWASM
 # Compute the nth harmonic partial
 partial = {n freq amp.
   n < 1
@@ -116,13 +116,18 @@ partial = {n freq amp.
 OUT[0] <- partial 6 (440 * 2 * PI / SAMPLE_RATE) 0.15
 ```
 
+Since `partial` is called with a fixed count (`6`) and counts down by 1 each call, the compiler
+unrolls it into straight-line code automatically — no extra work on your part, just faster
+generated code for tight per-sample loops. See [language.md](language.md#automatic-unrolling) for
+the exact shape the compiler recognizes.
+
 ## 7. Multiple outputs and the patch editor
 
 A module can have multiple inputs (`IN[i]`) and outputs (`OUT[i]`), making it composable in the patch editor.
 
 A stereo reverb tail module:
 
-```
+```WASMWASM
 param mix = 0.5
 # ... filter chain reading IN[0] ...
 OUT[0] <- dry * (1 - mix) + wet_l * mix
@@ -137,7 +142,7 @@ The orchestra is a JavaScript sequencer that controls instrument params over tim
 
 **Instrument "synth" — wasmwasm code:**
 
-```
+```WASMWASM
 param amp = 0
 param freq = 440
 

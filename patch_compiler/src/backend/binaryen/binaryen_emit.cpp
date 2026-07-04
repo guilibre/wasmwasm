@@ -604,7 +604,7 @@ void emit_function(
     for (const auto &p : fn.params) ctx.add_param(p.name, p.type);
     prescan(ctx, fn.body);
 
-    BinaryenExpressionRef body;
+    BinaryenExpressionRef body = nullptr;
     try {
         body = emit_body(ctx, fn.body, fn.return_type);
     } catch (const std::exception &ex) {

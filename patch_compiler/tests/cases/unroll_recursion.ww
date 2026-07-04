@@ -1,0 +1,2 @@
+double = {n x. n < 1 ? x : double (n-1) (x*2)}
+OUT[0] <- double 5 1

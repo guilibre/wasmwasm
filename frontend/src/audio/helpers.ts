@@ -43,6 +43,16 @@ export function rand(lo: number, hi: number): number {
     return lo + Math.random() * (hi - lo);
 }
 
+export function scramble<T>(xs: T[]): T[] {
+    for (let i = 0; i < xs.length; ++i) {
+        const j = rand_int(0, xs.length - 1);
+        const tmp = xs[i];
+        xs[i] = xs[j];
+        xs[j] = tmp;
+    }
+    return xs;
+}
+
 export type MidiParams =
     | { type: 'noteon'; channel: number; note: number; velocity: number; data: Uint8Array }
     | { type: 'noteoff'; channel: number; note: number; velocity: number; data: Uint8Array }
@@ -89,6 +99,7 @@ export const HELPERS = {
     midi_to_cps,
     rand_int,
     rand,
+    scramble,
 };
 
 function dispatch_midi(msg: MIDIMessageEvent) {

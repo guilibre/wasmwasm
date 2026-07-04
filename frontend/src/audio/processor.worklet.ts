@@ -37,6 +37,11 @@ class WasmProcessor extends AudioWorkletProcessor {
     ev_read_head: Int32Array | null = null;
     ev_data: DataView | null = null;
 
+    node_id = '';
+    _busy_time = 0;
+    _available_time = 0;
+    _report_window_ms = 500;
+
     constructor() {
         super();
 
@@ -77,7 +82,10 @@ class WasmProcessor extends AudioWorkletProcessor {
                 this.external_inputs = event.data.external_inputs ?? [];
                 this.is_global = event.data.is_global ?? false;
                 this.start_frame = event.data.start_frame ?? 0;
+                this.node_id = event.data.node_id ?? '';
                 this._ready_sent = false;
+                this._busy_time = 0;
+                this._available_time = 0;
                 if (this.param_export_names.length > 0) {
                     this.param_exports = this.param_export_names.map(
                         (n) => (exports[n] as WasmGlobal) ?? null,
@@ -150,6 +158,7 @@ class WasmProcessor extends AudioWorkletProcessor {
     process(inputs: Float32Array[][], outputs: Float32Array[][]): boolean {
         if (!this.heap) return !this.stopped;
 
+        const process_start = Date.now();
         const num_samples = outputs[0][0].length;
         if (currentFrame + num_samples <= this.start_frame) return true;
         if (currentFrame >= this.stop_frame) return false;
@@ -220,6 +229,18 @@ class WasmProcessor extends AudioWorkletProcessor {
         if (!this._ready_sent && this.ev_data) {
             this._ready_sent = true;
             this.port.postMessage({ type: 'ready', startTime: currentFrame * inv_sample_rate });
+        }
+
+        this._busy_time += Date.now() - process_start;
+        this._available_time += num_samples * inv_sample_rate * 1000;
+        if (this._available_time >= this._report_window_ms) {
+            this.port.postMessage({
+                type: 'cpu-metrics',
+                node_id: this.node_id,
+                load: this._busy_time / this._available_time,
+            });
+            this._busy_time = 0;
+            this._available_time = 0;
         }
 
         return currentFrame + num_samples < this.stop_frame;

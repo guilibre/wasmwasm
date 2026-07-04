@@ -75,6 +75,9 @@ auto Lowerer::lower_closure_arg(const ExprPtr &ap) -> std::vector<IRValue> {
 }
 
 auto Lowerer::lower_call(const ExprPtr &e) -> std::optional<IRValue> {
+    std::optional<IRValue> unrolled;
+    if (try_unroll_bounded_recursion(e, unrolled)) return unrolled;
+
     const auto [callee_node, arg_ptrs] = flatten_calls(e);
 
     if (const auto *cv = std::get_if<Variable>(&(*callee_node)->node)) {

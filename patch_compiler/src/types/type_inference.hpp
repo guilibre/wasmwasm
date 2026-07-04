@@ -6,6 +6,7 @@
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 struct TypeError : std::runtime_error {
     SourcePos pos;
@@ -23,6 +24,12 @@ class TypeGenerator {
 };
 
 using Substitution = std::unordered_map<size_t, TypePtr>;
+
+auto scalar_kind_of(const TypePtr &t) -> BaseTypeKind;
+
+auto scalar_kinds_of(const TypePtr &t) -> std::vector<BaseTypeKind>;
+
+auto arity_of(const TypePtr &t) -> size_t;
 
 auto occurs_in(size_t var_id, const TypePtr &type) -> bool;
 

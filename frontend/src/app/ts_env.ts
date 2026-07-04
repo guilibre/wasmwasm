@@ -26,6 +26,7 @@ declare function lerp(a: number, b: number, t: number): number;
 declare function midi_to_cps(m: number): number;
 declare function rand_int(lo: number, hi: number): number;
 declare function rand(lo: number, hi: number): number;
+declare function scramble<T>(xs: T[]) : T[];
 declare async function setup_midi();
 declare function add_on_midi_event(f: (params: MidiParams) => Promise<void>): string;
 declare function remove_on_midi_event(id: string);

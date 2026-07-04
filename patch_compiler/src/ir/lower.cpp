@@ -1,10 +1,11 @@
 #include "lower.hpp"
-#include "lower_internal.hpp"
 
 #include "ast/ast.hpp"
 #include "builtins.hpp"
 #include "ir.hpp"
+#include "lower_internal.hpp"
 #include "types/type.hpp"
+#include "types/type_inference.hpp"
 #include <algorithm>
 #include <cmath>
 #include <stdexcept>
@@ -14,32 +15,31 @@
 
 namespace lower_detail {
 
-auto ir_type_of(const TypePtr &t) -> IRType {
-    if (const auto *base = std::get_if<TypeBase>(&t->node)) {
-        switch (base->kind) {
-        case BaseTypeKind::Float:
-            return IRType::Float;
-        case BaseTypeKind::Int:
-            return IRType::Int;
-        case BaseTypeKind::Void:
-            return IRType::Void;
-        default:
-            return IRType::Float;
-        }
+namespace {
+auto to_ir_type(BaseTypeKind kind) -> IRType {
+    switch (kind) {
+    case BaseTypeKind::Float:
+        return IRType::Float;
+    case BaseTypeKind::Int:
+        return IRType::Int;
+    case BaseTypeKind::Void:
+        return IRType::Void;
+    default:
+        return IRType::Float;
     }
-    return IRType::Float;
+}
+} // namespace
+
+auto ir_type_of(const TypePtr &t) -> IRType {
+    return to_ir_type(scalar_kind_of(t));
 }
 
 auto ir_types_of(const TypePtr &t) -> std::vector<IRType> {
-    if (const auto *arr = std::get_if<TypeArray>(&t->node)) {
-        std::vector<IRType> out;
-        out.reserve(arr->elements.size());
-        for (const auto &elem : arr->elements) out.push_back(ir_type_of(elem));
-        return out;
-    }
-    const auto scalar = ir_type_of(t);
-    if (scalar == IRType::Void) return {};
-    return {scalar};
+    const auto kinds = scalar_kinds_of(t);
+    std::vector<IRType> out;
+    out.reserve(kinds.size());
+    for (const auto k : kinds) out.push_back(to_ir_type(k));
+    return out;
 }
 
 auto eval_const_expr(const ExprPtr &e) -> double {
@@ -147,12 +147,7 @@ void Lowerer::pre_register_math_builtins() {
         const std::string name(sv);
         const auto it = map.find(name);
         if (it == map.end()) continue;
-        size_t arity = 0;
-        const TypePtr *t = &it->second;
-        while (const auto *fn = std::get_if<TypeFun>(&(*t)->node)) {
-            arity++;
-            t = &fn->result;
-        }
+        const size_t arity = arity_of(it->second);
         fns.emplace(name, FnInfo{
                               .free_vars = {},
                               .return_type = {IRType::Float},

@@ -130,8 +130,8 @@ function spaced(count: number, width: number): number[] {
 
 function node_size(node: Node): { width: number; height: number } {
     return {
-        width: node.measured?.width ?? 0,
-        height: node.measured?.height ?? 0,
+        width: node.width ?? node.measured?.width ?? 60,
+        height: node.height ?? node.measured?.height ?? 40,
     };
 }
 
@@ -199,7 +199,7 @@ async function elk_layout(nodes: Node[], edges: Edge[]): Promise<Node[]> {
             'elk.algorithm': 'layered',
             'elk.direction': 'DOWN',
             'elk.layered.spacing.nodeNodeBetweenLayers': '10',
-            'elk.spacing.nodeNode': '10',
+            'elk.spacing.nodeNode': '20',
             'elk.spacing.edgeNode': '10',
             'elk.spacing.edgeEdge': '10',
             'elk.layered.spacing.edgeNodeBetweenLayers': '10',
@@ -736,8 +736,6 @@ function serialize_orchestra(orchestra: OrchestraState) {
                 id: n.id,
                 type: n.type,
                 data: n.data,
-                height: n.measured?.height,
-                width: n.measured?.width,
             })),
             edges: i.edges.map((e) => ({
                 id: e.id,
@@ -752,8 +750,6 @@ function serialize_orchestra(orchestra: OrchestraState) {
             id: n.id,
             type: n.type,
             data: n.data,
-            height: n.measured?.height,
-            width: n.measured?.width,
         })),
         global_edges: orchestra.global_edges.map((e) => ({
             id: e.id,

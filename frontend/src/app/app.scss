@@ -81,6 +81,53 @@ body,
         flex-shrink: 0;
     }
 
+    &__statusbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.5rem;
+        padding: 0.2rem 0.8rem;
+        background: #13151f;
+        border-top: 1px solid #2a2d40;
+        flex-shrink: 0;
+        font-family: monospace;
+        font-size: 0.7rem;
+        color: #6272a4;
+    }
+
+    &__statusbar-meter {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+    }
+
+    &__statusbar-track {
+        width: 80px;
+        height: 6px;
+        background: #2a2d40;
+        border-radius: 3px;
+        overflow: hidden;
+    }
+
+    &__statusbar-fill {
+        height: 100%;
+        background: #50fa7b;
+        transition: width 0.1s linear;
+
+        &--warn {
+            background: #f1fa8c;
+        }
+
+        &--danger {
+            background: #ff5555;
+        }
+    }
+
+    &__statusbar-value {
+        min-width: 4.5em;
+        text-align: right;
+    }
+
     &__patch-tab {
         padding: 0.35rem 0.8rem;
         cursor: pointer;

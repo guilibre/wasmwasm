@@ -4,9 +4,9 @@ set -e
 
 JOBS=${1:-0}
 
-cd compiler
+cd patch_compiler
 
-emcmake cmake -S . -B build -DBUILD_DEBUGGER=OFF
+emcmake cmake -S . -B build -DBUILD_DEBUGGER=OFF -DBUILD_TESTS_WW=OFF -DCMAKE_BUILD_TYPE=Release
 if [ "$JOBS" -gt 0 ]; then
     cmake --build build -- -j$JOBS
 else
@@ -15,8 +15,8 @@ fi
 
 cd ../frontend
 mkdir -p public
-cp ../compiler/build/math/math.wasm public/
-cp ../compiler/build/app/wasmwasm.wasm src/wasmwasm
-cp ../compiler/build/app/wasmwasm.js src/wasmwasm
+cp ../patch_compiler/build/math/math.wasm public/
+cp ../patch_compiler/build/app/wasmwasm.wasm src/wasmwasm
+cp ../patch_compiler/build/app/wasmwasm.js src/wasmwasm
 
 echo "Build complete and files copied."

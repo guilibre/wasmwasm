@@ -1,0 +1,3 @@
+NOT_CONTAINS: call $test_module$fixedpoint
+NOT_CONTAINS: call $test_module$step
+NOT_CONTAINS: unreachable

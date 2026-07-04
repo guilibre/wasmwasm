@@ -8,6 +8,7 @@ import { PatchEditor } from '../patch/patch_editor';
 import { usePatchStore } from '../patch/use_patch_store';
 import { useInstrumentCompiler } from './use_instrument_compiler';
 import { useAudioEngine } from './use_audio_engine';
+import { StatusBar } from './status_bar';
 import { useBlockModal } from './use_block_modal';
 import { useUndoRedoShortcuts } from './use_undo_redo_shortcuts';
 import { GLOBAL_CACHE_KEY } from './constants';
@@ -58,7 +59,7 @@ export default function App() {
         compile_orchestra,
     } = useInstrumentCompiler(orchestra, set_instrument_code, set_global_patch_code, set_error);
 
-    const { analysers, is_playing, is_recording, play, stop, record, get_sample_rate } =
+    const { analysers, is_playing, is_recording, cpu_load, play, stop, record, get_sample_rate } =
         useAudioEngine(orchestra, patch_cache_ref, set_error);
 
     const compile_patch = () => compile_patch_impl(get_sample_rate());
@@ -143,6 +144,7 @@ export default function App() {
                         <ReactFlowProvider>
                             <PatchEditor store={store} />
                         </ReactFlowProvider>
+                        <StatusBar is_playing={is_playing} cpu_load={cpu_load} />
                     </div>
                     <Sidebar analyser_l={analysers?.l ?? null} analyser_r={analysers?.r ?? null} />
                 </div>

@@ -13,6 +13,7 @@ add_library(${PROJECT_NAME}_lib STATIC
     ir/lower_call.cpp
     ir/lower_closures.cpp
     ir/lower_expr.cpp
+    ir/lower_unroll.cpp
     lsp/lsp.cpp
     parser/parser.cpp
     parser/tokenizer.cpp

@@ -54,6 +54,9 @@ auto BinaryenCodeGen::build() -> BackendArtifact {
     BinaryenSetOneCallerInlineMaxSize(250);
     BinaryenModuleOptimize(mod_);
 
+    if (!BinaryenModuleValidate(mod_))
+        throw std::runtime_error("invalid module");
+
     auto result = BinaryenModuleAllocateAndWrite(mod_, nullptr);
     auto binary_ptr =
         std::unique_ptr<void, decltype(&free)>(result.binary, free);

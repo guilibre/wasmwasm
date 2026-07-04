@@ -33,6 +33,27 @@ export function useAudioEngine(
     const [is_playing, set_is_playing] = useState(false);
     const [is_recording, set_is_recording] = useState(false);
     const is_recording_ref = useRef(false);
+    const node_loads_ref = useRef<Map<string, number>>(new Map());
+    const [cpu_load, set_cpu_load] = useState(0);
+
+    const attach_cpu_metrics = (node: AudioWorkletNode, node_id: string) => {
+        const existing_onmessage = node.port.onmessage;
+        node.port.onmessage = (event: MessageEvent) => {
+            if (event.data.type === 'cpu-metrics') {
+                node_loads_ref.current.set(node_id, event.data.load);
+                let total = 0;
+                node_loads_ref.current.forEach((v) => (total += v));
+                set_cpu_load(total);
+                return;
+            }
+            if (existing_onmessage) {
+                (existing_onmessage as (this: MessagePort, ev: MessageEvent) => void).call(
+                    node.port,
+                    event,
+                );
+            }
+        };
+    };
 
     useEffect(() => {
         const worker_ref = orchestra_worker_ref;
@@ -209,6 +230,8 @@ export function useAudioEngine(
         });
         worklet_nodes_ref.current.clear();
         capture_nodes_ref.current.clear();
+        node_loads_ref.current.clear();
+        set_cpu_load(0);
         if (global_node_ref.current) {
             global_node_ref.current.port.postMessage({ type: 'stop' });
             global_node_ref.current.port.postMessage({ type: 'clear' });
@@ -342,6 +365,7 @@ export function useAudioEngine(
                 num_out_channels: compiled_global.num_out_channels,
                 external_inputs: compiled_global.external_inputs,
                 is_global: true,
+                node_id: 'global',
             });
             global_params = WasmWasm.make_params(compiled_global);
             global_node.port.postMessage({
@@ -352,6 +376,7 @@ export function useAudioEngine(
                 clock_sab,
             });
             await global_ready;
+            attach_cpu_metrics(global_node, 'global');
             global_node_ref.current = global_node;
         } catch (e) {
             set_error(`[global] ${String(e)}`);
@@ -379,7 +404,9 @@ export function useAudioEngine(
             if (pin_index !== undefined && global_node_ref.current) {
                 node.connect(global_node_ref.current, 0, pin_index);
             }
-            worklet_nodes_ref.current.set(`${instr.id}:${instance_idx}`, node);
+            const node_id = `${instr.id}:${instance_idx}`;
+            worklet_nodes_ref.current.set(node_id, node);
+            attach_cpu_metrics(node, node_id);
 
             if (needs_capture(json)) {
                 try {
@@ -398,6 +425,7 @@ export function useAudioEngine(
                 external_inputs: compiled.external_inputs,
                 is_global: false,
                 start_frame: birth_time != null ? Math.round(birth_time * context.sampleRate) : 0,
+                node_id,
             });
             node.port.postMessage({
                 type: 'load-params-sab',
@@ -502,6 +530,7 @@ export function useAudioEngine(
                         }
                         node.disconnect();
                         worklet_nodes_ref.current.delete(e.data.instance_id);
+                        node_loads_ref.current.delete(e.data.instance_id);
                     }, delay);
                 }
                 return;
@@ -575,6 +604,8 @@ export function useAudioEngine(
         });
         worklet_nodes_ref.current.clear();
         capture_nodes_ref.current.clear();
+        node_loads_ref.current.clear();
+        set_cpu_load(0);
         if (global_node_ref.current) {
             global_node_ref.current.port.postMessage({ type: 'clear' });
             global_node_ref.current.disconnect();
@@ -592,6 +623,7 @@ export function useAudioEngine(
         analysers,
         is_playing,
         is_recording,
+        cpu_load,
         play,
         stop,
         record,

@@ -2,7 +2,6 @@
 
 #include "ast/ast.hpp"
 #include "ir.hpp"
-
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -29,6 +28,8 @@ auto ir_type_of(const TypePtr &t) -> IRType;
 auto ir_types_of(const TypePtr &t) -> std::vector<IRType>;
 auto eval_const_expr(const ExprPtr &e) -> double;
 
+inline constexpr size_t kMaxUnrollIterations = size_t{1} << 20;
+
 enum class ParamKind : uint8_t { Scalar, Array, Closure };
 
 struct ParamShape {
@@ -42,6 +43,17 @@ struct FnInfo {
     size_t arity{0};
     bool is_math{false};
     std::vector<ParamShape> param_shapes;
+};
+
+struct UnrollShape {
+    size_t counter_param_idx{0};
+    double decrement{0.0};
+    Operation cmp_op{Operation::Lt};
+    double threshold{0.0};
+    bool recursive_on_true{false};
+    const ExprPtr *base_branch{nullptr};
+    const ExprPtr *recursive_branch{nullptr};
+    std::vector<const ExprPtr *> recursive_call_args;
 };
 
 struct Lowerer {
@@ -65,6 +77,9 @@ struct Lowerer {
     std::unordered_set<std::string> lowered_fns;
     std::unordered_map<std::string, size_t> known_arities;
     std::string cur_fn_name = "main$body";
+    std::unordered_map<std::string, const ExprPtr *> fn_ast;
+    std::unordered_map<std::string, std::optional<UnrollShape>>
+        unroll_shape_cache;
 
     size_t tmp_n = 0;
 
@@ -107,6 +122,16 @@ struct Lowerer {
     auto lower_param_bind(const ParamBind &node) -> std::optional<IRValue>;
     auto lower_call(const ExprPtr &e) -> std::optional<IRValue>;
     auto lower_closure_arg(const ExprPtr &ap) -> std::vector<IRValue>;
+
+    auto try_unroll_bounded_recursion(const ExprPtr &call_expr,
+                                      std::optional<IRValue> &out) -> bool;
+    auto classify_unrollable(const std::string &fn_name,
+                             const ExprPtr *root_lambda)
+        -> std::optional<UnrollShape>;
+    auto unroll_call(const std::string &fn_name, const UnrollShape &shape,
+                     double counter_value,
+                     const std::vector<std::string> &arg_locals)
+        -> std::optional<IRValue>;
 
     auto lower_expr(const ExprPtr &e) -> std::optional<IRValue>;
 

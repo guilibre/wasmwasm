@@ -337,6 +337,7 @@ void Lowerer::lift(const std::string &name, const ExprPtr &e) {
     }
     const auto saved_fn_name = cur_fn_name;
     cur_fn_name = name;
+    fn_ast[name] = &e;
     lower_fn_body(fn, body_params, body);
     cur_fn_name = saved_fn_name;
 

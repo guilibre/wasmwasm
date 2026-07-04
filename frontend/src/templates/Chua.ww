@@ -1,8 +1,8 @@
-param alpha = 15.8
+param alpha = 15.6
 param beta = 28
 param m0 = -1.143
 param m1 = -0.714
-param dt = 0.01
+param dt = 0.0004
 
 static x = 0.1
 static y = 0
@@ -43,4 +43,4 @@ OUT[0] <- x
 OUT[1] <- y
 OUT[2] <- z
 
-step 1
+step 64

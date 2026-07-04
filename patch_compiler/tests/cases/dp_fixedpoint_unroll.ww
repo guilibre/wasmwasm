@@ -1,4 +1,4 @@
-param dt = 0.001
+param dt = 0.0005
 param g  = 9.8
 param l1 = 7
 param l2 = 11
