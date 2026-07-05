@@ -50,18 +50,14 @@ export interface InstrumentState {
     name: string;
     nodes: Node[];
     edges: Edge[];
-    code: string;
 }
 
 export interface OrchestraState {
     bpm: number;
     active_id: string | null;
     instruments: InstrumentState[];
-    code: string;
     global_nodes: Node[];
     global_edges: Edge[];
-    global_patch_code: string;
-    score_code: string;
 }
 
 export type PatchView = 'instrument' | 'global';
@@ -90,12 +86,8 @@ type PatchAction =
     | { type: 'set_orchestra_bpm'; bpm: number }
     | { type: 'add_instrument' }
     | { type: 'remove_instrument'; id: string }
-    | { type: 'set_instrument_code'; id: string; code: string }
     | { type: 'rename_instrument'; id: string; name: string }
     | { type: 'set_active_instrument'; id: string }
-    | { type: 'set_orchestra_code'; code: string }
-    | { type: 'set_global_patch_code'; code: string }
-    | { type: 'set_score_code'; code: string }
     | { type: 'load'; orchestra: OrchestraState }
     | { type: 'apply_layout'; instrument_id: string; nodes: Node[] }
     | { type: 'apply_global_layout'; nodes: Node[] }
@@ -106,10 +98,6 @@ const NO_HISTORY = new Set<PatchAction['type']>([
     'select',
     'set_view',
     'set_active_instrument',
-    'set_instrument_code',
-    'set_orchestra_code',
-    'set_global_patch_code',
-    'set_score_code',
     'apply_layout',
     'apply_global_layout',
     'load',
@@ -317,11 +305,8 @@ const DEFAULT_ORCHESTRA: OrchestraState = {
     bpm: 120,
     active_id: null,
     instruments: [],
-    code: '',
     global_nodes: default_global_nodes(),
     global_edges: [],
-    global_patch_code: '',
-    score_code: '',
 };
 
 function normalize_orchestra(orchestra: Partial<OrchestraState>): OrchestraState {
@@ -329,7 +314,6 @@ function normalize_orchestra(orchestra: Partial<OrchestraState>): OrchestraState
         ...i,
         nodes: (i.nodes ?? default_nodes()).map((n) => ({ ...n, position: { x: 0, y: 0 } })),
         edges: i.edges ?? [],
-        code: i.code ?? '',
     })) as InstrumentState[];
     const global_nodes = sync_global_in_nodes(
         instruments,
@@ -342,11 +326,8 @@ function normalize_orchestra(orchestra: Partial<OrchestraState>): OrchestraState
         bpm: orchestra.bpm ?? 120,
         active_id: orchestra.active_id ?? null,
         instruments,
-        code: orchestra.code ?? '',
         global_nodes,
         global_edges: orchestra.global_edges ?? [],
-        global_patch_code: orchestra.global_patch_code ?? '',
-        score_code: orchestra.score_code ?? '',
     };
 }
 
@@ -634,7 +615,6 @@ function patch_reducer(state: PatchState, action: PatchAction): PatchState {
                 name: `instrument${n}`,
                 nodes: default_nodes(),
                 edges: [],
-                code: '',
             };
             const instruments = [...state.orchestra.instruments, instr];
             return {
@@ -669,16 +649,6 @@ function patch_reducer(state: PatchState, action: PatchAction): PatchState {
                 },
             };
         }
-        case 'set_instrument_code':
-            return {
-                ...state,
-                orchestra: {
-                    ...state.orchestra,
-                    instruments: state.orchestra.instruments.map((i) =>
-                        i.id === action.id ? { ...i, code: action.code } : i,
-                    ),
-                },
-            };
         case 'rename_instrument': {
             const instruments = state.orchestra.instruments.map((i) =>
                 i.id === action.id ? { ...i, name: action.name } : i,
@@ -698,12 +668,6 @@ function patch_reducer(state: PatchState, action: PatchAction): PatchState {
                 selected_id: null,
                 orchestra: { ...state.orchestra, active_id: action.id },
             };
-        case 'set_orchestra_code':
-            return { ...state, orchestra: { ...state.orchestra, code: action.code } };
-        case 'set_global_patch_code':
-            return { ...state, orchestra: { ...state.orchestra, global_patch_code: action.code } };
-        case 'set_score_code':
-            return { ...state, orchestra: { ...state.orchestra, score_code: action.code } };
         case 'load':
             return {
                 orchestra: normalize_orchestra(action.orchestra),
@@ -734,11 +698,9 @@ function serialize_orchestra(orchestra: OrchestraState) {
     return {
         bpm: orchestra.bpm,
         active_id: orchestra.active_id,
-        code: orchestra.code,
         instruments: orchestra.instruments.map((i) => ({
             id: i.id,
             name: i.name,
-            code: i.code,
             nodes: i.nodes.map((n) => ({
                 id: n.id,
                 type: n.type,
@@ -766,8 +728,6 @@ function serialize_orchestra(orchestra: OrchestraState) {
             target: e.target,
             targetHandle: e.targetHandle,
         })),
-        global_patch_code: orchestra.global_patch_code,
-        score_code: orchestra.score_code,
     };
 }
 
@@ -950,10 +910,6 @@ export function usePatchStore() {
         (id: string) => dispatch({ type: 'remove_instrument', id }),
         [],
     );
-    const set_instrument_code = useCallback(
-        (id: string, code: string) => dispatch({ type: 'set_instrument_code', id, code }),
-        [],
-    );
     const rename_instrument = useCallback(
         (id: string, name: string) => dispatch({ type: 'rename_instrument', id, name }),
         [],
@@ -962,19 +918,6 @@ export function usePatchStore() {
         (id: string) => dispatch({ type: 'set_active_instrument', id }),
         [],
     );
-    const set_orchestra_code = useCallback(
-        (code: string) => dispatch({ type: 'set_orchestra_code', code }),
-        [],
-    );
-    const set_global_patch_code = useCallback(
-        (code: string) => dispatch({ type: 'set_global_patch_code', code }),
-        [],
-    );
-    const set_score_code = useCallback(
-        (code: string) => dispatch({ type: 'set_score_code', code }),
-        [],
-    );
-
     const undo = useCallback(() => dispatch({ type: 'undo' }), []);
     const redo = useCallback(() => dispatch({ type: 'redo' }), []);
 
@@ -1030,12 +973,8 @@ export function usePatchStore() {
         set_orchestra_bpm,
         add_instrument,
         remove_instrument,
-        set_instrument_code,
         rename_instrument,
         set_active_instrument,
-        set_orchestra_code,
-        set_global_patch_code,
-        set_score_code,
         export_patch,
         import_patch,
         load_patch,

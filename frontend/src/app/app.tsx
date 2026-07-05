@@ -1,31 +1,25 @@
 import { useEffect, useRef, useState } from 'react';
 import { ReactFlowProvider } from '@xyflow/react';
 import WasmWasm from '../audio/compiler';
-import ScoreWasm from '../audio/score_compiler';
+import type { CompiledPatch } from '../audio/compiler';
 import WWEditor, { type WWEditorHandle } from './ww_editor';
-import type { ScoreEditorHandle } from './score_editor';
-import { compile_score as compile_score_wasm } from '../score_lsp/lsp';
 import { Sidebar } from './sidebar';
-import { LeftPane } from './left_pane';
+import { InstrumentTabs } from './instrument_tabs';
 import { PatchEditor } from '../patch/patch_editor';
 import { usePatchStore } from '../patch/use_patch_store';
-import { useInstrumentCompiler } from './use_instrument_compiler';
 import { useAudioEngine } from './use_audio_engine';
 import { StatusBar } from './status_bar';
 import { useBlockModal } from './use_block_modal';
 import { useUndoRedoShortcuts } from './use_undo_redo_shortcuts';
-import { GLOBAL_CACHE_KEY } from './constants';
 import './app.scss';
 
 export default function App() {
     const [error, set_error] = useState<string | null>(null);
     const import_ref = useRef<HTMLInputElement>(null);
     const editor_ref = useRef<WWEditorHandle>(null);
-    const score_editor_ref = useRef<ScoreEditorHandle>(null);
-    const [score_compile_status, set_score_compile_status] = useState<
-        'idle' | 'compiling' | 'ok' | 'error'
-    >('idle');
-    const score_ts_output_ref = useRef<string | null>(null);
+    const patch_cache_ref = useRef<Map<string, { json: string; compiled: CompiledPatch }>>(
+        new Map(),
+    );
 
     const store = usePatchStore();
     const {
@@ -36,13 +30,8 @@ export default function App() {
         select,
         export_patch,
         import_patch,
-        set_orchestra_bpm,
-        set_orchestra_code,
-        set_global_patch_code,
-        set_score_code,
         add_instrument,
         remove_instrument,
-        set_instrument_code,
         rename_instrument,
         set_active_instrument,
         view,
@@ -50,40 +39,15 @@ export default function App() {
         undo,
         redo,
     } = store;
-    const active_instrument =
-        orchestra.instruments.find((i) => i.id === orchestra.active_id) ?? null;
     const selected_block = selected_node?.type === 'block' ? selected_node : null;
 
     useUndoRedoShortcuts(undo, redo);
 
-    const {
+    const { analysers, is_playing, is_recording, cpu_load, play, stop, record } = useAudioEngine(
+        orchestra,
         patch_cache_ref,
-        compile_status,
-        orchestra_env,
-        instrument_envs,
-        handle_instrument_code_change,
-        handle_global_patch_code_change,
-        compile_patch: compile_patch_impl,
-        compile_instrument,
-        compile_orchestra,
-    } = useInstrumentCompiler(orchestra, set_instrument_code, set_global_patch_code, set_error);
-
-    const { analysers, is_playing, is_recording, cpu_load, play, stop, record, get_sample_rate } =
-        useAudioEngine(orchestra, patch_cache_ref, set_error);
-
-    const compile_patch = () => compile_patch_impl(get_sample_rate());
-
-    const compile_score = () => {
-        set_score_compile_status('compiling');
-        try {
-            score_ts_output_ref.current = compile_score_wasm(orchestra.score_code);
-            set_score_compile_status('ok');
-        } catch (e) {
-            console.error('[score] compile failed:', e);
-            score_ts_output_ref.current = null;
-            set_score_compile_status('error');
-        }
-    };
+        set_error,
+    );
 
     const {
         name_draft,
@@ -98,10 +62,6 @@ export default function App() {
 
     useEffect(() => {
         WasmWasm.ensureReady().then(() => editor_ref.current?.refresh());
-    }, []);
-
-    useEffect(() => {
-        ScoreWasm.ensureReady().then(() => score_editor_ref.current?.refresh());
     }, []);
 
     return (
@@ -129,48 +89,18 @@ export default function App() {
             </div>
 
             <div className="app__workspace">
-                <LeftPane
-                    orchestra={orchestra}
-                    on_bpm_change={set_orchestra_bpm}
-                    on_add={add_instrument}
-                    on_remove={remove_instrument}
-                    on_rename={rename_instrument}
-                    on_instrument_code_change={handle_instrument_code_change}
-                    on_orchestra_code_change={set_orchestra_code}
-                    on_set_active={set_active_instrument}
-                    on_compile_patch={compile_patch}
-                    on_compile_instrument={compile_instrument}
-                    on_compile_orchestra={compile_orchestra}
-                    compile_status={compile_status}
-                    orchestra_env={orchestra_env}
-                    instrument_envs={instrument_envs}
-                    on_global_patch_code_change={handle_global_patch_code_change}
-                    global_env={instrument_envs.get(GLOBAL_CACHE_KEY) ?? null}
-                    view={view}
-                    on_view_change={set_view}
-                    score_code={orchestra.score_code}
-                    on_score_code_change={set_score_code}
-                    on_score_compile={compile_score}
-                    score_compile_status={score_compile_status}
-                    score_editor_ref={score_editor_ref}
-                />
-
                 <div className="app__patch-pane">
                     <div className="app__patch-container">
-                        <div className="app__patch-tabs">
-                            <div
-                                className={`app__patch-tab${view === 'global' ? ' app__patch-tab--active' : ''}`}
-                                onClick={() => set_view('global')}
-                            >
-                                global
-                            </div>
-                            <div
-                                className={`app__patch-tab${view === 'instrument' ? ' app__patch-tab--active' : ''}`}
-                                onClick={() => set_view('instrument')}
-                            >
-                                {active_instrument?.name ?? 'instrument'}
-                            </div>
-                        </div>
+                        <InstrumentTabs
+                            instruments={orchestra.instruments}
+                            active_instrument_id={orchestra.active_id}
+                            view={view}
+                            on_add={add_instrument}
+                            on_remove={remove_instrument}
+                            on_rename={rename_instrument}
+                            on_set_active={set_active_instrument}
+                            on_view_change={set_view}
+                        />
                         <ReactFlowProvider>
                             <PatchEditor store={store} />
                         </ReactFlowProvider>

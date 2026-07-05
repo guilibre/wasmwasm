@@ -53,6 +53,148 @@ export function scramble<T>(xs: T[]): T[] {
     return xs;
 }
 
+export interface Note {
+    id: string;
+}
+
+export interface Instrument {
+    note_on: (params: Note) => Promise<void>;
+    note_off: (params: Note) => Promise<void>;
+}
+
+class Queue<T> {
+    private readonly items: T[] = [];
+
+    enqueue(item: T): void {
+        this.items.push(item);
+    }
+
+    dequeue(): T | undefined {
+        return this.items.shift();
+    }
+
+    peek(): T | undefined {
+        return this.items[0];
+    }
+
+    has(item: T): boolean {
+        return this.items.includes(item);
+    }
+
+    delete(item: T): boolean {
+        const index = this.items.indexOf(item);
+        if (index === -1) return false;
+        this.items.splice(index, 1);
+        return true;
+    }
+}
+
+class EnquedBiMap<K, V> {
+    private readonly forward = new Map<K, V>();
+    private readonly backward = new Map<V, K>();
+    private key_order: Queue<K> = new Queue();
+
+    enqueue(k: K, v: V): void {
+        const old_value = this.forward.get(k);
+        if (old_value !== undefined) this.backward.delete(old_value);
+
+        const old_key = this.backward.get(v);
+        if (old_key !== undefined) this.forward.delete(old_key);
+
+        this.forward.set(k, v);
+        this.backward.set(v, k);
+        this.key_order.enqueue(k);
+    }
+
+    dequeue(): V | undefined {
+        const k = this.key_order.dequeue();
+        return k == undefined ? undefined : this.forward.get(k);
+    }
+
+    get_value(key: K): V | undefined {
+        return this.forward.get(key);
+    }
+
+    get_key(value: V): K | undefined {
+        return this.backward.get(value);
+    }
+
+    has_key(key: K): boolean {
+        return this.forward.has(key);
+    }
+
+    has_value(value: V): boolean {
+        return this.backward.has(value);
+    }
+
+    delete_key(key: K): boolean {
+        const value = this.forward.get(key);
+        if (value === undefined) return false;
+
+        this.forward.delete(key);
+        this.backward.delete(value);
+        return true;
+    }
+
+    delete_value(v: V): boolean {
+        const k = this.backward.get(v);
+        if (k === undefined) return false;
+
+        this.backward.delete(v);
+        this.forward.delete(k);
+        this.key_order.delete(k);
+        return true;
+    }
+}
+
+export class Poly {
+    private readonly voices: Array<Instrument>;
+    private readonly voice_idx: EnquedBiMap<string, number> = new EnquedBiMap();
+
+    private constructor(voices: Array<Instrument>) {
+        this.voices = voices;
+    }
+
+    static async new(voice: () => Promise<Instrument>, n_voices: number): Promise<Poly> {
+        const voices = await Promise.all(
+            Array.from({ length: n_voices }, async () => await voice()),
+        );
+        return new Poly(voices);
+    }
+
+    async note_on(params: Note) {
+        const retriggered = this.voice_idx.get_value(params.id);
+        if (retriggered != undefined) {
+            this.voice_idx.delete_value(retriggered);
+            this.voice_idx.enqueue(params.id, retriggered);
+            this.voices[retriggered].note_on(params);
+            return;
+        }
+
+        for (let i = 0; i < this.voices.length; ++i) {
+            if (!this.voice_idx.has_value(i)) {
+                this.voice_idx.enqueue(params.id, i);
+                this.voices[i].note_on(params);
+                return;
+            }
+        }
+
+        const oldest = this.voice_idx.dequeue();
+        if (oldest == undefined) return;
+        const stolen_id = this.voice_idx.get_key(oldest)!;
+        this.voice_idx.enqueue(params.id, oldest);
+        this.voices[oldest].note_off({ id: stolen_id });
+        this.voices[oldest].note_on(params);
+    }
+
+    async note_off(params: Note) {
+        const idx = this.voice_idx.get_value(params.id);
+        if (idx == undefined) return;
+        this.voice_idx.delete_value(idx);
+        this.voices[idx].note_off(params);
+    }
+}
+
 export type MidiParams =
     | { type: 'noteon'; channel: number; note: number; velocity: number; data: Uint8Array }
     | { type: 'noteoff'; channel: number; note: number; velocity: number; data: Uint8Array }
@@ -100,6 +242,7 @@ export const HELPERS = {
     rand_int,
     rand,
     scramble,
+    Poly,
 };
 
 function dispatch_midi(msg: MIDIMessageEvent) {

@@ -3,14 +3,9 @@ param amp = 0.2
 param atk = 0.01
 param rel = 0.5
 
-static gate_ = 0
 static env = 0
-static denv = 0
 
 OUT[0] <- amp*env
 
-gate > gate_ ? denv = 1/(atk*SAMPLE_RATE)
-env = min 1 (max 0 (env + denv))
-env >= 1 ? (gate | env <= 0 ? denv = 0 : denv = -1/(rel*SAMPLE_RATE))
-
-gate_ = gate
+env = env + (gate ? 1/(atk*SAMPLE_RATE) : -1/(rel*SAMPLE_RATE))
+env = min 1 (max 0 env)

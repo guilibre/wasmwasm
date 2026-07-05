@@ -59,8 +59,7 @@ void CodeGenerator::generate_track(size_t index,
 void CodeGenerator::generate_step(const ResolvedStep &step, std::ostream &out) {
     for (const ResolvedNote &note : step.notes) {
         if (note.is_rest) continue;
-        out << "        this.runtime.emit({ midinote: " << note.midinote
+        out << "      await this.runtime.emit({ midinote: " << note.midinote
             << ", velocity: 100, duration: " << note.duration_beats << " });\n";
     }
-    out << "        await this.runtime.wait(" << step.wait_beats << ");\n";
 }

@@ -13,7 +13,7 @@ else
     cmake --build build
 fi
 
-cd score_compiler
+cd ../score_compiler
 
 emcmake cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 if [ "$JOBS" -gt 0 ]; then

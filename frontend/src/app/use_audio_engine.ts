@@ -3,8 +3,6 @@ import workletUrl from '../audio/processor.worklet.ts?worker&url';
 import WasmWasm, { type PatchParams, type CompiledPatch } from '../audio/compiler';
 import { patch_to_json } from '../patch/patch_to_json';
 import type { OrchestraState } from '../patch/use_patch_store';
-import { setup_midi, add_on_midi_event, remove_on_midi_event } from '../audio/helpers';
-import { compile_score } from '../score_lsp/lsp';
 import { GLOBAL_CACHE_KEY } from './constants';
 import { encode_wav, download_blob } from './wav_encoder';
 
@@ -21,8 +19,6 @@ export function useAudioEngine(
     const mic_source_ref = useRef<MediaStreamAudioSourceNode | null>(null);
     const analyser_l_ref = useRef<AnalyserNode | null>(null);
     const analyser_r_ref = useRef<AnalyserNode | null>(null);
-    const orchestra_worker_ref = useRef<Worker | null>(null);
-    const midi_fwd_ref = useRef<string | null>(null);
     const play_session_ref = useRef(0);
     const play_inflight_ref = useRef<Promise<void> | null>(null);
     const recorder_node_ref = useRef<AudioWorkletNode | null>(null);
@@ -57,7 +53,6 @@ export function useAudioEngine(
     };
 
     useEffect(() => {
-        const worker_ref = orchestra_worker_ref;
         const nodes_ref = worklet_nodes_ref;
         const capture_ref = capture_nodes_ref;
         const ctx_ref = audio_context_ref;
@@ -68,7 +63,6 @@ export function useAudioEngine(
                 n.port.postMessage({ type: 'clear' });
                 n.disconnect();
             });
-            worker_ref.current?.terminate();
             nodes_ref.current.clear();
             capture_ref.current.clear();
             ctx_ref.current?.close();
@@ -239,19 +233,6 @@ export function useAudioEngine(
             global_node_ref.current.disconnect();
             global_node_ref.current = null;
         }
-        if (midi_fwd_ref.current) {
-            remove_on_midi_event(midi_fwd_ref.current);
-            midi_fwd_ref.current = null;
-        }
-        if (!orchestra_worker_ref.current) {
-            orchestra_worker_ref.current = new Worker(
-                new URL('../audio/orchestra_worker.ts', import.meta.url),
-                { type: 'module' },
-            );
-        } else {
-            orchestra_worker_ref.current.postMessage({ type: 'stop' });
-            orchestra_worker_ref.current.onmessage = null;
-        }
 
         const context = audio_context_ref.current!;
         const merger = merger_ref.current!;
@@ -262,52 +243,6 @@ export function useAudioEngine(
             Math.round(context.currentTime * context.sampleRate),
         );
 
-        const ts = await import('typescript');
-
-        let compiled_orchestra = '';
-        if (orchestra.code.trim()) {
-            try {
-                compiled_orchestra = ts.transpileModule(orchestra.code, {
-                    compilerOptions: {
-                        target: ts.ScriptTarget.ES2025,
-                        module: ts.ModuleKind.ESNext,
-                    },
-                }).outputText;
-            } catch (e) {
-                set_error(`[orchestra] ${String(e)}`);
-            }
-        }
-
-        let compiled_score = '';
-        if (orchestra.score_code.trim()) {
-            try {
-                const score_ts = compile_score(orchestra.score_code);
-                const score_js = score_ts.replace(/^export\s+/gm, '');
-                compiled_score = ts.transpileModule(score_js, {
-                    compilerOptions: {
-                        target: ts.ScriptTarget.ES2025,
-                        module: ts.ModuleKind.ESNext,
-                    },
-                }).outputText;
-            } catch (e) {
-                set_error(`[score] ${String(e)}`);
-            }
-        }
-
-        let compiled_global_code = '';
-        if (orchestra.global_patch_code.trim()) {
-            try {
-                compiled_global_code = ts.transpileModule(orchestra.global_patch_code, {
-                    compilerOptions: {
-                        target: ts.ScriptTarget.ES2025,
-                        module: ts.ModuleKind.ESNext,
-                    },
-                }).outputText;
-            } catch (e) {
-                set_error(`[global] ${String(e)}`);
-            }
-        }
-
         const cached_global = patch_cache_ref.current.get(GLOBAL_CACHE_KEY);
         const global_json = cached_global
             ? cached_global.json
@@ -317,9 +252,6 @@ export function useAudioEngine(
             : WasmWasm.compile_patch(context.sampleRate, global_json);
 
         const instr_json = new Map<string, string>();
-        const instr_compiled_code = new Map<string, string>();
-        const instr_instance_counters = new Map<string, number>();
-
         const instr_compiled = new Map<string, CompiledPatch>();
 
         for (const instr of orchestra.instruments) {
@@ -337,17 +269,8 @@ export function useAudioEngine(
                     continue;
                 }
             }
-            const compiled_code = instr.code.trim()
-                ? ts.transpileModule(instr.code, {
-                      compilerOptions: {
-                          target: ts.ScriptTarget.ES2025,
-                          module: ts.ModuleKind.ESNext,
-                      },
-                  }).outputText
-                : '';
-            instr_json.set(instr.name, json);
-            instr_compiled.set(instr.name, compiled);
-            instr_compiled_code.set(instr.name, compiled_code);
+            instr_json.set(instr.id, json);
+            instr_compiled.set(instr.id, compiled);
         }
 
         const global_pin_by_instrument = new Map<string, number>();
@@ -403,13 +326,7 @@ export function useAudioEngine(
             instr: (typeof orchestra.instruments)[number],
             json: string,
             compiled: CompiledPatch,
-            instance_idx: number,
-            session: number,
-            birth_time?: number,
-        ): Promise<{
-            event_sab: SharedArrayBuffer;
-            param_names: string[];
-        } | null> => {
+        ): Promise<void> => {
             const params: PatchParams = WasmWasm.make_params(compiled);
 
             const node = new AudioWorkletNode(context, 'wasm-processor', {
@@ -421,7 +338,7 @@ export function useAudioEngine(
             if (pin_index !== undefined && global_node_ref.current) {
                 node.connect(global_node_ref.current, 0, pin_index);
             }
-            const node_id = `${instr.id}:${instance_idx}`;
+            const node_id = instr.id;
             worklet_nodes_ref.current.set(node_id, node);
             attach_cpu_metrics(node, node_id);
 
@@ -441,7 +358,7 @@ export function useAudioEngine(
                 num_out_channels: compiled.num_out_channels,
                 external_inputs: compiled.external_inputs,
                 is_global: false,
-                start_frame: birth_time != null ? Math.round(birth_time * context.sampleRate) : 0,
+                start_frame: 0,
                 node_id,
             });
             node.port.postMessage({
@@ -452,121 +369,24 @@ export function useAudioEngine(
                 clock_sab,
             });
 
-            if (play_session_ref.current !== session) {
+            if (play_session_ref.current !== my_session) {
                 node.port.postMessage({ type: 'stop' });
                 node.port.postMessage({ type: 'clear' });
                 if (capture_nodes_ref.current.delete(node)) {
                     mic_source_ref.current?.disconnect(node);
                 }
                 node.disconnect();
-                worklet_nodes_ref.current.delete(`${instr.id}:${instance_idx}`);
-                return null;
-            }
-
-            return {
-                event_sab: params.event_sab,
-                param_names: params.param_names,
-            };
-        };
-
-        const worker = orchestra_worker_ref.current!;
-        worker.onmessage = async (e) => {
-            if (e.data.type === 'setup-midi') {
-                await setup_midi();
-                if (!midi_fwd_ref.current) {
-                    midi_fwd_ref.current = add_on_midi_event(async (params) => {
-                        worker.postMessage({ type: 'midi-event', params });
-                    });
-                }
-                worker.postMessage({ type: 'midi-ready' });
-                return;
-            }
-            if (e.data.type === 'error') {
-                set_error(`[orchestra] ${e.data.message}`);
-                return;
-            }
-            if (e.data.type === 'stop') {
-                if (e.data.session === my_session) stop(e.data.dur ?? 1, e.data.time);
-                return;
-            }
-            if (e.data.type === 'request-instance') {
-                const { name, request_id, birth_time } = e.data as {
-                    name: string;
-                    request_id: number;
-                    birth_time: number;
-                };
-                const json = instr_json.get(name);
-                const compiled = instr_compiled.get(name);
-                const instr = orchestra.instruments.find((i) => i.name === name);
-                if (!json || !compiled || !instr) {
-                    worker.postMessage({
-                        type: 'instance-error',
-                        request_id,
-                        message: `Unknown instrument: ${name}`,
-                    });
-                    return;
-                }
-                const instance_idx = instr_instance_counters.get(name) ?? 0;
-                instr_instance_counters.set(name, instance_idx + 1);
-                const result = await create_instance(
-                    instr,
-                    json,
-                    compiled,
-                    instance_idx,
-                    my_session,
-                    birth_time,
-                );
-                if (!result) {
-                    worker.postMessage({
-                        type: 'instance-error',
-                        request_id,
-                        message: `Failed to create instance of ${name}`,
-                    });
-                    return;
-                }
-                worker.postMessage({
-                    type: 'instance-ready',
-                    request_id,
-                    instance_id: `${instr.id}:${instance_idx}`,
-                    event_sab: result.event_sab,
-                    param_names: result.param_names,
-                    code: instr_compiled_code.get(name) ?? '',
-                });
-                return;
-            }
-            if (e.data.type === 'destroy-instance') {
-                const node = worklet_nodes_ref.current.get(e.data.instance_id);
-                if (node) {
-                    const stop_frame = Math.round(e.data.time * context.sampleRate);
-                    node.port.postMessage({ type: 'stop', frame: stop_frame });
-                    const delay = Math.max(0, (e.data.time - context.currentTime) * 1000);
-                    setTimeout(() => {
-                        node.port.postMessage({ type: 'clear' });
-                        if (capture_nodes_ref.current.delete(node)) {
-                            mic_source_ref.current?.disconnect(node);
-                        }
-                        node.disconnect();
-                        worklet_nodes_ref.current.delete(e.data.instance_id);
-                        node_loads_ref.current.delete(e.data.instance_id);
-                    }, delay);
-                }
-                return;
+                worklet_nodes_ref.current.delete(node_id);
             }
         };
-        worker.postMessage({
-            type: 'run',
-            session: my_session,
-            orchestra_code: compiled_orchestra,
-            score_code: compiled_score,
-            bpm: orchestra.bpm,
-            sampleRate: context.sampleRate,
-            audioCurrentTime: context.currentTime,
-            instrument_names: [...instr_json.keys()],
-            global_code: compiled_global_code,
-            global_param_names: global_params?.param_names,
-            global_event_sab: global_params?.event_sab,
-            clock_sab,
-        });
+
+        for (const instr of orchestra.instruments) {
+            const json = instr_json.get(instr.id);
+            const compiled = instr_compiled.get(instr.id);
+            if (!json || !compiled) continue;
+            await create_instance(instr, json, compiled);
+        }
+
         set_is_playing(true);
     };
 
@@ -605,11 +425,6 @@ export function useAudioEngine(
         }
         if (is_recording_ref.current) {
             await stop_recording();
-        }
-        orchestra_worker_ref.current?.postMessage({ type: 'stop' });
-        if (midi_fwd_ref.current) {
-            remove_on_midi_event(midi_fwd_ref.current);
-            midi_fwd_ref.current = null;
         }
         if (mic_source_ref.current) {
             mic_source_ref.current.mediaStream.getTracks().forEach((t) => t.stop());
