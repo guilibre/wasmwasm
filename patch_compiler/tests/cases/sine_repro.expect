@@ -1,0 +1,3 @@
+CONTAINS: (export "a$instantiate" (func $a$instantiate))
+CONTAINS: (export "main" (func $main))
+NOT_CONTAINS: unreachable

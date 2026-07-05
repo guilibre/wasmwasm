@@ -10,8 +10,15 @@ struct ModuleRoute {
     std::vector<std::string> inputs;
 };
 
+struct InstrumentGroup {
+    std::string id;
+    std::vector<std::string>
+        module_names; // this instrument's blocks, topo-ordered
+};
+
 struct RoutingGraph {
     std::vector<ModuleRoute> modules;
+    std::vector<InstrumentGroup> instruments;
     std::string dac_l_source;
     std::string dac_r_source;
     std::vector<std::string> out_sources;
@@ -19,9 +26,16 @@ struct RoutingGraph {
     int external_input_count = 0;
 };
 
-struct ParsedPatch {
+struct InstrumentSource {
+    std::string id;
     std::vector<std::pair<std::string, std::string>> module_sources;
     std::vector<std::pair<std::string, std::string>> connections;
+};
+
+struct ParsedPatch {
+    std::vector<InstrumentSource> instruments;
+    std::vector<std::pair<std::string, std::string>> global_module_sources;
+    std::vector<std::pair<std::string, std::string>> global_connections;
 };
 
 auto parse_patch_json(const std::string &json) -> ParsedPatch;

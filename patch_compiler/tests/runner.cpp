@@ -106,6 +106,33 @@ auto parse_expectations(const std::string &text) -> std::vector<Assertion> {
     return assertions;
 }
 
+auto finish_and_dump_wat(BinaryenCodeGen &codegen_impl) -> std::string {
+    auto *main_module = codegen_impl.raw_module();
+
+    if (!BinaryenModuleValidate(main_module)) {
+        std::cerr << "Invalid module before optimization.\n";
+        std::unique_ptr<char, decltype(&free)> wat{
+            BinaryenModuleAllocateAndWriteText(main_module), free};
+        std::cerr << wat.get() << "\n";
+        throw std::runtime_error("invalid module");
+    }
+
+    BinaryenSetOptimizeLevel(0);
+    BinaryenModuleOptimize(main_module);
+
+    if (!BinaryenModuleValidate(main_module)) {
+        std::cerr << "Invalid module after optimization.\n";
+        std::unique_ptr<char, decltype(&free)> wat{
+            BinaryenModuleAllocateAndWriteText(main_module), free};
+        std::cerr << wat.get() << "\n";
+        throw std::runtime_error("invalid module");
+    }
+
+    std::unique_ptr<char, decltype(&free)> wat{
+        BinaryenModuleAllocateAndWriteText(main_module), free};
+    return wat.get();
+}
+
 auto compile_module_to_wat(const std::string &source,
                            const std::string &math_wasm_path) -> std::string {
     auto math_bin = load_binary_file(math_wasm_path);
@@ -133,45 +160,89 @@ auto compile_module_to_wat(const std::string &source,
     codegen->add_module(ir);
 
     ParsedPatch patch;
-    patch.module_sources.emplace_back("test_module", source);
+    InstrumentSource instr;
+    instr.id = "test_module";
+    instr.module_sources.emplace_back("test_module", source);
+    instr.connections.emplace_back("out_0", "test_module_out_0");
+    patch.instruments.push_back(std::move(instr));
+    patch.global_connections.emplace_back("dac_l", "instr_test_module_out_0");
+    patch.global_connections.emplace_back("dac_r", "instr_test_module_out_0");
 
     std::vector<IRModule> compiled;
     compiled.push_back(std::move(ir));
     auto graph = build_routing_graph(patch, std::move(compiled));
     codegen->finalize(graph);
 
-    auto *main_module = codegen_impl->raw_module();
-    if (!BinaryenModuleValidate(main_module))
-        throw std::runtime_error("invalid module");
+    return finish_and_dump_wat(*codegen_impl);
+}
 
-    BinaryenSetOptimizeLevel(3);
-    BinaryenSetShrinkLevel(0);
-    BinaryenSetFastMath(true);
-    BinaryenSetLowMemoryUnused(true);
-    BinaryenSetAlwaysInlineMaxSize(100);
-    BinaryenSetFlexibleInlineMaxSize(250);
-    BinaryenSetOneCallerInlineMaxSize(250);
-    BinaryenModuleOptimize(main_module);
+auto compile_patch_to_wat(const std::string &patch_json,
+                          const std::string &math_wasm_path) -> std::string {
+    auto math_bin = load_binary_file(math_wasm_path);
+    BinaryenBackend backend(math_bin.data(), math_bin.size());
 
-    if (!BinaryenModuleValidate(main_module))
-        throw std::runtime_error("invalid module");
+    const BackendOptions opts{.sample_rate = 44100.0};
+    auto codegen = backend.create_codegen(opts);
+    auto *codegen_impl = dynamic_cast<BinaryenCodeGen *>(codegen.get());
+    if (codegen_impl == nullptr)
+        throw std::runtime_error("expected a BinaryenCodeGen");
 
-    std::unique_ptr<char, decltype(&free)> wat{
-        BinaryenModuleAllocateAndWriteText(main_module), free};
-    return wat.get();
+    auto patch = parse_patch_json(patch_json);
+
+    auto lower_and_add = [&](const std::string &name,
+                             const std::string &source) -> IRModule {
+        const Tokenizer tok(source);
+        Parser parser(tok);
+        auto ast = parser.parse_code();
+        if (!ast)
+            throw std::runtime_error("[" + name +
+                                     "] parse error: " + ast.error().msg);
+
+        auto env = make_builtin_env();
+        Substitution subst;
+        TypeGenerator gen;
+        pre_register_toplevel(*ast, env);
+        infer_expr(*ast, env, subst, gen);
+        finalize_types(*ast, subst);
+
+        auto ir = lower(*ast, name);
+        codegen_impl->add_module(ir);
+        return ir;
+    };
+
+    std::vector<IRModule> compiled;
+    for (const auto &instr : patch.instruments)
+        for (const auto &[name, source] : instr.module_sources)
+            compiled.push_back(lower_and_add(name, source));
+    for (const auto &[name, source] : patch.global_module_sources)
+        compiled.push_back(lower_and_add(name, source));
+
+    auto graph = build_routing_graph(patch, std::move(compiled));
+    codegen_impl->finalize(graph);
+
+    return finish_and_dump_wat(*codegen_impl);
 }
 
 } // namespace
 
 auto main(int argc, char **argv) -> int {
-    const std::string math_wasm_path = argc > 1 ? argv[1] : "/math.wasm";
+    bool is_patch = false;
+    std::string math_wasm_path = "/math.wasm";
+    for (int i = 1; i < argc; ++i) {
+        const std::string arg = argv[i];
+        if (arg == "--patch")
+            is_patch = true;
+        else
+            math_wasm_path = arg;
+    }
 
     try {
         const auto fixture = read_fixture_from_stdin();
         const auto assertions = parse_expectations(fixture.expect_text);
 
         const auto wat =
-            compile_module_to_wat(fixture.ww_source, math_wasm_path);
+            is_patch ? compile_patch_to_wat(fixture.ww_source, math_wasm_path)
+                     : compile_module_to_wat(fixture.ww_source, math_wasm_path);
 
         bool ok = true;
         for (const auto &a : assertions)

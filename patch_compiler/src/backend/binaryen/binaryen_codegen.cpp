@@ -1,7 +1,6 @@
 #include "binaryen_codegen.hpp"
 
 #include "binaryen_emit.hpp"
-#include <algorithm>
 #include <memory>
 #include <stdexcept>
 
@@ -18,27 +17,29 @@ BinaryenCodeGen::~BinaryenCodeGen() {
 }
 
 void BinaryenCodeGen::add_module(const IRModule &ir) {
-    for (const auto &name : ir.alloc_order) {
-        size_t n = 0;
-        if (auto it = std::ranges::find_if(
-                ir.delays,
-                [&](const auto &d) -> bool { return d.name == name; });
-            it != ir.delays.end()) {
-            n = it->size_elements;
-        } else if (auto it2 = std::ranges::find_if(
-                       ir.static_arrays_decl,
-                       [&](const auto &a) -> bool { return a.name == name; });
-                   it2 != ir.static_arrays_decl.end()) {
-            n = it2->size_elements;
-        }
-        buffer_bases_[ir.name + "$" + name] = next_offset_;
-        next_offset_ += static_cast<uint32_t>(n * 8);
-    }
-    emit_ir(ir, mod_, math_module_, sample_rate_, buffer_bases_);
+    auto layout = compute_instance_layout(ir, next_offset_);
+    emit_ir(ir, mod_, math_module_, sample_rate_, layout);
+    layouts_[ir.name] = std::move(layout);
+    modules_[ir.name] = ir;
 }
 
 void BinaryenCodeGen::finalize(const RoutingGraph &graph) {
-    emit_main_loop(graph, mod_);
+    for (const auto &group : graph.instruments) {
+        const auto shared_table = allocate_shared_slot_table(next_offset_);
+        for (const auto &name : group.module_names) {
+            auto &layout = layouts_.at(name);
+            layout.slots_table_base = shared_table.slots_table_base;
+            layout.slots_ids_base = shared_table.slots_ids_base;
+        }
+
+        std::vector<const IRModule *> members;
+        members.reserve(group.module_names.size());
+        for (const auto &name : group.module_names)
+            members.push_back(&modules_.at(name));
+        emit_instance_api_group(group.id, members, mod_, layouts_);
+    }
+
+    emit_main_loop(graph, mod_, layouts_);
 }
 
 auto BinaryenCodeGen::build() -> BackendArtifact {

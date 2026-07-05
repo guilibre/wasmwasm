@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import type { OrchestraState, PatchView } from '../patch/use_patch_store';
+import type { OrchestraState, PatchView } from '../patch/store/patch_types';
 import { GLOBAL_CACHE_KEY } from './constants';
 import './instrument.scss';
 
@@ -90,10 +90,10 @@ export function InstrumentTabs({
                             className="instrument__tab-name"
                             onDoubleClick={(e) => {
                                 e.stopPropagation();
-                                start_rename(instr.id, instr.name);
+                                start_rename(instr.id, instr.id);
                             }}
                         >
-                            {instr.name}
+                            {instr.id}
                         </span>
                     )}
                     <button

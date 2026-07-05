@@ -1,12 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import { ReactFlowProvider } from '@xyflow/react';
 import WasmWasm from '../audio/compiler';
-import type { CompiledPatch } from '../audio/compiler';
 import WWEditor, { type WWEditorHandle } from './ww_editor';
 import { Sidebar } from './sidebar';
 import { InstrumentTabs } from './instrument_tabs';
 import { PatchEditor } from '../patch/patch_editor';
-import { usePatchStore } from '../patch/use_patch_store';
+import { usePatchStore } from '../patch/store/use_patch_store';
 import { useAudioEngine } from './use_audio_engine';
 import { StatusBar } from './status_bar';
 import { useBlockModal } from './use_block_modal';
@@ -17,9 +16,6 @@ export default function App() {
     const [error, set_error] = useState<string | null>(null);
     const import_ref = useRef<HTMLInputElement>(null);
     const editor_ref = useRef<WWEditorHandle>(null);
-    const patch_cache_ref = useRef<Map<string, { json: string; compiled: CompiledPatch }>>(
-        new Map(),
-    );
 
     const store = usePatchStore();
     const {
@@ -43,11 +39,7 @@ export default function App() {
 
     useUndoRedoShortcuts(undo, redo);
 
-    const { analysers, is_playing, is_recording, cpu_load, play, stop, record } = useAudioEngine(
-        orchestra,
-        patch_cache_ref,
-        set_error,
-    );
+    const { analysers, is_playing, cpu_load, play, stop } = useAudioEngine(orchestra, set_error);
 
     const {
         name_draft,
@@ -71,7 +63,6 @@ export default function App() {
                 <button onClick={is_playing ? () => stop(0) : play}>
                     {is_playing ? 'Stop' : 'Play'}
                 </button>
-                <button onClick={record}>{is_recording ? 'Recording…' : 'Record'}</button>
                 <button onClick={export_patch}>Export</button>
                 <button onClick={() => import_ref.current?.click()}>Import</button>
                 <input

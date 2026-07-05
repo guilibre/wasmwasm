@@ -4,10 +4,7 @@
 #include "parser/parser.hpp"
 #include "parser/tokenizer.hpp"
 #include "resolve/resolver.hpp"
-
 #include <sstream>
-
-void test() {}
 
 auto compile_to_typescript(const std::string &source) -> std::string {
     const Tokenizer tokenizer(source);

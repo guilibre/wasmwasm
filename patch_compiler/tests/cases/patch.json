@@ -1,0 +1,33 @@
+{
+  "instruments": {
+    "a": {
+      "modules": {
+        "block_1783339264881": "OUT[0] <- 0\n"
+      },
+      "patch": {
+        "out_0": "block_1783339264881_out_0"
+      }
+    },
+    "b": {
+      "modules": {
+        "block_1783342119241": "OUT[0] <- 0.1\n",
+        "block_1783342229241": "OUT[0] <- -0.1\n"
+      },
+      "patch": {
+        "out_0": "block_1783342119241_out_0",
+        "out_1": "block_1783342229241_out_0"
+      }
+    }
+  },
+  "global": {
+    "modules": {
+      "block_1783342209344": "OUT[0] <- IN[0] + IN[1]"
+    },
+    "patch": {
+      "block_1783342209344_in_0": "b_out_0",
+      "block_1783342209344_in_1": "b_out_1",
+      "dac_l": "a_out_0",
+      "dac_r": "block_1783342209344_out_0"
+    }
+  }
+}

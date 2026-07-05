@@ -45,7 +45,14 @@ auto compile_to_binary(float sample_rate, const std::string &patch_json,
     auto codegen = backend->create_codegen(opts);
 
     std::vector<IRModule> compiled;
-    for (const auto &[name, src] : patch.module_sources) {
+    for (const auto &instr : patch.instruments) {
+        for (const auto &[name, src] : instr.module_sources) {
+            auto ir = lower_module(name, src);
+            codegen->add_module(ir);
+            compiled.push_back(std::move(ir));
+        }
+    }
+    for (const auto &[name, src] : patch.global_module_sources) {
         auto ir = lower_module(name, src);
         codegen->add_module(ir);
         compiled.push_back(std::move(ir));

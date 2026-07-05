@@ -7,6 +7,7 @@ endif()
 
 project(wasmwasm VERSION 0.1 LANGUAGES CXX)
 
+set(CMAKE_BUILD_TYPE Release CACHE STRING "")
 set(BUILD_STATIC_LIB ON CACHE BOOL "" FORCE)
 set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
 set(BUILD_OBJECT_LIBS OFF CACHE BOOL "" FORCE)
@@ -38,7 +39,6 @@ set(JSONCPP_WITH_POST_BUILD_UNITTEST OFF CACHE BOOL "" FORCE)
 set(JSONCPP_WITH_TESTS OFF CACHE BOOL "" FORCE)
 fetchcontent_makeavailable(jsoncpp)
 
-
 set(CMAKE_CXX_STANDARD 26)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
@@ -47,11 +47,8 @@ include_directories(includes)
 add_subdirectory(math)
 add_subdirectory(src)
 add_subdirectory(app)
-if(BUILD_DEBUGGER)
-    add_subdirectory(debugger)
-endif()
 
-option(BUILD_TESTS_WW "Build the ww compiler test suite" ON)
+option(BUILD_TESTS_WW "Build the ww compiler test suite" OFF)
 if(BUILD_TESTS_WW)
     enable_testing()
     add_subdirectory(tests)

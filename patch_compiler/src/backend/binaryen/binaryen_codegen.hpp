@@ -2,6 +2,7 @@
 
 #include "backend/backend.hpp"
 #include "binaryen-c.h"
+#include "instance_layout.hpp"
 #include <cstdint>
 #include <string>
 #include <unordered_map>
@@ -29,5 +30,6 @@ class BinaryenCodeGen : public CodeGen {
     BinaryenModuleRef math_module_;
     double sample_rate_;
     uint32_t next_offset_ = wasm_reserved_io_bytes;
-    std::unordered_map<std::string, uint32_t> buffer_bases_;
+    std::unordered_map<std::string, InstanceLayout> layouts_;
+    std::unordered_map<std::string, IRModule> modules_;
 };

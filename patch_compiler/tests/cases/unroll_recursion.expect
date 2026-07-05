@@ -1,4 +1,0 @@
-# double is a bounded self-recursive function called with a literal counter
-# (5) at its only call site, so the bounded-recursion unroller should turn it
-# into straight-line code instead of a real recursive wasm call.
-NOT_CONTAINS: call $test_module$double

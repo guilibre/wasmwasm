@@ -1,8 +1,8 @@
 import { useEffect } from 'react';
 import { Handle, Position, useUpdateNodeInternals } from '@xyflow/react';
 import type { NodeProps } from '@xyflow/react';
-import type { BlockData } from './use_patch_store';
-import { handle_offset } from './handle_layout';
+import type { BlockData } from '../store/patch_types';
+import { handle_offset } from '../store/elk_auto_layout';
 
 export function BlockNode({ id, data, selected }: NodeProps) {
     const { name, num_inputs, num_outputs, params } = data as unknown as BlockData;

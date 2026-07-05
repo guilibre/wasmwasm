@@ -10,13 +10,12 @@ import type {
     DefaultEdgeOptions,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { BlockNode } from './block_node';
-import { CaptureNode } from './capture_node';
-import { DacNode } from './dac_node';
-import { OutNode } from './out_node';
-import { InNode } from './in_node';
-import { SelfLoopEdge } from './self_loop_edge';
-import type { usePatchStore } from './use_patch_store';
+import { BlockNode } from './nodes/block_node';
+import { DacNode } from './nodes/dac_node';
+import { OutNode } from './nodes/out_node';
+import { InNode } from './nodes/in_node';
+import { SelfLoopEdge } from './nodes/self_loop_edge';
+import type { usePatchStore } from './store/use_patch_store';
 
 const EDGE_TYPES = {
     self_loop: SelfLoopEdge,
@@ -24,7 +23,6 @@ const EDGE_TYPES = {
 
 const NODE_TYPES = {
     block: BlockNode,
-    capture: CaptureNode,
     dac: DacNode,
     out: OutNode,
     in: InNode,

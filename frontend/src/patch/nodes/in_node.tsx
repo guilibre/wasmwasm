@@ -1,7 +1,7 @@
 import { useEffect } from 'react';
 import { Handle, Position, useUpdateNodeInternals } from '@xyflow/react';
 import type { NodeProps } from '@xyflow/react';
-import { handle_offset } from './handle_layout';
+import { handle_offset } from '../store/elk_auto_layout';
 
 export function InNode({ id, data, selected }: NodeProps) {
     const { name, num_channels } = data as unknown as { name: string; num_channels: number };

@@ -1,0 +1,10 @@
+CONTAINS: (export "a$instantiate" (func $a$instantiate))
+CONTAINS: (export "a$destroy" (func $a$destroy))
+CONTAINS: (export "a$set_param" (func $a$set_param))
+CONTAINS: (export "b$instantiate" (func $b$instantiate))
+CONTAINS: (export "b$destroy" (func $b$destroy))
+CONTAINS: (export "b$set_param" (func $b$set_param))
+CONTAINS: (export "main" (func $main))
+CONTAINS: (export "init" (func $init))
+NOT_CONTAINS: (export "block_"
+NOT_CONTAINS: unreachable
