@@ -1,0 +1,6 @@
+var1 = {
+  dur: 7
+}
+var5 = var1
+var6 = var1
+play var5 | var6

@@ -7,7 +7,7 @@ namespace {
 
 auto compile_score_js(const std::string &source) -> emscripten::val {
     try {
-        return emscripten::val(compile_to_typescript(source));
+        return emscripten::val(compile_to_json(source));
     } catch (const std::exception &e) {
         emscripten::val::global("Error")
             .new_(emscripten::val(e.what()))

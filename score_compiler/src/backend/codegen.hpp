@@ -1,9 +1,6 @@
 #pragma once
 
-#include "ast/ast.hpp"
-#include <ostream>
+#include "resolve/resolver.hpp"
+#include <string>
 
-class CodeGenerator {
-  public:
-    void generate(const Program &program, std::ostream &out);
-};
+[[nodiscard]] auto graph_to_json(const ExpandedGraph &graph) -> std::string;

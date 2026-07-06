@@ -21,5 +21,12 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 include_directories(includes)
 
+option(BUILD_TESTS_SCORE "Build score_compiler native tests" OFF)
+
 add_subdirectory(src)
 add_subdirectory(app)
+
+if(BUILD_TESTS_SCORE)
+    enable_testing()
+    add_subdirectory(tests)
+endif()

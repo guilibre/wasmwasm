@@ -24,14 +24,14 @@ try {
     #     cmake --build build
     # }
 
-    # Set-Location -Path "..\score_compiler"
-    # emcmake cmake -S . -B build
-    # if ($Jobs -gt 0) {
-    #     cmake --build build -- "-j$Jobs"
-    # }
-    # else {
-    #     cmake --build build
-    # }
+    Set-Location -Path "..\score_compiler"
+    emcmake cmake -S . -B build
+    if ($Jobs -gt 0) {
+        cmake --build build -- "-j$Jobs"
+    }
+    else {
+        cmake --build build
+    }
 
     Set-Location -Path "..\frontend"
     Copy-Item "..\patch_compiler\build\math\math.wasm" "public\"
@@ -42,8 +42,8 @@ try {
     # Copy-Item "..\conductor_compiler\build\app\conductorwasm.wasm" "src\conductorwasm\"
     # Copy-Item "..\conductor_compiler\build\app\conductorwasm.js" "src\conductorwasm\"
 
-    # Copy-Item "..\score_compiler\build\app\scorewasm.wasm" "src\scorewasm\"
-    # Copy-Item "..\score_compiler\build\app\scorewasm.js" "src\scorewasm\"
+    Copy-Item "..\score_compiler\build\app\scorewasm.wasm" "src\scorewasm\"
+    Copy-Item "..\score_compiler\build\app\scorewasm.js" "src\scorewasm\"
 
     Write-Host "Build complete and files copied."
     Set-Location -Path "..\"

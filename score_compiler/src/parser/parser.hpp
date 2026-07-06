@@ -19,11 +19,21 @@ class Parser {
     Token current;
 
     void advance();
-    [[nodiscard]] auto match(TokenKind kind) const -> bool;
+    [[nodiscard]] auto match(TokenKind kind) -> bool;
     auto expect(TokenKind kind, const std::string &what) -> Token;
     void skip_newlines();
     void end_statement();
     [[nodiscard]] auto starts_term() const -> bool;
+
+    [[nodiscard]] auto parse_expr() -> std::unique_ptr<Expr>;
+    [[nodiscard]] auto parse_arith_term() -> std::unique_ptr<Expr>;
+    [[nodiscard]] auto parse_factor() -> std::unique_ptr<Expr>;
+    [[nodiscard]] auto parse_block() -> Block;
+    [[nodiscard]] auto parse_comp_expr() -> CompExpr;
+    [[nodiscard]] auto parse_comp_term() -> Term;
+    [[nodiscard]] auto parse_fork_group() -> Term;
+    [[nodiscard]] auto parse_var_decl() -> VarDecl;
+    [[nodiscard]] auto parse_play_stmt() -> PlayStmt;
 
   public:
     explicit Parser(Tokenizer tokenizer);

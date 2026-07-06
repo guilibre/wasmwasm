@@ -4,7 +4,25 @@
 #include <string>
 #include <string_view>
 
-enum class TokenKind : uint8_t {};
+enum class TokenKind : uint8_t {
+    Ident,
+    Number,
+    Equals,
+    Colon,
+    Plus,
+    Minus,
+    Star,
+    Slash,
+    LBrace,
+    RBrace,
+    LParen,
+    RParen,
+    Pipe,
+    KwPlay,
+    Newline,
+    Eof,
+    Invalid,
+};
 
 struct Token {
     TokenKind kind;
@@ -18,15 +36,17 @@ class Tokenizer {
     std::string_view source;
     size_t start = 0;
     size_t current = 0;
-    size_t line = 0;
-    size_t column = 0;
+    size_t line = 1;
+    size_t column = 1;
+    bool done = false;
 
     void skip_whitespace();
     auto advance() -> char;
     [[nodiscard]] auto peek_current() const -> char;
+    [[nodiscard]] auto peek_next() const -> char;
 
     auto make_token(TokenKind kind) -> Token;
-    auto error_token(const std::string &msg) -> Token;
+    [[nodiscard]] auto error_token(const std::string &msg) const -> Token;
 
     auto scan_identifier() -> Token;
     auto scan_number() -> Token;
