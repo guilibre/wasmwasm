@@ -37,13 +37,13 @@ auto id_addr(BinaryenModuleRef mod, const InstanceLayout &layout,
 auto used_at(BinaryenModuleRef mod, const InstanceLayout &layout,
              BinaryenExpressionRef slot_index) -> BinaryenExpressionRef {
     return BinaryenLoad(mod, 4, false, 0, 4, BinaryenTypeInt32(),
-                        used_addr(mod, layout, slot_index), "memory");
+                        used_addr(mod, layout, slot_index), "0");
 }
 
 auto id_at(BinaryenModuleRef mod, const InstanceLayout &layout,
            BinaryenExpressionRef slot_index) -> BinaryenExpressionRef {
     return BinaryenLoad(mod, 4, false, 0, 4, BinaryenTypeInt32(),
-                        id_addr(mod, layout, slot_index), "memory");
+                        id_addr(mod, layout, slot_index), "0");
 }
 
 auto instance_base_of_slot(BinaryenModuleRef mod, const InstanceLayout &layout,
@@ -86,13 +86,14 @@ auto emit_find_slot(BinaryenModuleRef mod,
         BinaryenConst(mod, BinaryenLiteralInt32(static_cast<int32_t>(
                                max_instances_per_module))));
 
-    std::array<BinaryenExpressionRef, 2> loop_body_stmts = {
-        inc, BinaryenBreak(mod, loop_label.c_str(), keep_going, nullptr)};
+    std::array<BinaryenExpressionRef, 3> loop_body_stmts = {
+        br_exit_found, inc,
+        BinaryenBreak(mod, loop_label.c_str(), keep_going, nullptr)};
     auto *loop_body = BinaryenBlock(mod, nullptr, loop_body_stmts.data(),
                                     loop_body_stmts.size(), BinaryenTypeNone());
     auto *loop = BinaryenLoop(mod, loop_label.c_str(), loop_body);
 
-    std::array<BinaryenExpressionRef, 2> block_stmts = {br_exit_found, loop};
+    std::array<BinaryenExpressionRef, 1> block_stmts = {loop};
     auto *block = BinaryenBlock(mod, block_label.c_str(), block_stmts.data(),
                                 block_stmts.size(), BinaryenTypeNone());
 
@@ -126,16 +127,22 @@ auto matches_id(BinaryenModuleRef mod, const InstanceLayout &layout,
 
 void append_init_member(const IRModule &ir, BinaryenModuleRef mod,
                         const InstanceLayout &layout, BinaryenIndex slot_local,
+                        BinaryenIndex instance_base_local,
                         std::vector<BinaryenExpressionRef> &stmts) {
     auto *instance_base = instance_base_of_slot(
         mod, layout, BinaryenLocalGet(mod, slot_local, BinaryenTypeInt32()));
-    std::array<BinaryenExpressionRef, 1> init_args = {instance_base};
+    stmts.push_back(BinaryenLocalSet(mod, instance_base_local, instance_base));
+    std::array<BinaryenExpressionRef, 1> init_args = {
+        BinaryenLocalGet(mod, instance_base_local, BinaryenTypeInt32())};
     const auto init_name = pfx(ir, ir.init_fn);
     stmts.push_back(BinaryenCall(mod, init_name.c_str(), init_args.data(), 1,
                                  BinaryenTypeNone()));
     if (!ir.static_init_fn.empty()) {
+        std::array<BinaryenExpressionRef, 1> static_init_args = {
+            BinaryenLocalGet(mod, instance_base_local, BinaryenTypeInt32())};
         const auto sname = pfx(ir, ir.static_init_fn);
-        stmts.push_back(BinaryenCall(mod, sname.c_str(), init_args.data(), 1,
+        stmts.push_back(BinaryenCall(mod, sname.c_str(),
+                                     static_init_args.data(), 1,
                                      BinaryenTypeNone()));
     }
 }
@@ -155,7 +162,7 @@ void append_set_param_member(BinaryenModuleRef mod,
     stmts.push_back(
         BinaryenStore(mod, 8, 0, 8, addr,
                       BinaryenLocalGet(mod, value_param, BinaryenTypeFloat64()),
-                      BinaryenTypeFloat64(), "memory"));
+                      BinaryenTypeFloat64(), "0"));
 }
 
 } // namespace
@@ -201,17 +208,18 @@ void emit_instance_api_group(
             used_addr(mod, shared_layout,
                       BinaryenLocalGet(mod, slot_local, BinaryenTypeInt32())),
             BinaryenConst(mod, BinaryenLiteralInt32(1)), BinaryenTypeInt32(),
-            "memory"));
+            "0"));
         stmts.push_back(BinaryenStore(
             mod, 4, 0, 4,
             id_addr(mod, shared_layout,
                     BinaryenLocalGet(mod, slot_local, BinaryenTypeInt32())),
             BinaryenLocalGet(mod, id_param, BinaryenTypeInt32()),
-            BinaryenTypeInt32(), "memory"));
+            BinaryenTypeInt32(), "0"));
 
+        constexpr BinaryenIndex instance_base_local = 2;
         for (const auto *ir : members)
             append_init_member(*ir, mod, layouts.at(ir->name), slot_local,
-                               stmts);
+                               instance_base_local, stmts);
 
         stmts.push_back(
             BinaryenReturn(mod, BinaryenConst(mod, BinaryenLiteralInt32(0))));
@@ -220,7 +228,8 @@ void emit_instance_api_group(
                                    static_cast<BinaryenIndex>(stmts.size()),
                                    BinaryenTypeInt32());
         std::array<BinaryenType, 1> param_types = {BinaryenTypeInt32()};
-        std::array<BinaryenType, 1> var_types = {BinaryenTypeInt32()};
+        std::array<BinaryenType, 2> var_types = {BinaryenTypeInt32(),
+                                                 BinaryenTypeInt32()};
         const auto fn_name = instrument_id + "$instantiate";
         BinaryenAddFunction(
             mod, fn_name.c_str(),
@@ -251,7 +260,7 @@ void emit_instance_api_group(
             used_addr(mod, shared_layout,
                       BinaryenLocalGet(mod, slot_local, BinaryenTypeInt32())),
             BinaryenConst(mod, BinaryenLiteralInt32(0)), BinaryenTypeInt32(),
-            "memory"));
+            "0"));
 
         stmts.push_back(
             BinaryenReturn(mod, BinaryenConst(mod, BinaryenLiteralInt32(0))));

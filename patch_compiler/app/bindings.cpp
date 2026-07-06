@@ -11,11 +11,15 @@ auto run_compiler_js(float sample_rate, const std::string &patch_json,
         emscripten::convertJSArrayToNumberVector<uint8_t>(math_bin);
 
     try {
-        auto binary = compile_to_binary(
+        auto artifact = compile_to_binary(
             sample_rate, patch_json, reinterpret_cast<char *>(math_data.data()),
             math_data.size());
-        auto view = emscripten::typed_memory_view(binary.size(), binary.data());
-        return emscripten::val::global("Uint8Array").new_(view);
+        auto view = emscripten::typed_memory_view(artifact.bytes.size(),
+                                                  artifact.bytes.data());
+        auto result = emscripten::val::object();
+        result.set("bytes", emscripten::val::global("Uint8Array").new_(view));
+        result.set("memory_bytes", artifact.memory_bytes);
+        return result;
     } catch (const std::exception &e) {
         emscripten::val::global("Error")
             .new_(emscripten::val(e.what()))

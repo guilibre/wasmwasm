@@ -35,8 +35,7 @@ auto lower_module(const std::string &name, const std::string &src) -> IRModule {
 } // namespace
 
 auto compile_to_binary(float sample_rate, const std::string &patch_json,
-                       char *math_bin, size_t math_bin_size)
-    -> std::vector<char> {
+                       char *math_bin, size_t math_bin_size) -> CompileResult {
     auto backend = std::make_unique<BinaryenBackend>(math_bin, math_bin_size);
 
     auto patch = parse_patch_json(patch_json);
@@ -62,5 +61,6 @@ auto compile_to_binary(float sample_rate, const std::string &patch_json,
     codegen->finalize(graph);
 
     auto artifact = codegen->build();
-    return std::move(artifact.bytes);
+    return CompileResult{.bytes = std::move(artifact.bytes),
+                         .memory_bytes = artifact.memory_bytes};
 }

@@ -2,12 +2,14 @@
 
 #include "ir/ir.hpp"
 #include "routing/routing.hpp"
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
 
 struct BackendArtifact {
     std::vector<char> bytes;
+    uint32_t memory_bytes = 0;
 };
 
 struct BackendOptions {

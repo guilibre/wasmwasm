@@ -1,67 +1,8 @@
 import Module, { type EmscriptenModule } from '../wasmwasm/wasmwasm';
 
 export interface CompiledPatch {
-    wasm: Uint8Array;
     wasm_module: WebAssembly.Module;
-    param_names: string[];
-    param_export_names: string[];
-    defaults_by_export: Record<string, number>;
-    num_out_channels: number;
-}
-
-function split_trailing_index(src: string): [string, number] | null {
-    const under = src.lastIndexOf('_');
-    if (under === -1 || under + 1 >= src.length) return null;
-    const idx_part = src.slice(under + 1);
-    if (!/^\d+$/.test(idx_part)) return null;
-    return [src.slice(0, under), parseInt(idx_part, 10)];
-}
-
-interface OrchestraJson {
-    instruments: Record<string, { modules: Record<string, string>; patch: Record<string, string> }>;
-    global: { modules: Record<string, string>; patch: Record<string, string> };
-}
-
-function derive_channel_info(parsed: OrchestraJson): {
-    num_out_channels: number;
-} {
-    const mod_names = new Set([
-        ...Object.keys(parsed.global.modules),
-        ...Object.keys(parsed.instruments),
-    ]);
-
-    const is_module_output = (src: string): boolean => {
-        const under = src.lastIndexOf('_');
-        if (under < 4) return false;
-        const mod = src.slice(0, under - 4);
-        const mid = src.slice(under - 4, under);
-        return mid === '_out' && mod_names.has(mod);
-    };
-
-    let max_out_idx = -1;
-    const ext_channel_counts = new Map<string, number>();
-
-    for (const [sink, src] of Object.entries(parsed.global.patch)) {
-        if (sink.startsWith('out_')) {
-            const idx = parseInt(sink.slice(4), 10);
-            if (!isNaN(idx)) max_out_idx = Math.max(max_out_idx, idx);
-        }
-
-        if (!is_module_output(src)) {
-            const split = split_trailing_index(src);
-            if (split) {
-                const [prefix, idx] = split;
-                ext_channel_counts.set(
-                    prefix,
-                    Math.max(ext_channel_counts.get(prefix) ?? 0, idx + 1),
-                );
-            }
-        }
-    }
-
-    return {
-        num_out_channels: max_out_idx >= 0 ? max_out_idx + 1 : 2,
-    };
+    memory_bytes: number;
 }
 
 export default class WasmWasm {
@@ -101,51 +42,16 @@ export default class WasmWasm {
     static async compile_patch(sample_rate: number, patch_json: string): Promise<CompiledPatch> {
         const mod = await this.getOrInitModule();
         const math_bin = await this.getMathBin();
-        let wasm: Uint8Array;
         try {
-            wasm = mod.run_compiler(sample_rate, patch_json, math_bin);
+            const { bytes, memory_bytes } = mod.run_compiler(sample_rate, patch_json, math_bin);
+            const wasm_module = await WebAssembly.compile(bytes as Uint8Array<ArrayBuffer>);
+            return {
+                wasm_module,
+                memory_bytes,
+            };
         } catch (err) {
             console.error('error on compilation.', err);
             throw err;
         }
-
-        const wasm_module = await WebAssembly.compile(wasm as Uint8Array<ArrayBuffer>);
-        const exports = WebAssembly.Module.exports(wasm_module);
-
-        const param_exports = exports.filter(
-            (e) => e.kind === 'global' && e.name.includes('$param$'),
-        );
-
-        const param_export_names = param_exports.map((e) => e.name);
-        const param_names = param_exports.map((e) => {
-            const idx = e.name.indexOf('$param$');
-            return e.name.slice(idx + '$param$'.length);
-        });
-
-        const parsed = JSON.parse(patch_json) as OrchestraJson;
-        const defaults_by_export: Record<string, number> = {};
-        for (const { modules } of Object.values(parsed.instruments)) {
-            for (const [mod_name, code] of Object.entries(modules)) {
-                for (const m of code.matchAll(/^\s*param\s+(\w+)\s*=\s*([\d.eE+-]+)/gm)) {
-                    defaults_by_export[`${mod_name}$param$${m[1]}`] = parseFloat(m[2]);
-                }
-            }
-        }
-        for (const [mod_name, code] of Object.entries(parsed.global.modules)) {
-            for (const m of code.matchAll(/^\s*param\s+(\w+)\s*=\s*([\d.eE+-]+)/gm)) {
-                defaults_by_export[`${mod_name}$param$${m[1]}`] = parseFloat(m[2]);
-            }
-        }
-
-        const { num_out_channels } = derive_channel_info(parsed);
-
-        return {
-            wasm,
-            wasm_module,
-            param_names,
-            param_export_names,
-            defaults_by_export,
-            num_out_channels,
-        };
     }
 }

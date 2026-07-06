@@ -294,7 +294,7 @@ auto emit_stmts(FnCtx &ctx, const std::vector<IRInstr> &body)
                         BinaryenLoad(
                             ctx.mod, 8, false, 0, 8, BinaryenTypeFloat64(),
                             field_addr(ctx.mod, static_cast<uint32_t>(off)),
-                            "memory")));
+                            "0")));
                 }
                 if constexpr (std::is_same_v<T, IROutputWrite>) {
                     const auto off =
@@ -302,7 +302,7 @@ auto emit_stmts(FnCtx &ctx, const std::vector<IRInstr> &body)
                     stmts.push_back(BinaryenStore(
                         ctx.mod, 8, 0, 8,
                         field_addr(ctx.mod, static_cast<uint32_t>(off)),
-                        ctx.get(i.value), BinaryenTypeFloat64(), "memory"));
+                        ctx.get(i.value), BinaryenTypeFloat64(), "0"));
                 }
                 if constexpr (std::is_same_v<T, IRDelayRead>) {
                     const auto base = ctx.resolve_mem(i.delay);
@@ -310,14 +310,14 @@ auto emit_stmts(FnCtx &ctx, const std::vector<IRInstr> &body)
                         ctx.mod, 4, false, 0, 4, BinaryenTypeInt32(),
                         field_addr(ctx.mod,
                                    ctx.layout->delay_ptr_offset.at(i.delay)),
-                        "memory");
+                        "0");
                     stmts.push_back(ctx.set(
                         i.result,
                         BinaryenLoad(ctx.mod, 8, false, 0, 8,
                                      BinaryenTypeFloat64(),
                                      BinaryenBinary(ctx.mod, BinaryenAddInt32(),
                                                     base, ptr),
-                                     "memory")));
+                                     "0")));
                 }
                 if constexpr (std::is_same_v<T, IRDelayReadDelayed>) {
                     const auto delay_ptr_off =
@@ -344,8 +344,7 @@ auto emit_stmts(FnCtx &ctx, const std::vector<IRInstr> &body)
                                           delay_f64()));
                         auto *k = BinaryenBinary(
                             mod, BinaryenAddInt32(), i_int,
-                            BinaryenConst(mod, BinaryenLiteralInt32(size_bytes -
-                                                                    k_offset)));
+                            BinaryenConst(mod, BinaryenLiteralInt32(k_offset)));
                         auto *k_bytes = BinaryenBinary(
                             mod, BinaryenMulInt32(), k,
                             BinaryenConst(mod, BinaryenLiteralInt32(8)));
@@ -355,7 +354,7 @@ auto emit_stmts(FnCtx &ctx, const std::vector<IRInstr> &body)
                                           BinaryenLiteralInt32(size_bytes)));
                         auto *ptr_val = BinaryenLoad(
                             mod, 4, false, 0, 4, BinaryenTypeInt32(),
-                            field_addr(mod, delay_ptr_off), "memory");
+                            field_addr(mod, delay_ptr_off), "0");
                         auto *sub = BinaryenBinary(mod, BinaryenAddInt32(),
                                                    ptr_val, mod_k);
                         auto *wrapped = BinaryenBinary(
@@ -370,7 +369,7 @@ auto emit_stmts(FnCtx &ctx, const std::vector<IRInstr> &body)
                             mod, 8, false, 0, 8, BinaryenTypeFloat64(),
                             BinaryenBinary(mod, BinaryenAddInt32(),
                                            ctx.resolve_mem(i.delay), wrapped),
-                            "memory");
+                            "0");
                     };
 
                     const auto p0_name = "$p0$" + i.result;
@@ -464,8 +463,7 @@ auto emit_stmts(FnCtx &ctx, const std::vector<IRInstr> &body)
                     stmts.push_back(BinaryenLocalSet(
                         mod, ctx.idx.at(ptr_var),
                         BinaryenLoad(mod, 4, false, 0, 4, BinaryenTypeInt32(),
-                                     field_addr(mod, delay_ptr_off),
-                                     "memory")));
+                                     field_addr(mod, delay_ptr_off), "0")));
                     auto *ptr = [&]() -> BinaryenExpressionRef {
                         return BinaryenLocalGet(mod, ctx.idx.at(ptr_var),
                                                 BinaryenTypeInt32());
@@ -474,7 +472,7 @@ auto emit_stmts(FnCtx &ctx, const std::vector<IRInstr> &body)
                         mod, 8, 0, 8,
                         BinaryenBinary(mod, BinaryenAddInt32(),
                                        ctx.resolve_mem(i.delay), ptr),
-                        ctx.get(i.value), BinaryenTypeFloat64(), "memory"));
+                        ctx.get(i.value), BinaryenTypeFloat64(), "0"));
                     auto *tmp = BinaryenBinary(
                         mod, BinaryenAddInt32(), ptr,
                         BinaryenConst(mod, BinaryenLiteralInt32(8)));
@@ -486,7 +484,7 @@ auto emit_stmts(FnCtx &ctx, const std::vector<IRInstr> &body)
                         tmp);
                     stmts.push_back(BinaryenStore(
                         mod, 4, 0, 4, field_addr(mod, delay_ptr_off), new_ptr,
-                        BinaryenTypeInt32(), "memory"));
+                        BinaryenTypeInt32(), "0"));
                 }
                 if constexpr (std::is_same_v<T, IRDelayWriteQuiet>) {
                     const auto delay_ptr_off =
@@ -500,7 +498,7 @@ auto emit_stmts(FnCtx &ctx, const std::vector<IRInstr> &body)
                     auto *mod = ctx.mod;
                     auto *ptr =
                         BinaryenLoad(mod, 4, false, 0, 4, BinaryenTypeInt32(),
-                                     field_addr(mod, delay_ptr_off), "memory");
+                                     field_addr(mod, delay_ptr_off), "0");
                     BinaryenExpressionRef write_addr = nullptr;
                     if (i.delay_ref) {
                         auto *delay_f64 =
@@ -534,7 +532,7 @@ auto emit_stmts(FnCtx &ctx, const std::vector<IRInstr> &body)
                         mod, 8, 0, 8,
                         BinaryenBinary(mod, BinaryenAddInt32(),
                                        ctx.resolve_mem(i.delay), write_addr),
-                        ctx.get(i.value), BinaryenTypeFloat64(), "memory"));
+                        ctx.get(i.value), BinaryenTypeFloat64(), "0"));
                 }
                 if constexpr (std::is_same_v<T, IRGlobalRead>) {
                     auto *g = BinaryenGlobalGet(ctx.mod, i.name.c_str(),
@@ -574,31 +572,29 @@ auto emit_stmts(FnCtx &ctx, const std::vector<IRInstr> &body)
                 }
                 if constexpr (std::is_same_v<T, IRStaticRead>) {
                     const auto off = ctx.layout->static_var_offset.at(i.name);
-                    stmts.push_back(
-                        ctx.set(i.result, BinaryenLoad(ctx.mod, 8, false, 0, 8,
-                                                       BinaryenTypeFloat64(),
-                                                       field_addr(ctx.mod, off),
-                                                       "memory")));
+                    stmts.push_back(ctx.set(
+                        i.result, BinaryenLoad(ctx.mod, 8, false, 0, 8,
+                                               BinaryenTypeFloat64(),
+                                               field_addr(ctx.mod, off), "0")));
                 }
                 if constexpr (std::is_same_v<T, IRStaticWrite>) {
                     const auto off = ctx.layout->static_var_offset.at(i.name);
                     stmts.push_back(BinaryenStore(
                         ctx.mod, 8, 0, 8, field_addr(ctx.mod, off),
-                        ctx.get(i.value), BinaryenTypeFloat64(), "memory"));
+                        ctx.get(i.value), BinaryenTypeFloat64(), "0"));
                 }
                 if constexpr (std::is_same_v<T, IRParamRead>) {
                     const auto off = ctx.layout->param_offset.at(i.name);
-                    stmts.push_back(
-                        ctx.set(i.result, BinaryenLoad(ctx.mod, 8, false, 0, 8,
-                                                       BinaryenTypeFloat64(),
-                                                       field_addr(ctx.mod, off),
-                                                       "memory")));
+                    stmts.push_back(ctx.set(
+                        i.result, BinaryenLoad(ctx.mod, 8, false, 0, 8,
+                                               BinaryenTypeFloat64(),
+                                               field_addr(ctx.mod, off), "0")));
                 }
                 if constexpr (std::is_same_v<T, IRParamWrite>) {
                     const auto off = ctx.layout->param_offset.at(i.name);
                     stmts.push_back(BinaryenStore(
                         ctx.mod, 8, 0, 8, field_addr(ctx.mod, off),
-                        ctx.get(i.value), BinaryenTypeFloat64(), "memory"));
+                        ctx.get(i.value), BinaryenTypeFloat64(), "0"));
                 }
                 if constexpr (std::is_same_v<T, IRReturn>) {
                     if (i.value) {
@@ -620,13 +616,13 @@ auto emit_stmts(FnCtx &ctx, const std::vector<IRInstr> &body)
                         i.result,
                         BinaryenLoad(ctx.mod, 8, false, i.ref.byte_offset, 8,
                                      BinaryenTypeFloat64(),
-                                     ctx.resolve_mem(i.ref.buffer), "memory")));
+                                     ctx.resolve_mem(i.ref.buffer), "0")));
                 }
                 if constexpr (std::is_same_v<T, IRMemWrite>) {
                     stmts.push_back(BinaryenStore(
                         ctx.mod, 8, i.ref.byte_offset, 8,
                         ctx.resolve_mem(i.ref.buffer), ctx.get(i.value),
-                        BinaryenTypeFloat64(), "memory"));
+                        BinaryenTypeFloat64(), "0"));
                 }
             },
             instr);
@@ -699,7 +695,7 @@ void emit_init_delays(const IRModule &ir, BinaryenModuleRef mod,
                 mod, BinaryenAddInt32(),
                 field_addr(mod, layout.delay_buffer_offset.at(delay.name)),
                 byte_offset),
-            init_val, BinaryenTypeFloat64(), "memory");
+            init_val, BinaryenTypeFloat64(), "0");
 
         auto *inc = BinaryenLocalSet(
             mod, counter_local,
@@ -729,21 +725,21 @@ void emit_init_delays(const IRModule &ir, BinaryenModuleRef mod,
             mod, 4, 0, 4,
             field_addr(mod, layout.delay_ptr_offset.at(delay.name)),
             BinaryenConst(mod, BinaryenLiteralInt32(0)), BinaryenTypeInt32(),
-            "memory"));
+            "0"));
     }
 
     for (const auto &[pname, pdefault] : ir.params) {
         all_loops.push_back(BinaryenStore(
             mod, 8, 0, 8, field_addr(mod, layout.param_offset.at(pname)),
             BinaryenConst(mod, BinaryenLiteralFloat64(pdefault)),
-            BinaryenTypeFloat64(), "memory"));
+            BinaryenTypeFloat64(), "0"));
     }
 
     for (const auto &sv : ir.static_vars) {
         all_loops.push_back(BinaryenStore(
             mod, 8, 0, 8, field_addr(mod, layout.static_var_offset.at(sv.name)),
             BinaryenConst(mod, BinaryenLiteralFloat64(0.0)),
-            BinaryenTypeFloat64(), "memory"));
+            BinaryenTypeFloat64(), "0"));
     }
 
     for (size_t i = 0; i < ir.num_inputs; ++i)
@@ -752,14 +748,14 @@ void emit_init_delays(const IRModule &ir, BinaryenModuleRef mod,
             field_addr(mod,
                        static_cast<uint32_t>(layout.in_ports_offset + (i * 8))),
             BinaryenConst(mod, BinaryenLiteralFloat64(0.0)),
-            BinaryenTypeFloat64(), "memory"));
+            BinaryenTypeFloat64(), "0"));
     for (size_t i = 0; i < ir.num_outputs; ++i)
         all_loops.push_back(BinaryenStore(
             mod, 8, 0, 8,
             field_addr(
                 mod, static_cast<uint32_t>(layout.out_ports_offset + (i * 8))),
             BinaryenConst(mod, BinaryenLiteralFloat64(0.0)),
-            BinaryenTypeFloat64(), "memory"));
+            BinaryenTypeFloat64(), "0"));
 
     auto *body =
         all_loops.empty()
@@ -826,13 +822,10 @@ void emit_ir(const IRModule &ir, BinaryenModuleRef mod,
              const InstanceLayout &layout) {
     BinaryenModuleSetFeatures(mod, BinaryenFeatureAll());
     if (!BinaryenHasMemory(mod))
-        BinaryenAddMemoryImport(mod, "memory", "env", "memory", 0);
+        BinaryenAddMemoryImport(mod, "0", "env", "memory", 0);
 
-    if (BinaryenGetFunction(mod, "wasmwasm_sin") == nullptr) {
-        if (BinaryenHasMemory(math_module))
-            BinaryenAddMemoryImport(mod, "0", "env", "memory", 0);
+    if (BinaryenGetFunction(mod, "wasmwasm_sin") == nullptr)
         import_math(mod, math_module);
-    }
 
     for (const auto &fn : ir.functions)
         emit_function(fn, mod, sample_rate, ir, layout);

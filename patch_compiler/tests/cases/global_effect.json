@@ -1,0 +1,22 @@
+{
+  "global": {
+    "modules": {
+      "block_1783371683142": "OUT[0] <- 0.2 * tanh(IN[0])"
+    },
+    "patch": {
+      "block_1783371683142_in_0": "a_out_0",
+      "dac_l": "block_1783371683142_out_0",
+      "dac_r": "block_1783371683142_out_0"
+    }
+  },
+  "instruments": {
+    "a": {
+      "modules": {
+        "block_1783371598500": "static block_1783371598500_freq = 440\n\nstatic block_1783371598500_two_pi = 2 * PI\nstatic block_1783371598500_t = 0\nstatic block_1783371598500_dt_base = block_1783371598500_two_pi / SAMPLE_RATE\n\nOUT[0] <- sin block_1783371598500_t\n\nblock_1783371598500_dt = block_1783371598500_freq * block_1783371598500_dt_base\nblock_1783371598500_t = block_1783371598500_t + block_1783371598500_dt\nblock_1783371598500_t >= block_1783371598500_two_pi ? block_1783371598500_t = block_1783371598500_t - block_1783371598500_two_pi\n"
+      },
+      "patch": {
+        "out_0": "block_1783371598500_out_0"
+      }
+    }
+  }
+}

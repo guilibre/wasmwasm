@@ -4,6 +4,7 @@
 #include "instance_layout.hpp"
 #include "routing/routing.hpp"
 #include <array>
+#include <functional>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -28,7 +29,7 @@ auto used_addr(BinaryenModuleRef mod, const InstanceLayout &layout,
 auto used_at(BinaryenModuleRef mod, const InstanceLayout &layout,
              BinaryenExpressionRef slot_index) -> BinaryenExpressionRef {
     return BinaryenLoad(mod, 4, false, 0, 4, BinaryenTypeInt32(),
-                        used_addr(mod, layout, slot_index), "memory");
+                        used_addr(mod, layout, slot_index), "0");
 }
 
 auto instance_base_of_slot(BinaryenModuleRef mod, const InstanceLayout &layout,
@@ -69,8 +70,7 @@ auto resolve_source(BinaryenModuleRef mod, const RoutingGraph &graph,
                            BinaryenConst(mod, BinaryenLiteralInt32(4))));
         return BinaryenUnary(mod, BinaryenPromoteFloat32(),
                              BinaryenLoad(mod, 4, false, 0, 4,
-                                          BinaryenTypeFloat32(), addr,
-                                          "memory"));
+                                          BinaryenTypeFloat32(), addr, "0"));
     }
     if (auto it = out_locals.find(src); it != out_locals.end())
         return BinaryenLocalGet(mod, it->second, BinaryenTypeFloat64());
@@ -89,7 +89,7 @@ void emit_main_loop(
 
     BinaryenModuleSetFeatures(mod, BinaryenFeatureAll());
     if (!BinaryenHasMemory(mod))
-        BinaryenAddMemoryImport(mod, "memory", "env", "memory", 0);
+        BinaryenAddMemoryImport(mod, "0", "env", "memory", 0);
 
     std::vector<BinaryenType> param_types = {
         BinaryenTypeInt32(), BinaryenTypeInt32(), BinaryenTypeInt32()};
@@ -125,12 +125,8 @@ void emit_main_loop(
 
     auto emit_block_body =
         [&](const ModuleRoute &route, const InstanceLayout &layout,
-            BinaryenIndex slot_local,
+            const std::function<BinaryenExpressionRef()> &slot_get,
             std::vector<BinaryenExpressionRef> &out_stmts) -> void {
-        auto slot_get = [&]() -> BinaryenExpressionRef {
-            return BinaryenLocalGet(mod, slot_local, BinaryenTypeInt32());
-        };
-
         for (size_t i = 0; i < route.inputs.size(); ++i) {
             auto *val = resolve_source(mod, graph, out_locals, route.inputs[i],
                                        IN_BASE, SAMPLE, NUM_SAMPLES);
@@ -141,7 +137,7 @@ void emit_main_loop(
                 BinaryenConst(mod, BinaryenLiteralInt32(static_cast<int32_t>(
                                        layout.in_ports_offset + (i * 8)))));
             out_stmts.push_back(BinaryenStore(mod, 8, 0, 8, in_field_addr, val,
-                                              BinaryenTypeFloat64(), "memory"));
+                                              BinaryenTypeFloat64(), "0"));
         }
 
         {
@@ -162,7 +158,7 @@ void emit_main_loop(
                                        layout.out_ports_offset + (o * 8)))));
             auto *out_val =
                 BinaryenLoad(mod, 8, false, 0, 8, BinaryenTypeFloat64(),
-                             out_field_addr, "memory");
+                             out_field_addr, "0");
             const auto key = route.ir.name + "_out_" + std::to_string(o);
             const auto out_local = out_locals.at(key);
             out_stmts.push_back(BinaryenLocalSet(
@@ -207,7 +203,7 @@ void emit_main_loop(
             for (const auto &name : group.module_names) {
                 const auto &route = *route_by_name.at(name);
                 const auto &layout = layouts.at(name);
-                emit_block_body(route, layout, SLOT, live_body);
+                emit_block_body(route, layout, slot_get, live_body);
             }
 
             auto *live_block =
@@ -247,45 +243,10 @@ void emit_main_loop(
 
             reset_outputs(route.ir, stmts);
 
-            stmts.push_back(BinaryenLocalSet(
-                mod, SLOT, BinaryenConst(mod, BinaryenLiteralInt32(0))));
-
-            std::vector<BinaryenExpressionRef> loop_stmts;
-            auto slot_get = [&]() -> BinaryenExpressionRef {
-                return BinaryenLocalGet(mod, SLOT, BinaryenTypeInt32());
+            auto slot_zero = [&]() -> BinaryenExpressionRef {
+                return BinaryenConst(mod, BinaryenLiteralInt32(0));
             };
-
-            std::vector<BinaryenExpressionRef> live_body;
-            emit_block_body(route, layout, SLOT, live_body);
-
-            auto *live_block =
-                BinaryenBlock(mod, nullptr, live_body.data(),
-                              static_cast<BinaryenIndex>(live_body.size()),
-                              BinaryenTypeNone());
-            loop_stmts.push_back(BinaryenIf(
-                mod, used_at(mod, layout, slot_get()), live_block, nullptr));
-
-            loop_stmts.push_back(BinaryenLocalSet(
-                mod, SLOT,
-                BinaryenBinary(mod, BinaryenAddInt32(), slot_get(),
-                               BinaryenConst(mod, BinaryenLiteralInt32(1)))));
-
-            const auto loop_label = pfx(route.ir, "main$instance_loop");
-            loop_stmts.push_back(BinaryenBreak(
-                mod, loop_label.c_str(),
-                BinaryenBinary(
-                    mod, BinaryenLtUInt32(),
-                    BinaryenLocalGet(mod, SLOT, BinaryenTypeInt32()),
-                    BinaryenConst(mod,
-                                  BinaryenLiteralInt32(static_cast<int32_t>(
-                                      max_instances_per_module)))),
-                nullptr));
-
-            auto *loop_body =
-                BinaryenBlock(mod, nullptr, loop_stmts.data(),
-                              static_cast<BinaryenIndex>(loop_stmts.size()),
-                              BinaryenTypeNone());
-            stmts.push_back(BinaryenLoop(mod, loop_label.c_str(), loop_body));
+            emit_block_body(route, layout, slot_zero, stmts);
         }
 
         auto dac_f32 = [&](const std::string &src) -> BinaryenExpressionRef {
@@ -317,7 +278,7 @@ void emit_main_loop(
         for (size_t ch = 0; ch < channels.size(); ++ch) {
             stmts.push_back(BinaryenStore(
                 mod, 4, 0, 4, out_addr(static_cast<int>(ch), SAMPLE),
-                dac_f32(channels[ch]), BinaryenTypeFloat32(), "memory"));
+                dac_f32(channels[ch]), BinaryenTypeFloat32(), "0"));
         }
 
         stmts.push_back(BinaryenLocalSet(
@@ -364,13 +325,34 @@ void emit_main_loop(
     for (const auto &route : graph.modules) {
         const auto &layout = layouts.at(route.ir.name);
 
+        if (!grouped_module_names.contains(route.ir.name)) {
+            auto *instance_base = instance_base_of_slot(
+                mod, layout, BinaryenConst(mod, BinaryenLiteralInt32(0)));
+            std::array<BinaryenExpressionRef, 1> init_args = {instance_base};
+            const auto init_name = pfx(route.ir, route.ir.init_fn);
+            init_calls.push_back(BinaryenCall(mod, init_name.c_str(),
+                                              init_args.data(), 1,
+                                              BinaryenTypeNone()));
+            if (!route.ir.static_init_fn.empty()) {
+                auto *static_instance_base = instance_base_of_slot(
+                    mod, layout, BinaryenConst(mod, BinaryenLiteralInt32(0)));
+                std::array<BinaryenExpressionRef, 1> static_init_args = {
+                    static_instance_base};
+                const auto sname = pfx(route.ir, route.ir.static_init_fn);
+                init_calls.push_back(BinaryenCall(mod, sname.c_str(),
+                                                  static_init_args.data(), 1,
+                                                  BinaryenTypeNone()));
+            }
+            continue;
+        }
+
         std::array<BinaryenExpressionRef, 3> loop_stmts = {
             BinaryenStore(mod, 4, 0, 4,
                           used_addr(mod, layout,
                                     BinaryenLocalGet(mod, init_slot_local,
                                                      BinaryenTypeInt32())),
                           BinaryenConst(mod, BinaryenLiteralInt32(0)),
-                          BinaryenTypeInt32(), "memory"),
+                          BinaryenTypeInt32(), "0"),
             BinaryenLocalSet(
                 mod, init_slot_local,
                 BinaryenBinary(

@@ -64,5 +64,6 @@ auto BinaryenCodeGen::build() -> BackendArtifact {
     auto *binary_data = static_cast<char *>(result.binary);
     BackendArtifact artifact;
     artifact.bytes.assign(binary_data, binary_data + result.binaryBytes);
+    artifact.memory_bytes = next_offset_;
     return artifact;
 }

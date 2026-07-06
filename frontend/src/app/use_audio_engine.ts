@@ -89,7 +89,7 @@ export function useAudioEngine(
 
             const global_node = new AudioWorkletNode(context, 'wasm-processor', {
                 numberOfOutputs: 1,
-                outputChannelCount: [compiled.num_out_channels],
+                outputChannelCount: [2],
             });
             global_node.connect(merger);
             global_node.port.start();
@@ -101,7 +101,8 @@ export function useAudioEngine(
             global_node.port.postMessage({
                 type: 'load-wasm',
                 module: compiled.wasm_module,
-                num_out_channels: compiled.num_out_channels,
+                memory_bytes: compiled.memory_bytes,
+                num_out_channels: 2,
                 is_global: true,
                 node_id: 'global',
             });
