@@ -3,7 +3,7 @@ import type { Node, NodeChange, EdgeChange, Connection } from '@xyflow/react';
 import { scan_arity, scan_params } from './code_scanning';
 import { elk_layout } from './elk_auto_layout';
 import { reducer, load_initial } from './patch_reducer';
-import type { BlockData, PatchView, OrchestraState } from './patch_types';
+import type { BlockData, PatchView, OrchestraState, ScoreParamBindings } from './patch_types';
 
 const raw_templates = import.meta.glob('../../templates/*.ww', {
     query: '?raw',
@@ -160,24 +160,65 @@ export function usePatchStore() {
     const undo = useCallback(() => dispatch({ type: 'undo' }), []);
     const redo = useCallback(() => dispatch({ type: 'redo' }), []);
 
+    const update_score_source = useCallback(
+        (source: string) => dispatch({ type: 'update_score_source', source }),
+        [],
+    );
+
+    const update_score_param_bindings = useCallback(
+        (bindings: ScoreParamBindings) =>
+            dispatch({ type: 'update_score_param_bindings', bindings }),
+        [],
+    );
+
+    const update_global_callback_source = useCallback(
+        (source: string) => dispatch({ type: 'update_global_callback_source', source }),
+        [],
+    );
+
     const export_patch = useCallback(() => {
-        const blob = new Blob([JSON.stringify({ orchestra: state.orchestra }, null, 2)], {
-            type: 'application/json',
-        });
+        const blob = new Blob(
+            [
+                JSON.stringify(
+                    {
+                        orchestra: state.orchestra,
+                        score_source: state.score_source,
+                        score_param_bindings: state.score_param_bindings,
+                        global_callback_source: state.global_callback_source,
+                    },
+                    null,
+                    2,
+                ),
+            ],
+            { type: 'application/json' },
+        );
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
         a.download = 'patch.json';
         a.click();
         URL.revokeObjectURL(url);
-    }, [state.orchestra]);
+    }, [
+        state.orchestra,
+        state.score_source,
+        state.score_param_bindings,
+        state.global_callback_source,
+    ]);
 
     const import_patch = useCallback((file: File) => {
         const reader = new FileReader();
         reader.onload = (e) => {
             try {
-                const { orchestra } = JSON.parse(e.target!.result as string);
-                if (orchestra) dispatch({ type: 'load', orchestra });
+                const { orchestra, score_source, score_param_bindings, global_callback_source } =
+                    JSON.parse(e.target!.result as string);
+                if (orchestra)
+                    dispatch({
+                        type: 'load',
+                        orchestra,
+                        score_source,
+                        score_param_bindings,
+                        global_callback_source,
+                    });
             } catch (_e) {
                 console.error(_e);
             }
@@ -198,6 +239,12 @@ export function usePatchStore() {
         set_view,
         selected_id: state.selected_id,
         selected_node,
+        score_source: state.score_source,
+        update_score_source,
+        score_param_bindings: state.score_param_bindings,
+        update_score_param_bindings,
+        global_callback_source: state.global_callback_source,
+        update_global_callback_source,
         can_undo: history.past.length > 0,
         can_redo: history.future.length > 0,
         undo,

@@ -125,51 +125,12 @@ auto matches_id(BinaryenModuleRef mod, const InstanceLayout &layout,
             BinaryenLocalGet(mod, id_param, BinaryenTypeInt32())));
 }
 
-void append_init_member(const IRModule &ir, BinaryenModuleRef mod,
-                        const InstanceLayout &layout, BinaryenIndex slot_local,
-                        BinaryenIndex instance_base_local,
-                        std::vector<BinaryenExpressionRef> &stmts) {
-    auto *instance_base = instance_base_of_slot(
-        mod, layout, BinaryenLocalGet(mod, slot_local, BinaryenTypeInt32()));
-    stmts.push_back(BinaryenLocalSet(mod, instance_base_local, instance_base));
-    std::array<BinaryenExpressionRef, 1> init_args = {
-        BinaryenLocalGet(mod, instance_base_local, BinaryenTypeInt32())};
-    const auto init_name = pfx(ir, ir.init_fn);
-    stmts.push_back(BinaryenCall(mod, init_name.c_str(), init_args.data(), 1,
-                                 BinaryenTypeNone()));
-    if (!ir.static_init_fn.empty()) {
-        std::array<BinaryenExpressionRef, 1> static_init_args = {
-            BinaryenLocalGet(mod, instance_base_local, BinaryenTypeInt32())};
-        const auto sname = pfx(ir, ir.static_init_fn);
-        stmts.push_back(BinaryenCall(mod, sname.c_str(),
-                                     static_init_args.data(), 1,
-                                     BinaryenTypeNone()));
-    }
-}
-
-void append_set_param_member(BinaryenModuleRef mod,
-                             const InstanceLayout &layout,
-                             const std::string &name, BinaryenIndex value_param,
-                             BinaryenIndex slot_local,
-                             std::vector<BinaryenExpressionRef> &stmts) {
-    auto *instance_base = instance_base_of_slot(
-        mod, layout, BinaryenLocalGet(mod, slot_local, BinaryenTypeInt32()));
-    const auto local_offset = layout.param_offset.at(name);
-    auto *addr = BinaryenBinary(
-        mod, BinaryenAddInt32(), instance_base,
-        BinaryenConst(
-            mod, BinaryenLiteralInt32(static_cast<int32_t>(local_offset))));
-    stmts.push_back(
-        BinaryenStore(mod, 8, 0, 8, addr,
-                      BinaryenLocalGet(mod, value_param, BinaryenTypeFloat64()),
-                      BinaryenTypeFloat64(), "0"));
-}
-
 } // namespace
 
 void emit_instance_api_group(
     const std::string &instrument_id,
-    const std::vector<const IRModule *> &members, BinaryenModuleRef mod,
+    const std::vector<const IRModule *> &members,
+    const std::vector<std::string> &param_names, BinaryenModuleRef mod,
     const std::unordered_map<std::string, InstanceLayout> &layouts) {
     const auto &shared_layout = layouts.at(members.front()->name);
 
@@ -217,9 +178,30 @@ void emit_instance_api_group(
             BinaryenTypeInt32(), "0"));
 
         constexpr BinaryenIndex instance_base_local = 2;
-        for (const auto *ir : members)
-            append_init_member(*ir, mod, layouts.at(ir->name), slot_local,
-                               instance_base_local, stmts);
+        for (const auto *ir : members) {
+            const auto &layout = layouts.at(ir->name);
+            auto *instance_base = instance_base_of_slot(
+                mod, layout,
+                BinaryenLocalGet(mod, slot_local, BinaryenTypeInt32()));
+            stmts.push_back(
+                BinaryenLocalSet(mod, instance_base_local, instance_base));
+            std::array<BinaryenExpressionRef, 1> init_args = {
+                BinaryenLocalGet(mod, instance_base_local, BinaryenTypeInt32()),
+            };
+            if (!ir->static_init_fn.empty()) {
+                std::array<BinaryenExpressionRef, 1> static_init_args = {
+                    BinaryenLocalGet(mod, instance_base_local,
+                                     BinaryenTypeInt32())};
+                const auto sname = pfx(*ir, ir->static_init_fn);
+                stmts.push_back(BinaryenCall(mod, sname.c_str(),
+                                             static_init_args.data(), 1,
+                                             BinaryenTypeNone()));
+            }
+            const auto init_name = pfx(*ir, ir->init_fn);
+            stmts.push_back(BinaryenCall(mod, init_name.c_str(),
+                                         init_args.data(), 1,
+                                         BinaryenTypeNone()));
+        }
 
         stmts.push_back(
             BinaryenReturn(mod, BinaryenConst(mod, BinaryenLiteralInt32(0))));
@@ -280,16 +262,11 @@ void emit_instance_api_group(
     }
 
     {
-        std::vector<std::string> param_names;
         std::unordered_map<std::string, std::vector<const IRModule *>>
             modules_by_param;
-        for (const auto *ir : members) {
-            for (const auto &[name, _] : ir->params) {
-                if (!modules_by_param.contains(name))
-                    param_names.push_back(name);
+        for (const auto *ir : members)
+            for (const auto &[name, _] : ir->params)
                 modules_by_param[name].push_back(ir);
-            }
-        }
 
         constexpr BinaryenIndex id_param = 0;
         constexpr BinaryenIndex param_index_param = 1;
@@ -312,9 +289,21 @@ void emit_instance_api_group(
         for (size_t i = 0; i < param_names.size(); ++i) {
             const auto &name = param_names[i];
             std::vector<BinaryenExpressionRef> branch_stmts;
-            for (const auto *ir : modules_by_param.at(name))
-                append_set_param_member(mod, layouts.at(ir->name), name,
-                                        value_param, slot_local, branch_stmts);
+            for (const auto *ir : modules_by_param.at(name)) {
+                const auto &layout = layouts.at(ir->name);
+                auto *instance_base = instance_base_of_slot(
+                    mod, layout,
+                    BinaryenLocalGet(mod, slot_local, BinaryenTypeInt32()));
+                auto *addr = BinaryenBinary(
+                    mod, BinaryenAddInt32(), instance_base,
+                    BinaryenConst(mod,
+                                  BinaryenLiteralInt32(static_cast<int32_t>(
+                                      layout.param_offset.at(name)))));
+                branch_stmts.push_back(BinaryenStore(
+                    mod, 8, 0, 8, addr,
+                    BinaryenLocalGet(mod, value_param, BinaryenTypeFloat64()),
+                    BinaryenTypeFloat64(), "0"));
+            }
 
             auto *matches_idx = BinaryenBinary(
                 mod, BinaryenEqInt32(),
@@ -344,4 +333,63 @@ void emit_instance_api_group(
             BinaryenTypeInt32(), var_types.data(), var_types.size(), body);
         BinaryenAddFunctionExport(mod, fn_name.c_str(), fn_name.c_str());
     }
+}
+
+void emit_global_set_param(
+    const std::vector<const IRModule *> &members,
+    const std::vector<std::string> &param_names, BinaryenModuleRef mod,
+    const std::unordered_map<std::string, InstanceLayout> &layouts) {
+    if (members.empty()) return;
+
+    std::unordered_map<std::string, std::vector<const IRModule *>>
+        modules_by_param;
+    for (const auto *ir : members) {
+        for (const auto &[name, _] : ir->params)
+            modules_by_param[name].push_back(ir);
+    }
+
+    constexpr BinaryenIndex param_index_param = 0;
+    constexpr BinaryenIndex value_param = 1;
+
+    std::vector<BinaryenExpressionRef> stmts;
+
+    for (size_t i = 0; i < param_names.size(); ++i) {
+        const auto &name = param_names[i];
+        std::vector<BinaryenExpressionRef> branch_stmts;
+        for (const auto *ir : modules_by_param.at(name)) {
+            const auto &layout = layouts.at(ir->name);
+            const auto local_offset = layout.param_offset.at(name);
+            auto *addr =
+                BinaryenConst(mod, BinaryenLiteralInt32(static_cast<int32_t>(
+                                       layout.module_base + local_offset)));
+            stmts.push_back(BinaryenStore(
+                mod, 8, 0, 8, addr,
+                BinaryenLocalGet(mod, value_param, BinaryenTypeFloat64()),
+                BinaryenTypeFloat64(), "0"));
+        }
+
+        auto *matches_idx = BinaryenBinary(
+            mod, BinaryenEqInt32(),
+            BinaryenLocalGet(mod, param_index_param, BinaryenTypeInt32()),
+            BinaryenConst(mod, BinaryenLiteralInt32(static_cast<int32_t>(i))));
+        auto *branch_block =
+            BinaryenBlock(mod, nullptr, branch_stmts.data(),
+                          branch_stmts.size(), BinaryenTypeNone());
+        stmts.push_back(BinaryenIf(mod, matches_idx, branch_block, nullptr));
+    }
+    stmts.push_back(
+        BinaryenReturn(mod, BinaryenConst(mod, BinaryenLiteralInt32(0))));
+
+    auto *body = BinaryenBlock(mod, nullptr, stmts.data(),
+                               static_cast<BinaryenIndex>(stmts.size()),
+                               BinaryenTypeInt32());
+    std::array<BinaryenType, 2> param_types = {BinaryenTypeInt32(),
+                                               BinaryenTypeFloat64()};
+    constexpr auto fn_name = "global$set_param";
+    BinaryenAddFunction(
+        mod, fn_name,
+        BinaryenTypeCreate(param_types.data(),
+                           static_cast<BinaryenIndex>(param_types.size())),
+        BinaryenTypeInt32(), nullptr, 0, body);
+    BinaryenAddFunctionExport(mod, fn_name, fn_name);
 }

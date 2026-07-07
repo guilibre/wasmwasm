@@ -1,11 +1,35 @@
 import { useEffect, useRef, useState } from 'react';
+import ts from 'typescript';
 import workletUrl from '../audio/processor.worklet.ts?worker&url';
 import WasmWasm from '../audio/compiler';
+import ScoreWasm from '../scorewasm/compiler';
 import { orchestra_to_json } from '../patch/orchestra_to_json';
-import type { OrchestraState } from '../patch/store/patch_types';
+import type { OrchestraState, ScoreParamBindings } from '../patch/store/patch_types';
+
+function transpile_callback_source(source: string): string | null {
+    if (!source.trim()) return null;
+    const { outputText } = ts.transpileModule(source, {
+        compilerOptions: { target: ts.ScriptTarget.ES2020, module: ts.ModuleKind.None },
+    });
+    return outputText.replace(/^"use strict";\n/, '').replace(/;\s*$/, '');
+}
+
+function transpile_instrument_callbacks(
+    score_param_bindings: ScoreParamBindings,
+): Record<string, string> {
+    const instrument_callbacks: Record<string, string> = {};
+    for (const [instrument_id, source] of Object.entries(score_param_bindings)) {
+        const transpiled = transpile_callback_source(source);
+        if (transpiled) instrument_callbacks[instrument_id] = transpiled;
+    }
+    return instrument_callbacks;
+}
 
 export function useAudioEngine(
     orchestra: OrchestraState,
+    score_source: string,
+    score_param_bindings: ScoreParamBindings,
+    global_callback_source: string,
     set_error: (error: string | null) => void,
 ) {
     const audio_context_ref = useRef<AudioContext | null>(null);
@@ -44,6 +68,10 @@ export function useAudioEngine(
             audio_context_ref.current?.close();
         };
     }, []);
+
+    useEffect(() => {
+        global_node_ref.current?.port.postMessage({ type: 'set-bpm', bpm: orchestra.bpm });
+    }, [orchestra.bpm]);
 
     const play_impl = async () => {
         set_error(null);
@@ -86,6 +114,10 @@ export function useAudioEngine(
 
         try {
             const compiled = await WasmWasm.compile_patch(context.sampleRate, patch_json);
+            const param_index = await WasmWasm.get_param_index(patch_json);
+            const score_graph = await ScoreWasm.compile_score(score_source);
+            const instrument_callbacks = transpile_instrument_callbacks(score_param_bindings);
+            const global_callback = transpile_callback_source(global_callback_source);
 
             const global_node = new AudioWorkletNode(context, 'wasm-processor', {
                 numberOfOutputs: 1,
@@ -105,6 +137,11 @@ export function useAudioEngine(
                 num_out_channels: 2,
                 is_global: true,
                 node_id: 'global',
+                score_graph,
+                param_index,
+                instrument_callbacks,
+                global_callback,
+                bpm: orchestra.bpm,
             });
             await global_ready;
             attach_cpu_metrics(global_node, 'global');

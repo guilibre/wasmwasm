@@ -70,6 +70,7 @@ auto expand_var_ref(const std::string &name, size_t line, size_t column,
         size_t id = ctx.alloc(NodeKind::State);
         for (const auto &param : decl.block.params)
             ctx.nodes[id].params[param.name] = fold_expr(*param.value);
+        ctx.nodes[id].instrument = decl.block.instrument;
         return Piece{.entry_id = id, .exit_id = id};
     }
 

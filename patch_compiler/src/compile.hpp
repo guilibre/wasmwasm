@@ -12,3 +12,5 @@ struct CompileResult {
 
 auto compile_to_binary(float sample_rate, const std::string &patch_json,
                        char *math_bin, size_t math_bin_size) -> CompileResult;
+
+auto get_param_index(const std::string &patch_json) -> std::string;

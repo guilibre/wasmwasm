@@ -102,12 +102,20 @@ auto Parser::parse_block() -> Block {
     expect(TokenKind::LBrace, "'{'");
     skip_newlines();
     while (current.kind != TokenKind::RBrace) {
-        Param param;
         Token name = expect(TokenKind::Ident, "parameter name");
-        param.name = name.lexeme;
         expect(TokenKind::Colon, "':'");
-        param.value = parse_expr();
-        block.params.push_back(std::move(param));
+        if (name.lexeme == "instrument") {
+            if (block.instrument.has_value())
+                throw ParseException("duplicate 'instrument' field", name.line,
+                                     name.column);
+            Token value = expect(TokenKind::String, "string literal");
+            block.instrument = value.lexeme;
+        } else {
+            Param param;
+            param.name = name.lexeme;
+            param.value = parse_expr();
+            block.params.push_back(std::move(param));
+        }
         end_statement();
     }
     expect(TokenKind::RBrace, "'}'");
@@ -136,7 +144,7 @@ auto Parser::parse_fork_group() -> Term {
     term.line = current.line;
     term.column = current.column;
     term.branches.push_back(std::make_unique<CompExpr>(parse_comp_expr()));
-    while (match(TokenKind::Pipe)) {
+    while (match(TokenKind::Ampersand)) {
         skip_newlines();
         term.branches.push_back(std::make_unique<CompExpr>(parse_comp_expr()));
     }
@@ -173,7 +181,8 @@ auto Parser::parse_play_stmt() -> PlayStmt {
     stmt.column = current.column;
     expect(TokenKind::KwPlay, "'play'");
     stmt.machines.push_back(parse_comp_expr());
-    while (match(TokenKind::Pipe)) stmt.machines.push_back(parse_comp_expr());
+    while (match(TokenKind::Ampersand))
+        stmt.machines.push_back(parse_comp_expr());
     end_statement();
     return stmt;
 }

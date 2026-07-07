@@ -1,11 +1,11 @@
 param freq = 440
 
-static two_pi = 2 * PI
+static two_pi = 2*PI
 static t = 0
-static dt_base = two_pi / SAMPLE_RATE
+static dt_base = two_pi/SAMPLE_RATE
 
-OUT[0] <- IN[0] * sin t
+OUT[0] <- IN[0]*sin(t)
 
-dt = freq * dt_base
+dt = freq*dt_base
 t = t + dt
 t >= two_pi ? t = t - two_pi

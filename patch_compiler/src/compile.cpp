@@ -9,6 +9,7 @@
 #include "routing/routing.hpp"
 #include "types/type_inference.hpp"
 
+#include <json/json.h>
 #include <memory>
 #include <stdexcept>
 
@@ -63,4 +64,36 @@ auto compile_to_binary(float sample_rate, const std::string &patch_json,
     auto artifact = codegen->build();
     return CompileResult{.bytes = std::move(artifact.bytes),
                          .memory_bytes = artifact.memory_bytes};
+}
+
+auto get_param_index(const std::string &patch_json) -> std::string {
+    auto patch = parse_patch_json(patch_json);
+
+    std::vector<IRModule> compiled;
+    for (const auto &instr : patch.instruments) {
+        for (const auto &[name, src] : instr.module_sources)
+            compiled.push_back(lower_module(name, src));
+    }
+    for (const auto &[name, src] : patch.global_module_sources)
+        compiled.push_back(lower_module(name, src));
+
+    auto graph = build_routing_graph(patch, std::move(compiled));
+
+    Json::Value root{Json::objectValue};
+    for (const auto &group : graph.instruments) {
+        Json::Value params{Json::objectValue};
+        for (size_t i = 0; i < group.param_names.size(); ++i)
+            params[group.param_names[i]] = static_cast<Json::UInt64>(i);
+        root[group.id] = params;
+    }
+
+    Json::Value global_params{Json::objectValue};
+    for (size_t i = 0; i < graph.global_param_names.size(); ++i)
+        global_params[graph.global_param_names[i]] =
+            static_cast<Json::UInt64>(i);
+    root["global"] = global_params;
+
+    Json::StreamWriterBuilder writer;
+    writer["indentation"] = "";
+    return Json::writeString(writer, root);
 }

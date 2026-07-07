@@ -3,6 +3,7 @@ import { ReactFlowProvider } from '@xyflow/react';
 import WasmWasm from '../audio/compiler';
 import WWEditor, { type WWEditorHandle } from './ww_editor';
 import { Sidebar } from './sidebar';
+import { ScorePanel } from './score_panel';
 import { InstrumentTabs } from './instrument_tabs';
 import { PatchEditor } from '../patch/patch_editor';
 import { usePatchStore } from '../patch/store/use_patch_store';
@@ -34,12 +35,25 @@ export default function App() {
         set_view,
         undo,
         redo,
+        score_source,
+        update_score_source,
+        score_param_bindings,
+        update_score_param_bindings,
+        global_callback_source,
+        update_global_callback_source,
+        set_orchestra_bpm,
     } = store;
     const selected_block = selected_node?.type === 'block' ? selected_node : null;
 
     useUndoRedoShortcuts(undo, redo);
 
-    const { analysers, is_playing, cpu_load, play, stop } = useAudioEngine(orchestra, set_error);
+    const { analysers, is_playing, cpu_load, play, stop } = useAudioEngine(
+        orchestra,
+        score_source,
+        score_param_bindings,
+        global_callback_source,
+        set_error,
+    );
 
     const {
         name_draft,
@@ -80,6 +94,16 @@ export default function App() {
             </div>
 
             <div className="app__workspace">
+                <ScorePanel
+                    source={score_source}
+                    on_change={update_score_source}
+                    orchestra={orchestra}
+                    score_param_bindings={score_param_bindings}
+                    on_score_param_bindings_change={update_score_param_bindings}
+                    global_callback_source={global_callback_source}
+                    on_global_callback_source_change={update_global_callback_source}
+                    on_bpm_change={set_orchestra_bpm}
+                />
                 <div className="app__patch-pane">
                     <div className="app__patch-container">
                         <InstrumentTabs
@@ -129,6 +153,7 @@ export default function App() {
                         key={selected_block.id}
                         initial_value={(selected_block.data as { code: string }).code}
                         on_change={(code) => update_code(selected_block.id, code)}
+                        get_module={() => WasmWasm.getModule()}
                     />
                 </div>
             )}

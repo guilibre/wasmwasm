@@ -1,7 +1,17 @@
+import { Conductor } from './conductor';
+import type {
+    GlobalCallback,
+    GlobalExports,
+    InstrumentCallback,
+    InstrumentCallbackMap,
+    InstrumentExportsMap,
+    ParamIndex,
+    ScoreGraph,
+} from './conductor';
+
 const inv_sample_rate = 1 / sampleRate;
 
 interface WasmExports extends WebAssembly.Exports {
-    init(): void;
     main: (...args: number[]) => void;
     [key: string]: WebAssembly.ExportValue;
 }
@@ -12,10 +22,11 @@ interface WasmGlobal {
 
 class WasmProcessor extends AudioWorkletProcessor {
     main: ((...args: number[]) => void) | undefined = undefined;
-    instantiate: Map<string, (idx: number) => number> = new Map();
+    instrument_exports: InstrumentExportsMap = {};
+    global_exports: GlobalExports | null = null;
+    conductor: Conductor | null = null;
     heap: Float32Array | null = null;
     stopped = false;
-    is_first_time = true;
 
     _ready_sent = false;
     instance: WebAssembly.Instance | null = null;
@@ -33,15 +44,23 @@ class WasmProcessor extends AudioWorkletProcessor {
 
         this.port.onmessage = async (event: MessageEvent) => {
             if (event.data.type === 'stop') {
+                this.conductor?.destroy_all();
                 this.stopped = true;
                 return;
             }
 
             if (event.data.type === 'clear') {
+                this.conductor?.destroy_all();
+                this.conductor = null;
                 this.heap = null;
                 this.instance = null;
                 this.input_buf = null;
                 this.param_exports = [];
+            }
+
+            if (event.data.type === 'set-bpm') {
+                this.conductor?.set_bpm(event.data.bpm as number);
+                return;
             }
 
             if (event.data.type === 'load-wasm') {
@@ -57,16 +76,62 @@ class WasmProcessor extends AudioWorkletProcessor {
                 const exports = instance.exports as WasmExports;
                 this.heap = new Float32Array(memory.buffer);
                 this.instance = instance;
-                exports.init();
                 this.main = exports.main;
-                Object.keys(exports)
-                    .filter((k) => k.includes('instantiate'))
-                    .forEach((k) =>
-                        this.instantiate.set(
-                            k.substring(0, k.indexOf('$')),
-                            exports[k] as (idx: number) => number,
-                        ),
+                this.instrument_exports = {};
+                this.global_exports = null;
+                for (const key of Object.keys(exports)) {
+                    const sep = key.indexOf('$');
+                    if (sep === -1) continue;
+                    const instrument_id = key.substring(0, sep);
+                    const suffix = key.substring(sep + 1);
+
+                    if (instrument_id === 'global') {
+                        if (suffix !== 'set_param') continue;
+                        this.global_exports = { set_param: exports[key] as never };
+                        continue;
+                    }
+
+                    if (suffix !== 'instantiate' && suffix !== 'destroy' && suffix !== 'set_param')
+                        continue;
+                    this.instrument_exports[instrument_id] ??= {
+                        instantiate: () => -1,
+                        destroy: () => -1,
+                        set_param: () => -1,
+                    };
+                    this.instrument_exports[instrument_id][suffix] = exports[key] as never;
+                }
+
+                if (event.data.score_graph) {
+                    const instrument_callbacks_source =
+                        (event.data.instrument_callbacks as Record<string, string>) ?? {};
+                    const instrument_callbacks: InstrumentCallbackMap = {};
+                    for (const [instrument_id, js_source] of Object.entries(
+                        instrument_callbacks_source,
+                    )) {
+                        instrument_callbacks[instrument_id] = new Function(
+                            `return (\n${js_source}\n);`,
+                        )() as InstrumentCallback;
+                    }
+
+                    const global_callback_source = event.data.global_callback as string | undefined;
+                    const global_callback = global_callback_source
+                        ? (new Function(
+                              `return (\n${global_callback_source}\n);`,
+                          )() as GlobalCallback)
+                        : null;
+
+                    this.conductor = new Conductor(
+                        event.data.score_graph as ScoreGraph,
+                        (event.data.param_index as ParamIndex) ?? {},
+                        this.instrument_exports,
+                        sampleRate,
+                        event.data.bpm as number,
+                        this.global_exports,
+                        instrument_callbacks,
+                        global_callback,
                     );
+                }
+
                 this.node_id = event.data.node_id ?? '';
                 this._ready_sent = false;
                 this._busy_time = 0;
@@ -90,10 +155,6 @@ class WasmProcessor extends AudioWorkletProcessor {
     process(inputs: Float32Array[][], outputs: Float32Array[][]): boolean {
         if (this.stopped) return false;
         if (!this.heap) return true;
-        if (this.is_first_time) {
-            this.instantiate.forEach((f) => console.log(f(0)));
-            this.is_first_time = false;
-        }
 
         const process_start = Date.now();
         const num_samples = outputs[0][0].length;
@@ -106,6 +167,16 @@ class WasmProcessor extends AudioWorkletProcessor {
             const dst = in_base_floats + ch * num_samples;
             const src = inputs[0][ch];
             if (src) heap.set(src.subarray(0, num_samples), dst);
+        }
+
+        if (this.conductor) {
+            try {
+                this.conductor.tick(num_samples);
+            } catch (e) {
+                this.port.postMessage({ type: 'conductor-error', message: String(e) });
+                this.stopped = true;
+                return false;
+            }
         }
 
         this.main?.(num_samples, in_base_floats * 4, 0);

@@ -1,16 +1,6 @@
-declare module './wasmwasm.js' {
-    interface CompilerResult {
-        bytes: Uint8Array;
-        memory_bytes: number;
-    }
-
+declare module './scorewasm.js' {
     interface EmscriptenModule {
-        run_compiler: (
-            sample_rate: number,
-            patch_json: string,
-            math_bin: Uint8Array,
-        ) => CompilerResult;
-        get_param_index: (patch_json: string) => string;
+        compile_score: (source: string) => string;
         lsp_diagnostics: (src: string) => string;
         lsp_tokens: (src: string) => string;
         lsp_completions: (src: string, line: number, col: number) => string;

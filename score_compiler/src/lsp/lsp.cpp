@@ -1,46 +1,128 @@
 #include "lsp.hpp"
 
 #include "backend/json_writer.hpp"
-#include "compile.hpp"
 #include "parser/parser.hpp"
 #include "parser/tokenizer.hpp"
 #include "resolve/resolver.hpp"
+#include <unordered_set>
+
+namespace {
+
+auto is_keyword_ident(const std::string &lexeme) -> bool {
+    static const std::unordered_set<std::string> keywords = {"instrument"};
+    return keywords.contains(lexeme);
+}
+
+} // namespace
 
 auto lsp_tokens(const std::string &src) -> std::string {
-    Tokenizer tokenizer(src);
-    std::string out = "[";
+    std::string json;
+    json.reserve(4096);
+    json += '[';
     bool first = true;
-    while (!tokenizer.is_done()) {
-        Token tok = tokenizer.next();
-        if (!first) out += ",";
+
+    auto emit = [&](size_t line, size_t column, size_t len,
+                    const char *type) -> void {
+        if (!first) json += ',';
         first = false;
-        out += "{\"kind\":" + std::to_string(static_cast<int>(tok.kind));
-        out += ",\"lexeme\":" + json_string(tok.lexeme);
-        out += ",\"line\":" + std::to_string(tok.line);
-        out += ",\"column\":" + std::to_string(tok.column) + "}";
+        json += R"({"line":)" + std::to_string(line - 1) + R"(,"col":)" +
+                std::to_string(column - 1) + R"(,"len":)" +
+                std::to_string(len) + R"(,"type":")" + std::string(type) +
+                R"("})";
+    };
+
+    Tokenizer tokenizer(src);
+    while (!tokenizer.is_done()) {
+        const auto tok = tokenizer.next();
+        const auto len = tok.lexeme.size();
+        switch (tok.kind) {
+        case TokenKind::Number:
+            emit(tok.line, tok.column, len, "number");
+            break;
+        case TokenKind::String:
+            emit(tok.line, tok.column, len + 2, "string");
+            break;
+        case TokenKind::KwPlay:
+            emit(tok.line, tok.column, len, "keyword");
+            break;
+        case TokenKind::Ident:
+            if (is_keyword_ident(tok.lexeme))
+                emit(tok.line, tok.column, len, "keyword");
+            else
+                emit(tok.line, tok.column, len, "variable");
+            break;
+        case TokenKind::Plus:
+        case TokenKind::Minus:
+        case TokenKind::Star:
+        case TokenKind::Slash:
+        case TokenKind::Equals:
+        case TokenKind::Colon:
+        case TokenKind::Ampersand:
+            emit(tok.line, tok.column, len, "operator");
+            break;
+        default:
+            break;
+        }
     }
-    out += "]";
-    return out;
+
+    json += ']';
+    return json;
 }
 
 auto lsp_diagnostics(const std::string &src) -> std::string {
+    Tokenizer tokenizer(src);
+    Parser parser(tokenizer);
     try {
-        (void)compile_to_json(src);
-        return "[]";
+        const auto program = parser.parse();
+        const auto graph = expand_program(program);
+        (void)graph;
     } catch (const ParseException &e) {
-        return "[{\"line\":" + std::to_string(e.line) +
-               ",\"column\":" + std::to_string(e.col) +
-               ",\"message\":" + json_string(e.what()) + "}]";
+        return R"([{"msg":)" + json_string(e.what()) + R"(,"line":)" +
+               std::to_string(e.line - 1) + R"(,"col":)" +
+               std::to_string(e.col - 1) + R"(,"severity":"error"}])";
     } catch (const ResolveException &e) {
-        return "[{\"line\":" + std::to_string(e.line) +
-               ",\"column\":" + std::to_string(e.col) +
-               ",\"message\":" + json_string(e.what()) + "}]";
+        const auto line = e.line > 0 ? e.line - 1 : 0;
+        const auto col = e.col > 0 ? e.col - 1 : 0;
+        return R"([{"msg":)" + json_string(e.what()) + R"(,"line":)" +
+               std::to_string(line) + R"(,"col":)" + std::to_string(col) +
+               R"(,"severity":"error"}])";
+    } catch (const std::exception &e) {
+        return R"([{"msg":)" + json_string(e.what()) +
+               R"(,"line":0,"col":0,"severity":"error"}])";
     }
+    return "[]";
 }
 
-auto lsp_completions(const std::string & /*src*/, size_t /*line*/,
-                     size_t /*col*/) -> std::string {
-    return "[]";
+auto lsp_completions(const std::string &src, size_t /*line*/, size_t /*col*/)
+    -> std::string {
+    std::string json;
+    json.reserve(1024);
+    json += '[';
+    bool first = true;
+
+    const auto emit = [&](const std::string &label, const char *detail,
+                          const char *kind) -> void {
+        if (!first) json += ',';
+        first = false;
+        json += R"({"label":)" + json_string(label) + R"(,"detail":")" +
+                std::string(detail) + R"(","kind":")" + std::string(kind) +
+                R"("})";
+    };
+
+    emit("play", "", "keyword");
+    emit("instrument", "String", "keyword");
+    emit("dur", "Float", "variable");
+
+    Tokenizer tokenizer(src);
+    Parser parser(tokenizer);
+    try {
+        const auto program = parser.parse();
+        for (const auto &decl : program.decls)
+            emit(decl.name, "Var", "variable");
+    } catch (const ParseException &) { return json + ']'; }
+
+    json += ']';
+    return json;
 }
 
 auto lsp_hover(const std::string & /*src*/, size_t /*line*/, size_t /*col*/)

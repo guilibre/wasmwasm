@@ -17,5 +17,5 @@
         "erasableSyntaxOnly": true,
         "types": ["audioworklet"]
     },
-    "include": ["src/audio/processor.worklet.ts"]
+    "include": ["src/audio/processor.worklet.ts", "src/audio/conductor.ts"]
 }

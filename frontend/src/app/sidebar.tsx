@@ -6,9 +6,9 @@ interface Props {
     analyser_r: AnalyserNode | null;
 }
 
-const MIN_WIDTH = 180;
+const MIN_WIDTH = 100;
 const MAX_WIDTH = 600;
-const DEFAULT_WIDTH = 260;
+const DEFAULT_WIDTH = 100;
 
 export function Sidebar({ analyser_l, analyser_r }: Props) {
     const waveform_ref = useRef<HTMLCanvasElement>(null);

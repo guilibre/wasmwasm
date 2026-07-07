@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -24,6 +25,7 @@ struct Param {
 
 struct Block {
     std::vector<Param> params;
+    std::optional<std::string> instrument;
     size_t line = 0;
     size_t column = 0;
 };

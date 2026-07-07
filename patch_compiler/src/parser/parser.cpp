@@ -205,7 +205,7 @@ auto Parser::parse_expression() -> ParseResult {
 auto Parser::parse_logical_or() -> ParseResult {
     auto left = parse_logical_and();
     if (!left) return left;
-    while (match(TokenKind::Pipe)) {
+    while (match(TokenKind::Ampersand)) {
         advance();
         auto right = parse_logical_and();
         if (!right) return right;

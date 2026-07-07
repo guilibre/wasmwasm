@@ -41,6 +41,8 @@ void write_node(const GraphNode &node, std::string &out) {
             out += json_string(name) + ":" + format_number(value);
         }
         out += "}";
+        if (node.instrument)
+            out += ",\"instrument\":" + json_string(*node.instrument);
     }
     if (node.kind == NodeKind::Join)
         out += ",\"joinArity\":" + std::to_string(node.join_arity);

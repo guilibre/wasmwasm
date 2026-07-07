@@ -5,6 +5,17 @@
 
 namespace {
 
+auto get_param_index_js(const std::string &patch_json) -> emscripten::val {
+    try {
+        return emscripten::val(get_param_index(patch_json));
+    } catch (const std::exception &e) {
+        emscripten::val::global("Error")
+            .new_(emscripten::val(e.what()))
+            .throw_();
+        return emscripten::val::undefined();
+    }
+}
+
 auto run_compiler_js(float sample_rate, const std::string &patch_json,
                      const emscripten::val &math_bin) -> emscripten::val {
     auto math_data =
@@ -32,6 +43,7 @@ auto run_compiler_js(float sample_rate, const std::string &patch_json,
 
 EMSCRIPTEN_BINDINGS(wasmwasm) {
     emscripten::function("run_compiler", &run_compiler_js);
+    emscripten::function("get_param_index", &get_param_index_js);
     emscripten::function("lsp_diagnostics", &lsp_diagnostics);
     emscripten::function("lsp_tokens", &lsp_tokens);
     emscripten::function("lsp_completions", &lsp_completions);

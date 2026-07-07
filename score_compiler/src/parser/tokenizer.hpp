@@ -7,6 +7,7 @@
 enum class TokenKind : uint8_t {
     Ident,
     Number,
+    String,
     Equals,
     Colon,
     Plus,
@@ -17,7 +18,7 @@ enum class TokenKind : uint8_t {
     RBrace,
     LParen,
     RParen,
-    Pipe,
+    Ampersand,
     KwPlay,
     Newline,
     Eof,
@@ -50,6 +51,7 @@ class Tokenizer {
 
     auto scan_identifier() -> Token;
     auto scan_number() -> Token;
+    auto scan_string() -> Token;
 
   public:
     explicit Tokenizer(std::string_view source);

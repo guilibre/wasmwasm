@@ -17,7 +17,9 @@ import {
     get_completions,
     get_hover,
     type LspCompletion,
-} from '../patch_lsp/lsp';
+    type LspModule,
+} from '../lsp/lsp';
+import './ww_editor.scss';
 
 const TOKEN_CLASS: Record<string, string> = {
     keyword: 'ww-keyword',
@@ -36,10 +38,10 @@ function line_starts(src: string): number[] {
     return s;
 }
 
-function build_decorations(view: EditorView): DecorationSet {
+function build_decorations(mod: LspModule, view: EditorView): DecorationSet {
     const src = view.state.doc.toString();
-    const tokens = get_tokens(src);
-    const diags = get_diagnostics(src);
+    const tokens = get_tokens(mod, src);
+    const diags = get_diagnostics(mod, src);
     const starts = line_starts(src);
 
     const cls = new Array<string>(src.length).fill('');
@@ -77,47 +79,51 @@ function build_decorations(view: EditorView): DecorationSet {
     return builder.finish();
 }
 
-const highlight_plugin = ViewPlugin.fromClass(
-    class {
-        decorations: DecorationSet;
-        constructor(view: EditorView) {
-            this.decorations = build_decorations(view);
-        }
-        update(update: ViewUpdate) {
-            const forced = update.transactions.some((tr) =>
-                tr.effects.some((e) => e.is(force_highlight)),
-            );
-            if (update.docChanged || forced) {
-                this.decorations = build_decorations(update.view);
+function make_highlight_plugin(get_module: () => LspModule) {
+    return ViewPlugin.fromClass(
+        class {
+            decorations: DecorationSet;
+            constructor(view: EditorView) {
+                this.decorations = build_decorations(get_module(), view);
             }
-        }
-    },
-    { decorations: (v) => v.decorations },
-);
-
-const hover_plugin = hoverTooltip((view, pos) => {
-    const src = view.state.doc.toString();
-    const starts = line_starts(src);
-    let line = 0;
-    for (let i = 0; i < starts.length; i++) {
-        if (starts[i] <= pos) line = i;
-        else break;
-    }
-    const col = pos - starts[line];
-    const result = get_hover(src, line, col);
-    if (!result) return null;
-    return {
-        pos,
-        end: pos + 1,
-        above: true,
-        create() {
-            const dom = document.createElement('div');
-            dom.className = 'app__hover-tooltip';
-            dom.textContent = result.type;
-            return { dom };
+            update(update: ViewUpdate) {
+                const forced = update.transactions.some((tr) =>
+                    tr.effects.some((e) => e.is(force_highlight)),
+                );
+                if (update.docChanged || forced) {
+                    this.decorations = build_decorations(get_module(), update.view);
+                }
+            }
         },
-    };
-});
+        { decorations: (v) => v.decorations },
+    );
+}
+
+function make_hover_plugin(get_module: () => LspModule) {
+    return hoverTooltip((view, pos) => {
+        const src = view.state.doc.toString();
+        const starts = line_starts(src);
+        let line = 0;
+        for (let i = 0; i < starts.length; i++) {
+            if (starts[i] <= pos) line = i;
+            else break;
+        }
+        const col = pos - starts[line];
+        const result = get_hover(get_module(), src, line, col);
+        if (!result) return null;
+        return {
+            pos,
+            end: pos + 1,
+            above: true,
+            create() {
+                const dom = document.createElement('div');
+                dom.className = 'app__hover-tooltip';
+                dom.textContent = result.type;
+                return { dom };
+            },
+        };
+    });
+}
 
 const editor_theme = EditorView.theme(
     {
@@ -145,10 +151,11 @@ export interface WWEditorHandle {
 interface Props {
     initial_value: string;
     on_change: (v: string) => void;
+    get_module: () => LspModule;
 }
 
 const WWEditor = forwardRef<WWEditorHandle, Props>(function WWEditor(
-    { initial_value, on_change },
+    { initial_value, on_change, get_module },
     ref,
 ) {
     const container_ref = useRef<HTMLDivElement>(null);
@@ -156,6 +163,8 @@ const WWEditor = forwardRef<WWEditorHandle, Props>(function WWEditor(
     const initial_value_ref = useRef(initial_value);
     const on_change_ref = useRef(on_change);
     on_change_ref.current = on_change;
+    const get_module_ref = useRef(get_module);
+    get_module_ref.current = get_module;
 
     const wrapper_ref = useRef<HTMLDivElement>(null);
     const [completions, set_completions] = useState<LspCompletion[]>([]);
@@ -274,7 +283,7 @@ const WWEditor = forwardRef<WWEditorHandle, Props>(function WWEditor(
                 return;
             }
 
-            const filtered = get_completions(code, line, col).filter(
+            const filtered = get_completions(get_module_ref.current(), code, line, col).filter(
                 (c) => c.label.startsWith(prefix) && c.label !== prefix,
             );
 
@@ -297,8 +306,8 @@ const WWEditor = forwardRef<WWEditorHandle, Props>(function WWEditor(
                     completion_keymap,
                     history(),
                     keymap.of([indentWithTab, ...historyKeymap, ...defaultKeymap]),
-                    highlight_plugin,
-                    hover_plugin,
+                    make_highlight_plugin(() => get_module_ref.current()),
+                    make_hover_plugin(() => get_module_ref.current()),
                     update_listener,
                     editor_theme,
                 ],

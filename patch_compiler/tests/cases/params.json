@@ -1,0 +1,21 @@
+{
+  "global": {
+    "modules": {},
+    "patch": {
+      "dac_l": "a_out_0",
+      "dac_r": "a_out_0"
+    }
+  },
+  "instruments": {
+    "a": {
+      "modules": {
+        "block_1783457156590": "param freq = 440\n\nstatic block_1783457156590_two_pi = 2 * PI\nstatic block_1783457156590_t = 0\nstatic block_1783457156590_dt_base = block_1783457156590_two_pi / SAMPLE_RATE\n\nOUT[0] <- IN[0]*sin(block_1783457156590_t)\n\nblock_1783457156590_dt = freq * block_1783457156590_dt_base\nblock_1783457156590_t = block_1783457156590_t + block_1783457156590_dt\nblock_1783457156590_t >= block_1783457156590_two_pi ? block_1783457156590_t = block_1783457156590_t - block_1783457156590_two_pi\n",
+        "block_1783465902686": "param amp = 0.2\nparam dur = 1\n\nstatic block_1783465902686_t = 0\n\nOUT[0] <- amp*(1 - 0.5*(cos(block_1783465902686_t) + 1))\n\nblock_1783465902686_t = block_1783465902686_t + 2*PI/(dur*SAMPLE_RATE)\nblock_1783465902686_t >= 2*PI ? block_1783465902686_t = 2*PI"
+      },
+      "patch": {
+        "block_1783457156590_in_0": "block_1783465902686_out_0",
+        "out_0": "block_1783457156590_out_0"
+      }
+    }
+  }
+}

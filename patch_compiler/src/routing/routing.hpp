@@ -12,13 +12,15 @@ struct ModuleRoute {
 
 struct InstrumentGroup {
     std::string id;
-    std::vector<std::string>
-        module_names; // this instrument's blocks, topo-ordered
+    std::vector<std::string> module_names;
+    std::vector<std::string> param_names;
 };
 
 struct RoutingGraph {
     std::vector<ModuleRoute> modules;
     std::vector<InstrumentGroup> instruments;
+    std::vector<std::string> global_module_names;
+    std::vector<std::string> global_param_names;
     std::string dac_l_source;
     std::string dac_r_source;
     std::vector<std::string> out_sources;

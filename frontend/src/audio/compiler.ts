@@ -1,4 +1,5 @@
 import Module, { type EmscriptenModule } from '../wasmwasm/wasmwasm';
+import type { ParamIndex } from './conductor';
 
 export interface CompiledPatch {
     wasm_module: WebAssembly.Module;
@@ -53,5 +54,10 @@ export default class WasmWasm {
             console.error('error on compilation.', err);
             throw err;
         }
+    }
+
+    static async get_param_index(patch_json: string): Promise<ParamIndex> {
+        const mod = await this.getOrInitModule();
+        return JSON.parse(mod.get_param_index(patch_json)) as ParamIndex;
     }
 }

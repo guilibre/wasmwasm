@@ -3,6 +3,7 @@
 #include "ast/ast.hpp"
 #include <cstdint>
 #include <map>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -13,6 +14,7 @@ struct GraphNode {
     size_t id = 0;
     NodeKind kind = NodeKind::State;
     std::map<std::string, double> params;
+    std::optional<std::string> instrument;
     size_t join_arity = 0;
     std::vector<int> next;
 };

@@ -117,7 +117,20 @@ auto finish_and_dump_wat(BinaryenCodeGen &codegen_impl) -> std::string {
         throw std::runtime_error("invalid module");
     }
 
-    BinaryenSetOptimizeLevel(0);
+    {
+        std::cerr << "Module before optimization.\n";
+        std::unique_ptr<char, decltype(&free)> wat{
+            BinaryenModuleAllocateAndWriteText(main_module), free};
+        std::cerr << wat.get() << "\n";
+    }
+
+    BinaryenSetOptimizeLevel(3);
+    BinaryenSetShrinkLevel(0);
+    BinaryenSetFastMath(true);
+    BinaryenSetLowMemoryUnused(true);
+    BinaryenSetAlwaysInlineMaxSize(100);
+    BinaryenSetFlexibleInlineMaxSize(250);
+    BinaryenSetOneCallerInlineMaxSize(250);
     BinaryenModuleOptimize(main_module);
 
     if (!BinaryenModuleValidate(main_module)) {
@@ -128,8 +141,10 @@ auto finish_and_dump_wat(BinaryenCodeGen &codegen_impl) -> std::string {
         throw std::runtime_error("invalid module");
     }
 
+    std::cerr << "Module after optimization.\n";
     std::unique_ptr<char, decltype(&free)> wat{
         BinaryenModuleAllocateAndWriteText(main_module), free};
+    std::cerr << wat.get() << "\n";
     return wat.get();
 }
 
@@ -247,8 +262,6 @@ auto main(int argc, char **argv) -> int {
         bool ok = true;
         for (const auto &a : assertions)
             if (wat.contains(a.needle) != a.expect_present) ok = false;
-
-        std::cerr << wat << "\n";
 
         if (!ok) return 1;
 

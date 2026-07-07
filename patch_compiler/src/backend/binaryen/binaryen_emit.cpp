@@ -545,30 +545,45 @@ auto emit_stmts(FnCtx &ctx, const std::vector<IRInstr> &body)
                     stmts.push_back(ctx.set(i.result, expr));
                 }
                 if constexpr (std::is_same_v<T, IRIf>) {
+                    auto make_then = [&]() -> BinaryenExpressionRef {
+                        auto then_s = emit_stmts(ctx, i.body->then_body);
+                        return BinaryenBlock(
+                            ctx.mod, nullptr, then_s.data(),
+                            static_cast<BinaryenIndex>(then_s.size()),
+                            BinaryenTypeNone());
+                    };
+                    auto make_else = [&]() -> BinaryenExpressionRef {
+                        if (i.body->else_body.empty())
+                            return BinaryenNop(ctx.mod);
+                        auto else_s = emit_stmts(ctx, i.body->else_body);
+                        return BinaryenBlock(
+                            ctx.mod, nullptr, else_s.data(),
+                            static_cast<BinaryenIndex>(else_s.size()),
+                            BinaryenTypeNone());
+                    };
+
                     std::array<BinaryenExpressionRef, 2> args = {
                         BinaryenConst(ctx.mod, BinaryenLiteralFloat64(0.0)),
                         BinaryenConst(ctx.mod, BinaryenLiteralFloat64(1.0)),
                     };
-                    auto *rng =
+
+                    auto *is_geq_one = BinaryenBinary(
+                        ctx.mod, BinaryenGeFloat64(), ctx.get(i.condition),
+                        BinaryenConst(ctx.mod, BinaryenLiteralFloat64(1.0)));
+                    auto *is_leq_zero = BinaryenBinary(
+                        ctx.mod, BinaryenLeFloat64(), ctx.get(i.condition),
+                        BinaryenConst(ctx.mod, BinaryenLiteralFloat64(0.0)));
+                    auto *taken = BinaryenBinary(
+                        ctx.mod, BinaryenLtFloat64(),
                         BinaryenCall(ctx.mod, "wasmwasm_uniform", args.data(),
-                                     2, BinaryenTypeFloat64());
-                    auto *taken = BinaryenBinary(ctx.mod, BinaryenLtFloat64(),
-                                                 rng, ctx.get(i.condition));
-                    auto then_s = emit_stmts(ctx, i.body->then_body);
-                    auto *then_block =
-                        BinaryenBlock(ctx.mod, nullptr, then_s.data(),
-                                      static_cast<BinaryenIndex>(then_s.size()),
-                                      BinaryenTypeNone());
-                    BinaryenExpressionRef else_block = nullptr;
-                    if (!i.body->else_body.empty()) {
-                        auto else_s = emit_stmts(ctx, i.body->else_body);
-                        else_block = BinaryenBlock(
-                            ctx.mod, nullptr, else_s.data(),
-                            static_cast<BinaryenIndex>(else_s.size()),
-                            BinaryenTypeNone());
-                    }
-                    stmts.push_back(
-                        BinaryenIf(ctx.mod, taken, then_block, else_block));
+                                     2, BinaryenTypeFloat64()),
+                        ctx.get(i.condition));
+
+                    stmts.push_back(BinaryenIf(
+                        ctx.mod, is_geq_one, make_then(),
+                        BinaryenIf(ctx.mod, is_leq_zero, make_else(),
+                                   BinaryenIf(ctx.mod, taken, make_then(),
+                                              make_else()))));
                 }
                 if constexpr (std::is_same_v<T, IRStaticRead>) {
                     const auto off = ctx.layout->static_var_offset.at(i.name);
@@ -728,33 +743,10 @@ void emit_init_delays(const IRModule &ir, BinaryenModuleRef mod,
             "0"));
     }
 
-    for (const auto &[pname, pdefault] : ir.params) {
+    for (const auto &[pname, pdefault] : ir.params)
         all_loops.push_back(BinaryenStore(
             mod, 8, 0, 8, field_addr(mod, layout.param_offset.at(pname)),
             BinaryenConst(mod, BinaryenLiteralFloat64(pdefault)),
-            BinaryenTypeFloat64(), "0"));
-    }
-
-    for (const auto &sv : ir.static_vars) {
-        all_loops.push_back(BinaryenStore(
-            mod, 8, 0, 8, field_addr(mod, layout.static_var_offset.at(sv.name)),
-            BinaryenConst(mod, BinaryenLiteralFloat64(0.0)),
-            BinaryenTypeFloat64(), "0"));
-    }
-
-    for (size_t i = 0; i < ir.num_inputs; ++i)
-        all_loops.push_back(BinaryenStore(
-            mod, 8, 0, 8,
-            field_addr(mod,
-                       static_cast<uint32_t>(layout.in_ports_offset + (i * 8))),
-            BinaryenConst(mod, BinaryenLiteralFloat64(0.0)),
-            BinaryenTypeFloat64(), "0"));
-    for (size_t i = 0; i < ir.num_outputs; ++i)
-        all_loops.push_back(BinaryenStore(
-            mod, 8, 0, 8,
-            field_addr(
-                mod, static_cast<uint32_t>(layout.out_ports_offset + (i * 8))),
-            BinaryenConst(mod, BinaryenLiteralFloat64(0.0)),
             BinaryenTypeFloat64(), "0"));
 
     auto *body =

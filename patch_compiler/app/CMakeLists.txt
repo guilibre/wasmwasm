@@ -2,9 +2,9 @@ add_executable(${PROJECT_NAME} bindings.cpp)
 
 target_link_options(${PROJECT_NAME} PRIVATE
     --bind
-    -sALLOW_MEMORY_GROWTH=1
     -sENVIRONMENT=web
     -sEXPORT_ES6=1
+    -sINITIAL_MEMORY=134217728
     -sINVOKE_RUN=0
     -sSTACK_SIZE=5242880
     -sWASM=1

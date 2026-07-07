@@ -250,13 +250,17 @@ auto route_one_graph(
         external_input_channels[src] =
             group_base_offset[group] + ext_source_local_channel[src];
 
-    std::unordered_map<std::string, std::unordered_set<std::string>> deps;
+    std::unordered_map<std::string, std::vector<std::string>> deps;
     for (const auto &[mod_name, _] : module_sources) {
-        deps[mod_name] = {};
+        auto &mod_deps = deps[mod_name];
+        std::unordered_set<std::string> seen_deps;
         for (const auto &src : mod_inputs[mod_name]) {
             for (const auto &[other, _] : module_sources) {
-                if (src.starts_with(other + "_out_"))
-                    deps[mod_name].insert(other);
+                if (src.starts_with(other + "_out_") &&
+                    !seen_deps.contains(other)) {
+                    seen_deps.insert(other);
+                    mod_deps.push_back(other);
+                }
             }
         }
     }
@@ -300,9 +304,26 @@ auto build_routing_graph(const ParsedPatch &patch,
     for (const auto &instr : patch.instruments) {
         auto routed = route_one_graph(instr.module_sources, instr.connections);
 
+        std::vector<std::string> param_names;
+        std::unordered_set<std::string> seen_params;
+        for (const auto &name : routed.order) {
+            auto it = std::ranges::find_if(
+                compiled_modules,
+                [&](const IRModule &m) -> bool { return m.name == name; });
+            if (it == compiled_modules.end())
+                throw std::runtime_error("Module not found: " + name);
+            for (const auto &[param_name, _] : it->params) {
+                if (!seen_params.contains(param_name)) {
+                    seen_params.insert(param_name);
+                    param_names.push_back(param_name);
+                }
+            }
+        }
+
         InstrumentGroup group;
         group.id = instr.id;
         group.module_names = routed.order;
+        group.param_names = std::move(param_names);
         graph.instruments.push_back(std::move(group));
 
         for (const auto &name : routed.order) {
@@ -351,18 +372,28 @@ auto build_routing_graph(const ParsedPatch &patch,
                                          resolved_global_connections,
                                          all_instrument_block_names);
 
+    std::vector<std::string> global_param_names;
+    std::unordered_set<std::string> seen_global_params;
     for (const auto &name : global_routed.order) {
         auto it = std::ranges::find_if(
             compiled_modules,
             [&](const IRModule &m) -> bool { return m.name == name; });
         if (it == compiled_modules.end())
             throw std::runtime_error("Module not found: " + name);
+        for (const auto &[param_name, _] : it->params) {
+            if (!seen_global_params.contains(param_name)) {
+                seen_global_params.insert(param_name);
+                global_param_names.push_back(param_name);
+            }
+        }
         graph.modules.push_back({
             .ir = std::move(*it),
             .inputs = global_routed.mod_inputs[name],
         });
     }
 
+    graph.global_module_names = global_routed.order;
+    graph.global_param_names = std::move(global_param_names);
     graph.dac_l_source = global_routed.dac_l;
     graph.dac_r_source = global_routed.dac_r;
     graph.out_sources = global_routed.out_sources;

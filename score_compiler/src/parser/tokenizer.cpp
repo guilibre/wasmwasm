@@ -28,10 +28,10 @@ auto make(TokenKind kind, std::string lexeme, size_t line, size_t column)
 } // namespace
 
 auto Token::to_string() const -> std::string {
-    static constexpr std::array<const char *, 17> names = {
-        "Ident", "Number", "Equals",  "Colon",  "Plus",    "Minus",
-        "Star",  "Slash",  "LBrace",  "RBrace", "LParen",  "RParen",
-        "Pipe",  "KwPlay", "Newline", "Eof",    "Invalid",
+    static constexpr std::array<const char *, 18> names = {
+        "Ident",  "Number",    "String", "Equals",  "Colon",  "Plus",
+        "Minus",  "Star",      "Slash",  "LBrace",  "RBrace", "LParen",
+        "RParen", "Ampersand", "KwPlay", "Newline", "Eof",    "Invalid",
     };
     std::string out = names[static_cast<uint8_t>(kind)];
     out += " '" + lexeme + "' @" + std::to_string(line) + ":" +
@@ -91,6 +91,21 @@ auto Tokenizer::scan_identifier() -> Token {
     return make(TokenKind::Ident, lexeme, line, column);
 }
 
+auto Tokenizer::scan_string() -> Token {
+    std::string value;
+    while (current < source.size() && peek_current() != '"') {
+        char c = advance();
+        if (c == '\\' && peek_current() == '"')
+            value += advance();
+        else
+            value += c;
+    }
+    if (current >= source.size())
+        return error_token("unterminated string literal");
+    advance();
+    return make(TokenKind::String, value, line, column);
+}
+
 auto Tokenizer::scan_number() -> Token {
     while (current < source.size() && is_digit(peek_current())) advance();
     if (peek_current() == '.' && is_digit(peek_next())) {
@@ -132,6 +147,13 @@ auto Tokenizer::next() -> Token {
         return tok;
     }
 
+    if (c == '"') {
+        Token tok = scan_string();
+        tok.line = start_line;
+        tok.column = start_column;
+        return tok;
+    }
+
     switch (c) {
     case '=':
         return make(TokenKind::Equals, "=", start_line, start_column);
@@ -153,8 +175,8 @@ auto Tokenizer::next() -> Token {
         return make(TokenKind::LParen, "(", start_line, start_column);
     case ')':
         return make(TokenKind::RParen, ")", start_line, start_column);
-    case '|':
-        return make(TokenKind::Pipe, "|", start_line, start_column);
+    case '&':
+        return make(TokenKind::Ampersand, "&", start_line, start_column);
     default: {
         Token tok =
             error_token(std::string("unexpected character '") + c + "'");

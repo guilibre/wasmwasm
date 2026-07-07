@@ -1,0 +1,9 @@
+param amp = 0.2
+param dur = 1
+
+static t = 0
+
+OUT[0] <- amp*(1 - 0.5*(cos(t) + 1))
+
+t = t + 2*PI/(dur*SAMPLE_RATE)
+t >= 2*PI ? t = 2*PI

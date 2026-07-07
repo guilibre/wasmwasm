@@ -174,8 +174,11 @@ auto Lowerer::lower_static_bind(const StaticBind &node)
             static_init_body.emplace_back(make_scalar_call(
                 r, fn_name, std::move(call_args), IRType::Float));
             static_init_body.emplace_back(IRMemWrite{
-                .ref = IRMemRef{.buffer = name,
-                                .byte_offset = static_cast<uint32_t>(i * 8)},
+                .ref =
+                    IRMemRef{
+                        .buffer = name,
+                        .byte_offset = static_cast<uint32_t>(i * 8),
+                    },
                 .value = IRLocalRef{r},
             });
         }
@@ -200,8 +203,10 @@ auto Lowerer::lower_static_bind(const StaticBind &node)
             if (v)
                 static_init_body.emplace_back(IRMemWrite{
                     .ref =
-                        IRMemRef{.buffer = name,
-                                 .byte_offset = static_cast<uint32_t>(i * 8)},
+                        IRMemRef{
+                            .buffer = name,
+                            .byte_offset = static_cast<uint32_t>(i * 8),
+                        },
                     .value = *v,
                 });
         }

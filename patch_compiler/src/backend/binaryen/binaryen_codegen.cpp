@@ -36,8 +36,16 @@ void BinaryenCodeGen::finalize(const RoutingGraph &graph) {
         members.reserve(group.module_names.size());
         for (const auto &name : group.module_names)
             members.push_back(&modules_.at(name));
-        emit_instance_api_group(group.id, members, mod_, layouts_);
+        emit_instance_api_group(group.id, members, group.param_names, mod_,
+                                layouts_);
     }
+
+    std::vector<const IRModule *> global_members;
+    global_members.reserve(graph.global_module_names.size());
+    for (const auto &name : graph.global_module_names)
+        global_members.push_back(&modules_.at(name));
+    emit_global_set_param(global_members, graph.global_param_names, mod_,
+                          layouts_);
 
     emit_main_loop(graph, mod_, layouts_);
 }

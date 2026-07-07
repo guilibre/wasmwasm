@@ -14,6 +14,7 @@ import type {
     PatchAction,
     HistoryState,
     InstrumentState,
+    ScoreParamBindings,
 } from './patch_types';
 
 const NO_HISTORY = new Set<PatchAction['type']>([
@@ -28,9 +29,10 @@ const NO_HISTORY = new Set<PatchAction['type']>([
 ]);
 
 const STORAGE_KEY = 'wasmwasm_patch';
+const DEFAULT_BPM = 120;
 
 const DEFAULT_ORCHESTRA: OrchestraState = {
-    bpm: 120,
+    bpm: DEFAULT_BPM,
     active_id: null,
     instruments: [],
     global_nodes: default_global_nodes(),
@@ -51,7 +53,7 @@ function normalize_orchestra(orchestra: Partial<OrchestraState>): OrchestraState
         })),
     );
     return {
-        bpm: orchestra.bpm ?? 120,
+        bpm: orchestra.bpm ?? DEFAULT_BPM,
         active_id: orchestra.active_id ?? null,
         instruments,
         global_nodes,
@@ -59,23 +61,44 @@ function normalize_orchestra(orchestra: Partial<OrchestraState>): OrchestraState
     };
 }
 
+function normalize_score_param_bindings(
+    bindings: ScoreParamBindings | undefined,
+): ScoreParamBindings {
+    const normalized: ScoreParamBindings = {};
+    for (const [instrument_id, source] of Object.entries(bindings ?? {})) {
+        if (typeof source === 'string') normalized[instrument_id] = source;
+    }
+    return normalized;
+}
+
 function load_initial_patch(): PatchState {
     try {
         const saved = localStorage.getItem(STORAGE_KEY);
         if (saved) {
-            const { orchestra } = JSON.parse(saved);
+            const { orchestra, score_source, score_param_bindings, global_callback_source } =
+                JSON.parse(saved);
             if (orchestra) {
                 return {
                     orchestra: normalize_orchestra(orchestra),
                     selected_id: null,
                     view: 'instrument',
+                    score_source: (score_source as string | undefined) ?? '',
+                    score_param_bindings: normalize_score_param_bindings(score_param_bindings),
+                    global_callback_source: (global_callback_source as string | undefined) ?? '',
                 };
             }
         }
     } catch (_e) {
         console.error(_e);
     }
-    return { orchestra: DEFAULT_ORCHESTRA, selected_id: null, view: 'instrument' };
+    return {
+        orchestra: DEFAULT_ORCHESTRA,
+        selected_id: null,
+        view: 'instrument',
+        score_source: '',
+        score_param_bindings: {},
+        global_callback_source: '',
+    };
 }
 
 export function load_initial(): HistoryState {
@@ -332,6 +355,12 @@ function patch_reducer(state: PatchState, action: PatchAction): PatchState {
                     ),
                 },
             };
+        case 'update_score_source':
+            return { ...state, score_source: action.source };
+        case 'update_score_param_bindings':
+            return { ...state, score_param_bindings: action.bindings };
+        case 'update_global_callback_source':
+            return { ...state, global_callback_source: action.source };
         case 'set_orchestra_bpm':
             return { ...state, orchestra: { ...state.orchestra, bpm: action.bpm } };
         case 'add_instrument': {
@@ -424,6 +453,12 @@ function patch_reducer(state: PatchState, action: PatchAction): PatchState {
                 orchestra: normalize_orchestra(action.orchestra),
                 selected_id: null,
                 view: 'instrument',
+                score_source: action.score_source ?? state.score_source,
+                score_param_bindings: action.score_param_bindings
+                    ? normalize_score_param_bindings(action.score_param_bindings)
+                    : state.score_param_bindings,
+                global_callback_source:
+                    action.global_callback_source ?? state.global_callback_source,
             };
         case 'apply_layout':
             return {
@@ -485,7 +520,12 @@ function save(state: PatchState): void {
     try {
         localStorage.setItem(
             STORAGE_KEY,
-            JSON.stringify({ orchestra: serialize_orchestra(state.orchestra) }),
+            JSON.stringify({
+                orchestra: serialize_orchestra(state.orchestra),
+                score_source: state.score_source,
+                score_param_bindings: state.score_param_bindings,
+                global_callback_source: state.global_callback_source,
+            }),
         );
     } catch (_e) {
         console.error(_e);

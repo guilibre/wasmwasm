@@ -34,10 +34,15 @@ export interface OrchestraState {
 
 export type PatchView = 'instrument' | 'global';
 
+export type ScoreParamBindings = Record<string, string>;
+
 export interface PatchState {
     orchestra: OrchestraState;
     selected_id: string | null;
     view: PatchView;
+    score_source: string;
+    score_param_bindings: ScoreParamBindings;
+    global_callback_source: string;
 }
 
 export type PatchAction =
@@ -53,6 +58,9 @@ export type PatchAction =
     | { type: 'update_name'; id: string; name: string }
     | { type: 'add_node'; node: Node }
     | { type: 'update_global_code'; id: string; code: string }
+    | { type: 'update_score_source'; source: string }
+    | { type: 'update_score_param_bindings'; bindings: ScoreParamBindings }
+    | { type: 'update_global_callback_source'; source: string }
     | { type: 'update_global_name'; id: string; name: string }
     | { type: 'add_global_node'; node: Node }
     | { type: 'set_orchestra_bpm'; bpm: number }
@@ -60,7 +68,13 @@ export type PatchAction =
     | { type: 'remove_instrument'; id: string }
     | { type: 'rename_instrument'; id: string; name: string }
     | { type: 'set_active_instrument'; id: string }
-    | { type: 'load'; orchestra: OrchestraState }
+    | {
+          type: 'load';
+          orchestra: OrchestraState;
+          score_source?: string;
+          score_param_bindings?: ScoreParamBindings;
+          global_callback_source?: string;
+      }
     | { type: 'apply_layout'; instrument_id: string; nodes: Node[] }
     | { type: 'apply_global_layout'; nodes: Node[] }
     | { type: 'undo' }
