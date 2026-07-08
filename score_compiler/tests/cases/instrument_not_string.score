@@ -1,5 +1,0 @@
-var1 = {
-  instrument: 42
-  dur: 1
-}
-play var1

@@ -51,5 +51,15 @@ auto allocate_shared_slot_table(uint32_t &next_offset) -> SharedSlotTable {
     next_offset += max_instances_per_module * 4;
     table.slots_table_base = next_offset;
     next_offset += max_instances_per_module * 4;
+    table.dense_base = next_offset;
+    next_offset += max_instances_per_module * 4;
+    table.sparse_base = next_offset;
+    next_offset += max_instances_per_module * 4;
+    table.active_count_addr = next_offset;
+    next_offset += 4;
+    table.pending_kills_base = next_offset;
+    next_offset += max_instances_per_module * 4;
+    table.pending_kill_count_addr = next_offset;
+    next_offset += 4;
     return table;
 }

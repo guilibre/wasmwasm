@@ -23,6 +23,11 @@ void emit_global_set_param(
     const std::vector<std::string> &param_names, BinaryenModuleRef mod,
     const std::unordered_map<std::string, InstanceLayout> &layouts);
 
+auto emit_global_init(
+    const std::vector<const IRModule *> &members, BinaryenModuleRef mod,
+    const std::unordered_map<std::string, InstanceLayout> &layouts)
+    -> BinaryenFunctionRef;
+
 void emit_main_loop(
     const RoutingGraph &graph, BinaryenModuleRef mod,
     const std::unordered_map<std::string, InstanceLayout> &layouts);

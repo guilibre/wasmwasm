@@ -7,6 +7,7 @@
 #include <string>
 #include <type_traits>
 #include <unordered_map>
+#include <unordered_set>
 #include <variant>
 #include <vector>
 
@@ -14,9 +15,10 @@ namespace {
 
 auto lookup_env(
     const std::string &name,
-    const std::vector<std::unordered_map<std::string, TypePtr>> &env)
-    -> std::optional<TypePtr> {
-    for (int i = static_cast<int>(env.size()) - 1; i >= 0; --i) {
+    const std::vector<std::unordered_map<std::string, TypePtr>> &env,
+    size_t boundary = 0) -> std::optional<TypePtr> {
+    for (int i = static_cast<int>(env.size()) - 1;
+         i >= static_cast<int>(boundary); --i) {
         auto it = env[static_cast<size_t>(i)].find(name);
         if (it != env[static_cast<size_t>(i)].end()) return it->second;
     }
@@ -240,7 +242,9 @@ namespace {
 void infer_expr_impl(const ExprPtr &expr,
                      std::vector<std::unordered_map<std::string, TypePtr>> &env,
                      NameEnv &names, size_t &shadow_counter,
-                     Substitution &subst, TypeGenerator &gen);
+                     Substitution &subst, TypeGenerator &gen,
+                     size_t lambda_boundary,
+                     std::unordered_set<std::string> &static_names);
 
 } // namespace
 
@@ -249,15 +253,18 @@ void infer_expr(const ExprPtr &expr,
                 Substitution &subst, TypeGenerator &gen) {
     NameEnv names(env.size());
     size_t shadow_counter = 0;
+    std::unordered_set<std::string> static_names;
     if (auto *block = std::get_if<CodeBlock>(&expr->node)) {
         for (auto &child : block->expressions)
-            infer_expr_impl(child, env, names, shadow_counter, subst, gen);
+            infer_expr_impl(child, env, names, shadow_counter, subst, gen, 0,
+                            static_names);
         expr->type = block->expressions.empty()
                          ? Type::make<TypeBase>(BaseTypeKind::Void)
                          : apply_subst(subst, block->expressions.back()->type);
         return;
     }
-    infer_expr_impl(expr, env, names, shadow_counter, subst, gen);
+    infer_expr_impl(expr, env, names, shadow_counter, subst, gen, 0,
+                    static_names);
 }
 
 namespace {
@@ -265,13 +272,19 @@ namespace {
 void infer_expr_impl(const ExprPtr &expr,
                      std::vector<std::unordered_map<std::string, TypePtr>> &env,
                      NameEnv &names, size_t &shadow_counter,
-                     Substitution &subst, TypeGenerator &gen) {
+                     Substitution &subst, TypeGenerator &gen,
+                     size_t lambda_boundary,
+                     std::unordered_set<std::string> &static_names) {
     expr->type = std::visit(
         [&](auto &node) -> TypePtr {
             using T = std::decay_t<decltype(node)>;
 
             if constexpr (std::is_same_v<T, Bind>) {
-                auto existing = lookup_env(node.name.lexeme, env);
+                const size_t effective_boundary =
+                    static_names.contains(node.name.lexeme) ? 0
+                                                            : lambda_boundary;
+                auto existing =
+                    lookup_env(node.name.lexeme, env, effective_boundary);
                 const bool is_new_binding = !existing;
                 const auto resolved_name =
                     is_new_binding
@@ -287,7 +300,7 @@ void infer_expr_impl(const ExprPtr &expr,
                                                   resolved_name);
                 }
                 infer_expr_impl(node.value, env, names, shadow_counter, subst,
-                                gen);
+                                gen, lambda_boundary, static_names);
                 if (is_new_binding) {
                     unify(rec_type, node.value->type, subst, expr->pos);
                     env.back()[node.name.lexeme] =
@@ -300,9 +313,9 @@ void infer_expr_impl(const ExprPtr &expr,
 
             if constexpr (std::is_same_v<T, BinaryOp>) {
                 infer_expr_impl(node.left, env, names, shadow_counter, subst,
-                                gen);
+                                gen, lambda_boundary, static_names);
                 infer_expr_impl(node.right, env, names, shadow_counter, subst,
-                                gen);
+                                gen, lambda_boundary, static_names);
                 unify(node.left->type, node.right->type, subst, expr->pos);
                 return apply_subst(subst, node.left->type);
             }
@@ -314,7 +327,7 @@ void infer_expr_impl(const ExprPtr &expr,
                 names.emplace_back();
                 for (auto &child : node.expressions)
                     infer_expr_impl(child, env, names, shadow_counter, subst,
-                                    gen);
+                                    gen, lambda_boundary, static_names);
                 env.pop_back();
                 names.pop_back();
                 return apply_subst(subst, node.expressions.back()->type);
@@ -322,7 +335,7 @@ void infer_expr_impl(const ExprPtr &expr,
 
             if constexpr (std::is_same_v<T, DelayCtor>) {
                 infer_expr_impl(node.init_fn, env, names, shadow_counter, subst,
-                                gen);
+                                gen, lambda_boundary, static_names);
                 return Type::make<TypeBase>(BaseTypeKind::Float);
             }
 
@@ -339,7 +352,7 @@ void infer_expr_impl(const ExprPtr &expr,
                         expr->pos);
                 if (node.delay)
                     infer_expr_impl(*node.delay, env, names, shadow_counter,
-                                    subst, gen);
+                                    subst, gen, lambda_boundary, static_names);
                 return resolved;
             }
 
@@ -378,7 +391,7 @@ void infer_expr_impl(const ExprPtr &expr,
 
             if constexpr (std::is_same_v<T, ExprIndex>) {
                 infer_expr_impl(node.base, env, names, shadow_counter, subst,
-                                gen);
+                                gen, lambda_boundary, static_names);
                 auto resolved = apply_subst(subst, node.base->type);
                 const auto *idx_lit = std::get_if<Literal>(&node.index->node);
                 if (!idx_lit)
@@ -403,24 +416,24 @@ void infer_expr_impl(const ExprPtr &expr,
 
             if constexpr (std::is_same_v<T, DelayWrite>) {
                 infer_expr_impl(node.value, env, names, shadow_counter, subst,
-                                gen);
+                                gen, lambda_boundary, static_names);
                 return Type::make<TypeBase>(BaseTypeKind::Void);
             }
 
             if constexpr (std::is_same_v<T, DelayWriteQuiet>) {
                 if (node.delay)
                     infer_expr_impl(*node.delay, env, names, shadow_counter,
-                                    subst, gen);
+                                    subst, gen, lambda_boundary, static_names);
                 infer_expr_impl(node.value, env, names, shadow_counter, subst,
-                                gen);
+                                gen, lambda_boundary, static_names);
                 return Type::make<TypeBase>(BaseTypeKind::Void);
             }
 
             if constexpr (std::is_same_v<T, Call>) {
                 infer_expr_impl(node.callee, env, names, shadow_counter, subst,
-                                gen);
+                                gen, lambda_boundary, static_names);
                 infer_expr_impl(node.argument, env, names, shadow_counter,
-                                subst, gen);
+                                subst, gen, lambda_boundary, static_names);
                 auto result_type = gen.fresh_type_var();
                 auto fun_type =
                     Type::make<TypeFun>(node.argument->type, result_type);
@@ -439,12 +452,12 @@ void infer_expr_impl(const ExprPtr &expr,
                             {{node.parameter->lexeme,
                               node.parameter->lexeme}}));
                     infer_expr_impl(node.body, env, names, shadow_counter,
-                                    subst, gen);
+                                    subst, gen, env.size(), static_names);
                     env.pop_back();
                     names.pop_back();
                 } else {
                     infer_expr_impl(node.body, env, names, shadow_counter,
-                                    subst, gen);
+                                    subst, gen, env.size(), static_names);
                 }
                 return Type::make<TypeFun>(apply_subst(subst, param_type),
                                            apply_subst(subst, node.body->type));
@@ -456,7 +469,7 @@ void infer_expr_impl(const ExprPtr &expr,
 
             if constexpr (std::is_same_v<T, OutputWrite>) {
                 infer_expr_impl(node.value, env, names, shadow_counter, subst,
-                                gen);
+                                gen, lambda_boundary, static_names);
                 unify(node.value->type,
                       Type::make<TypeBase>(BaseTypeKind::Float), subst,
                       expr->pos);
@@ -465,7 +478,8 @@ void infer_expr_impl(const ExprPtr &expr,
 
             if constexpr (std::is_same_v<T, StaticBind>) {
                 infer_expr_impl(node.init, env, names, shadow_counter, subst,
-                                gen);
+                                gen, lambda_boundary, static_names);
+                static_names.insert(node.name.lexeme);
                 auto existing = lookup_env(node.name.lexeme, env);
                 if (!existing) {
                     env.back().emplace(node.name.lexeme, node.init->type);
@@ -487,12 +501,13 @@ void infer_expr_impl(const ExprPtr &expr,
 
             if constexpr (std::is_same_v<T, Conditional>) {
                 infer_expr_impl(node.condition, env, names, shadow_counter,
-                                subst, gen);
+                                subst, gen, lambda_boundary, static_names);
                 infer_expr_impl(node.then_branch, env, names, shadow_counter,
-                                subst, gen);
+                                subst, gen, lambda_boundary, static_names);
                 if (node.else_branch) {
                     infer_expr_impl(*node.else_branch, env, names,
-                                    shadow_counter, subst, gen);
+                                    shadow_counter, subst, gen, lambda_boundary,
+                                    static_names);
                     unify(node.then_branch->type, (*node.else_branch)->type,
                           subst, expr->pos);
                 }
@@ -510,7 +525,7 @@ void infer_expr_impl(const ExprPtr &expr,
                 elem_types.reserve(node.elements.size());
                 for (const auto &elem : node.elements) {
                     infer_expr_impl(elem, env, names, shadow_counter, subst,
-                                    gen);
+                                    gen, lambda_boundary, static_names);
                     unify(elem->type, float_type, subst, elem->pos);
                     elem_types.push_back(apply_subst(subst, elem->type));
                 }
@@ -523,7 +538,7 @@ void infer_expr_impl(const ExprPtr &expr,
                 const auto float_to_float =
                     Type::make<TypeFun>(float_type, float_type);
                 infer_expr_impl(node.init_fn, env, names, shadow_counter, subst,
-                                gen);
+                                gen, lambda_boundary, static_names);
                 unify(node.init_fn->type, float_to_float, subst, expr->pos);
                 return Type::make<TypeArray>(
                     std::vector<TypePtr>(node.size, float_type));
@@ -535,7 +550,7 @@ void infer_expr_impl(const ExprPtr &expr,
 
             if constexpr (std::is_same_v<T, UnaryOp>) {
                 infer_expr_impl(node.expr, env, names, shadow_counter, subst,
-                                gen);
+                                gen, lambda_boundary, static_names);
                 return apply_subst(subst, node.expr->type);
             }
 

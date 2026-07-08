@@ -2,6 +2,8 @@
 
 This tutorial introduces wasmwasm step by step. Each section builds on the previous one. Open the [live editor](https://guilibre.github.io/wasmwasm), paste the examples, and hit Play.
 
+This covers the instrument language only - once you have an instrument, see the [score tutorial](score-tutorial.md) for how to sequence and play it.
+
 ## 1. Hello, sine
 
 The simplest possible program: a sine oscillator at 440 Hz.

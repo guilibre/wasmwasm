@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import './patch_editor.scss';
-import { ReactFlow, Background, Controls, useReactFlow } from '@xyflow/react';
+import { ReactFlow, Controls, useReactFlow } from '@xyflow/react';
 import type {
     NodeMouseHandler,
     EdgeMouseHandler,
@@ -221,7 +221,6 @@ export function PatchEditor({ store }: Props) {
                 fitView
                 proOptions={{ hideAttribution: true }}
             >
-                <Background />
                 <Controls showZoom={false} showInteractive={false} />
             </ReactFlow>
 

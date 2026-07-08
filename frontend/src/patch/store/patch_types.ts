@@ -43,6 +43,7 @@ export interface PatchState {
     score_source: string;
     score_param_bindings: ScoreParamBindings;
     global_callback_source: string;
+    load_serial: number;
 }
 
 export type PatchAction =
@@ -84,4 +85,5 @@ export interface HistoryState {
     past: PatchState[];
     present: PatchState;
     future: PatchState[];
+    storage_error: string | null;
 }

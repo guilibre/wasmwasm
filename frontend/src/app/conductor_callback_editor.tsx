@@ -9,21 +9,31 @@ import { tags } from '@lezer/highlight';
 import { tsFacet, tsSync, tsLinter, tsAutocomplete, tsHover } from '@valtown/codemirror-ts';
 import { get_ts_env, callback_source_file } from './ts_env';
 
-export const instrument_callback_example = `(
-  current_token_params: Record<string, number>,
-  all_tokens_params: { instrument_id: string | null; params: Record<string, number> }[],
-  bpm: number,
-): Record<string, number> => {
-  return {
-    freq: current_token_params["freq"] ?? 440,
-  };
+export const instrument_callback_example = `class InstrumentHandler implements InstrumentCallbackHandler {
+  call(
+    p: Record<string, number>,
+    ap: TokenParams[],
+  ): Record<string, number> {
+    const amp = p['amp'] ?? 0.2;
+    const atk = p['atk'] ?? 0.01;
+    const rel = p['rel'] ?? (p['dur'] ?? 0.5);
+    const freq = p['freq'] ?? 440;
+    const pan = p['pan'] ?? 0;
+
+    return {
+      amp,
+      atk,
+      rel,
+      freq,
+      pan,
+    };
+  }
 }`;
 
-export const global_callback_example = `(
-  all_tokens_params: { instrument_id: string | null; params: Record<string, number> }[],
-  bpm: number,
-): Record<string, number> => {
-  return {};
+export const global_callback_example = `class GlobalHandler implements GlobalCallbackHandler {
+  call(ap: TokenParams[]): Record<string, number> {
+    return {};
+  }
 }`;
 
 const ts_highlight_style = HighlightStyle.define([

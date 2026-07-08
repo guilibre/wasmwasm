@@ -2,6 +2,8 @@
 
 A wasmwasm program runs once per audio frame. Each line is either a binding or an output assignment. Lines beginning with `#` are comments.
 
+This document covers the instrument language, compiled by `patch_compiler` - it defines what a single voice sounds like. For sequencing, rhythm, and composing multiple instruments together, see the [score language](score-language.md).
+
 ## Variables
 
 ```WASMWASM

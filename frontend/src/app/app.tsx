@@ -27,6 +27,9 @@ export default function App() {
         select,
         export_patch,
         import_patch,
+        import_error,
+        storage_error,
+        load_serial,
         add_instrument,
         remove_instrument,
         rename_instrument,
@@ -90,7 +93,9 @@ export default function App() {
                         e.target.value = '';
                     }}
                 />
-                {error && <span className="app__error">{error}</span>}
+                {(error || import_error || storage_error) && (
+                    <span className="app__error">{error || import_error || storage_error}</span>
+                )}
             </div>
 
             <div className="app__workspace">
@@ -103,6 +108,7 @@ export default function App() {
                     global_callback_source={global_callback_source}
                     on_global_callback_source_change={update_global_callback_source}
                     on_bpm_change={set_orchestra_bpm}
+                    load_serial={load_serial}
                 />
                 <div className="app__patch-pane">
                     <div className="app__patch-container">
@@ -150,7 +156,7 @@ export default function App() {
                     </div>
                     <WWEditor
                         ref={editor_ref}
-                        key={selected_block.id}
+                        key={`${selected_block.id}-${load_serial}`}
                         initial_value={(selected_block.data as { code: string }).code}
                         on_change={(code) => update_code(selected_block.id, code)}
                         get_module={() => WasmWasm.getModule()}

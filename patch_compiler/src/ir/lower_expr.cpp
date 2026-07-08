@@ -43,6 +43,11 @@ auto Lowerer::lower_expr(const ExprPtr &e) -> std::optional<IRValue> {
                 if (name == "SAMPLE_RATE")
                     return emit_global_read(name, IRType::Float);
 
+                if (name == "die") {
+                    emit(IRDie{});
+                    return std::nullopt;
+                }
+
                 if (inline_alias.contains(name))
                     return IRLocalRef{inline_alias.at(name)};
 

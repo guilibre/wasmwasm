@@ -5,7 +5,7 @@ set -e
 JOBS=${1:-0}
 
 cd patch_compiler
-emcmake cmake -S . -B build -DBUILD_TESTS_WW=OFF
+emcmake cmake -S . -B build -DBUILD_TESTS_WW=OFF -DCMAKE_BUILD_TYPE=Release
 if [ "$JOBS" -gt 0 ]; then
     cmake --build build -- -j$JOBS
 else
@@ -13,7 +13,7 @@ else
 fi
 
 cd ../score_compiler
-emcmake cmake -S . -B build
+emcmake cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 if [ "$JOBS" -gt 0 ]; then
     cmake --build build -- -j$JOBS
 else

@@ -127,12 +127,14 @@ struct IROutputWrite {
     IRValue value;
 };
 
+struct IRDie {};
+
 using IRInstr =
     std::variant<IRBinOp, IRUnaryNeg, IRAssign, IRCall, IRDelayRead,
                  IRDelayReadDelayed, IRDelayWrite, IRDelayWriteQuiet,
                  IRGlobalRead, IRIf, IRInputRead, IROutputWrite, IRParamRead,
                  IRParamWrite, IRStaticRead, IRStaticWrite, IRReturn, IRMemRead,
-                 IRMemWrite>;
+                 IRMemWrite, IRDie>;
 
 struct IRIfBody {
     std::vector<IRInstr> then_body;

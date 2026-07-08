@@ -140,6 +140,7 @@ struct Lowerer {
     void pre_register_math_builtins();
     void pre_register_fns(const ExprPtr &program);
     void pre_register_arities(const ExprPtr &program);
+    void pre_register_statics(const ExprPtr &program);
     [[nodiscard]] auto shape_of_call_arg(const ExprPtr &arg) const
         -> ParamShape;
     void scan_call_site_shapes(const ExprPtr &e);

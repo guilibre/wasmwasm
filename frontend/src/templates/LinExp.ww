@@ -1,0 +1,15 @@
+param a_lin = 0
+param b_lin = 1
+param a_exp = 0
+param b_exp = 1
+param curvature = 2
+
+b_lin == a_lin ? b_lin = a_lin + 1
+a_exp == b_exp ? b_exp = a_exp + 1
+curvature <= 1 ? curvature = 1.001
+
+x = min 1 (max 0 IN[0])
+x = curvature^((x - a_lin)/(b_lin - a_lin))
+x = (x - 1)/(curvature - 1)
+x = a_exp + x*(b_exp - a_exp)
+OUT[0] <- x

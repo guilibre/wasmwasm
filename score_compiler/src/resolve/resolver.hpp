@@ -8,7 +8,19 @@
 #include <string>
 #include <vector>
 
-enum class NodeKind : uint8_t { State, Fork, Join, Passthrough };
+enum class NodeKind : uint8_t {
+    State,
+    Fork,
+    Join,
+    Passthrough,
+    TransformPush,
+    TransformPop
+};
+
+struct TransformEntry {
+    std::string param_name;
+    const Expr *expr = nullptr;
+};
 
 struct GraphNode {
     size_t id = 0;
@@ -16,12 +28,16 @@ struct GraphNode {
     std::map<std::string, double> params;
     std::optional<std::string> instrument;
     size_t join_arity = 0;
-    std::vector<int> next;
+    std::vector<size_t> next;
+    std::vector<TransformEntry> transforms;
+    std::optional<std::string> push_instrument;
 };
 
 struct ExpandedGraph {
     std::vector<GraphNode> nodes;
     std::vector<std::vector<size_t>> entries;
+    std::vector<std::pair<std::string, std::vector<double>>> scales;
+    std::vector<std::unique_ptr<Expr>> owned_exprs;
 };
 
 class ResolveException : public std::runtime_error {

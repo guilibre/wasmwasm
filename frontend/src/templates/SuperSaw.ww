@@ -1,0 +1,11 @@
+param freq = 440
+static ts = array 3 {_. 0}
+static t = 0
+
+OUT[0] <- IN[0] * t
+
+freqs = array 3 {i. freq*(1 + 0.01*(i - 1))}
+static sr_inv2 = 2/SAMPLE_RATE
+ts = zip {a b. a + b*sr_inv2} ts freqs
+ts = map {a. a >= 1 ? a - 2 : a} ts
+t = (foldr 0 {a acc. a + acc} ts)/3

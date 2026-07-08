@@ -9,3 +9,4 @@ OUT[0] <- amp*env
 
 env = env + (gate ? 1/(atk*SAMPLE_RATE) : -1/(rel*SAMPLE_RATE))
 env = min 1 (max 0 env)
+env == 0 ? die

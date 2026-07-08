@@ -59,6 +59,35 @@ auto instance_base_of_slot(BinaryenModuleRef mod, const InstanceLayout &layout,
                                    static_cast<int32_t>(layout.slot_stride)))));
 }
 
+auto dense_addr(BinaryenModuleRef mod, const InstanceLayout &layout,
+                BinaryenExpressionRef idx) -> BinaryenExpressionRef {
+    return BinaryenBinary(
+        mod, BinaryenAddInt32(),
+        BinaryenConst(
+            mod, BinaryenLiteralInt32(static_cast<int32_t>(layout.dense_base))),
+        BinaryenBinary(mod, BinaryenMulInt32(), idx,
+                       BinaryenConst(mod, BinaryenLiteralInt32(4))));
+}
+
+auto sparse_addr(BinaryenModuleRef mod, const InstanceLayout &layout,
+                 BinaryenExpressionRef idx) -> BinaryenExpressionRef {
+    return BinaryenBinary(
+        mod, BinaryenAddInt32(),
+        BinaryenConst(mod, BinaryenLiteralInt32(
+                               static_cast<int32_t>(layout.sparse_base))),
+        BinaryenBinary(mod, BinaryenMulInt32(), idx,
+                       BinaryenConst(mod, BinaryenLiteralInt32(4))));
+}
+
+auto active_count_load(BinaryenModuleRef mod, const InstanceLayout &layout)
+    -> BinaryenExpressionRef {
+    return BinaryenLoad(
+        mod, 4, false, 0, 4, BinaryenTypeInt32(),
+        BinaryenConst(mod, BinaryenLiteralInt32(
+                               static_cast<int32_t>(layout.active_count_addr))),
+        "0");
+}
+
 using StopCond = std::function<BinaryenExpressionRef(BinaryenModuleRef,
                                                      BinaryenExpressionRef)>;
 
@@ -178,6 +207,32 @@ void emit_instance_api_group(
             BinaryenTypeInt32(), "0"));
 
         constexpr BinaryenIndex instance_base_local = 2;
+        constexpr BinaryenIndex active_count_local = 3;
+
+        stmts.push_back(BinaryenLocalSet(
+            mod, active_count_local, active_count_load(mod, shared_layout)));
+        stmts.push_back(BinaryenStore(
+            mod, 4, 0, 4,
+            dense_addr(
+                mod, shared_layout,
+                BinaryenLocalGet(mod, active_count_local, BinaryenTypeInt32())),
+            BinaryenLocalGet(mod, slot_local, BinaryenTypeInt32()),
+            BinaryenTypeInt32(), "0"));
+        stmts.push_back(BinaryenStore(
+            mod, 4, 0, 4,
+            sparse_addr(mod, shared_layout,
+                        BinaryenLocalGet(mod, slot_local, BinaryenTypeInt32())),
+            BinaryenLocalGet(mod, active_count_local, BinaryenTypeInt32()),
+            BinaryenTypeInt32(), "0"));
+        stmts.push_back(BinaryenStore(
+            mod, 4, 0, 4,
+            BinaryenConst(mod, BinaryenLiteralInt32(static_cast<int32_t>(
+                                   shared_layout.active_count_addr))),
+            BinaryenBinary(
+                mod, BinaryenAddInt32(),
+                BinaryenLocalGet(mod, active_count_local, BinaryenTypeInt32()),
+                BinaryenConst(mod, BinaryenLiteralInt32(1))),
+            BinaryenTypeInt32(), "0"));
         for (const auto *ir : members) {
             const auto &layout = layouts.at(ir->name);
             auto *instance_base = instance_base_of_slot(
@@ -210,8 +265,8 @@ void emit_instance_api_group(
                                    static_cast<BinaryenIndex>(stmts.size()),
                                    BinaryenTypeInt32());
         std::array<BinaryenType, 1> param_types = {BinaryenTypeInt32()};
-        std::array<BinaryenType, 2> var_types = {BinaryenTypeInt32(),
-                                                 BinaryenTypeInt32()};
+        std::array<BinaryenType, 3> var_types = {
+            BinaryenTypeInt32(), BinaryenTypeInt32(), BinaryenTypeInt32()};
         const auto fn_name = instrument_id + "$instantiate";
         BinaryenAddFunction(
             mod, fn_name.c_str(),
@@ -219,6 +274,77 @@ void emit_instance_api_group(
                                static_cast<BinaryenIndex>(param_types.size())),
             BinaryenTypeInt32(), var_types.data(), var_types.size(), body);
         BinaryenAddFunctionExport(mod, fn_name.c_str(), fn_name.c_str());
+    }
+
+    {
+        constexpr BinaryenIndex slot_param = 0;
+        constexpr BinaryenIndex last_pos_local = 1;
+        constexpr BinaryenIndex last_slot_local = 2;
+        constexpr BinaryenIndex pos_local = 3;
+        std::vector<BinaryenExpressionRef> stmts;
+
+        auto slot_get = [&]() -> BinaryenExpressionRef {
+            return BinaryenLocalGet(mod, slot_param, BinaryenTypeInt32());
+        };
+
+        stmts.push_back(BinaryenLocalSet(
+            mod, last_pos_local,
+            BinaryenBinary(mod, BinaryenSubInt32(),
+                           active_count_load(mod, shared_layout),
+                           BinaryenConst(mod, BinaryenLiteralInt32(1)))));
+
+        stmts.push_back(BinaryenLocalSet(
+            mod, last_slot_local,
+            BinaryenLoad(mod, 4, false, 0, 4, BinaryenTypeInt32(),
+                         dense_addr(mod, shared_layout,
+                                    BinaryenLocalGet(mod, last_pos_local,
+                                                     BinaryenTypeInt32())),
+                         "0")));
+
+        stmts.push_back(BinaryenLocalSet(
+            mod, pos_local,
+            BinaryenLoad(mod, 4, false, 0, 4, BinaryenTypeInt32(),
+                         sparse_addr(mod, shared_layout, slot_get()), "0")));
+
+        stmts.push_back(BinaryenStore(
+            mod, 4, 0, 4,
+            dense_addr(mod, shared_layout,
+                       BinaryenLocalGet(mod, pos_local, BinaryenTypeInt32())),
+            BinaryenLocalGet(mod, last_slot_local, BinaryenTypeInt32()),
+            BinaryenTypeInt32(), "0"));
+
+        stmts.push_back(
+            BinaryenStore(mod, 4, 0, 4,
+                          sparse_addr(mod, shared_layout,
+                                      BinaryenLocalGet(mod, last_slot_local,
+                                                       BinaryenTypeInt32())),
+                          BinaryenLocalGet(mod, pos_local, BinaryenTypeInt32()),
+                          BinaryenTypeInt32(), "0"));
+
+        stmts.push_back(BinaryenStore(
+            mod, 4, 0, 4,
+            BinaryenConst(mod, BinaryenLiteralInt32(static_cast<int32_t>(
+                                   shared_layout.active_count_addr))),
+            BinaryenLocalGet(mod, last_pos_local, BinaryenTypeInt32()),
+            BinaryenTypeInt32(), "0"));
+
+        stmts.push_back(BinaryenStore(
+            mod, 4, 0, 4, used_addr(mod, shared_layout, slot_get()),
+            BinaryenConst(mod, BinaryenLiteralInt32(0)), BinaryenTypeInt32(),
+            "0"));
+
+        auto *body = BinaryenBlock(mod, nullptr, stmts.data(),
+                                   static_cast<BinaryenIndex>(stmts.size()),
+                                   BinaryenTypeNone());
+        std::array<BinaryenType, 1> param_types = {BinaryenTypeInt32()};
+        std::array<BinaryenType, 3> var_types = {
+            BinaryenTypeInt32(), BinaryenTypeInt32(), BinaryenTypeInt32()};
+        const auto fn_name = instrument_id + "$free_slot";
+        BinaryenAddFunction(
+            mod, fn_name.c_str(),
+            BinaryenTypeCreate(param_types.data(),
+                               static_cast<BinaryenIndex>(param_types.size())),
+            BinaryenTypeNone(), var_types.data(), var_types.size(), body);
     }
 
     {
@@ -237,12 +363,14 @@ void emit_instance_api_group(
             BinaryenReturn(mod, BinaryenConst(mod, BinaryenLiteralInt32(-1))),
             nullptr));
 
-        stmts.push_back(BinaryenStore(
-            mod, 4, 0, 4,
-            used_addr(mod, shared_layout,
-                      BinaryenLocalGet(mod, slot_local, BinaryenTypeInt32())),
-            BinaryenConst(mod, BinaryenLiteralInt32(0)), BinaryenTypeInt32(),
-            "0"));
+        {
+            std::array<BinaryenExpressionRef, 1> free_args = {
+                BinaryenLocalGet(mod, slot_local, BinaryenTypeInt32())};
+            const auto free_fn_name = instrument_id + "$free_slot";
+            stmts.push_back(BinaryenCall(mod, free_fn_name.c_str(),
+                                         free_args.data(), 1,
+                                         BinaryenTypeNone()));
+        }
 
         stmts.push_back(
             BinaryenReturn(mod, BinaryenConst(mod, BinaryenLiteralInt32(0))));
@@ -362,7 +490,7 @@ void emit_global_set_param(
             auto *addr =
                 BinaryenConst(mod, BinaryenLiteralInt32(static_cast<int32_t>(
                                        layout.module_base + local_offset)));
-            stmts.push_back(BinaryenStore(
+            branch_stmts.push_back(BinaryenStore(
                 mod, 8, 0, 8, addr,
                 BinaryenLocalGet(mod, value_param, BinaryenTypeFloat64()),
                 BinaryenTypeFloat64(), "0"));
@@ -392,4 +520,36 @@ void emit_global_set_param(
                            static_cast<BinaryenIndex>(param_types.size())),
         BinaryenTypeInt32(), nullptr, 0, body);
     BinaryenAddFunctionExport(mod, fn_name, fn_name);
+}
+
+auto emit_global_init(
+    const std::vector<const IRModule *> &members, BinaryenModuleRef mod,
+    const std::unordered_map<std::string, InstanceLayout> &layouts)
+    -> BinaryenFunctionRef {
+    std::vector<BinaryenExpressionRef> stmts;
+
+    for (const auto *ir : members) {
+        const auto &layout = layouts.at(ir->name);
+        auto *base = BinaryenConst(
+            mod,
+            BinaryenLiteralInt32(static_cast<int32_t>(layout.module_base)));
+        std::array<BinaryenExpressionRef, 1> init_args = {base};
+        const auto init_name = pfx(*ir, ir->init_fn);
+        stmts.push_back(BinaryenCall(mod, init_name.c_str(), init_args.data(),
+                                     1, BinaryenTypeNone()));
+        if (!ir->static_init_fn.empty()) {
+            std::array<BinaryenExpressionRef, 1> static_init_args = {base};
+            const auto sname = pfx(*ir, ir->static_init_fn);
+            stmts.push_back(BinaryenCall(mod, sname.c_str(),
+                                         static_init_args.data(), 1,
+                                         BinaryenTypeNone()));
+        }
+    }
+
+    auto *body = BinaryenBlock(mod, nullptr, stmts.data(),
+                               static_cast<BinaryenIndex>(stmts.size()),
+                               BinaryenTypeNone());
+    constexpr auto fn_name = "global$init";
+    return BinaryenAddFunction(mod, fn_name, BinaryenTypeNone(),
+                               BinaryenTypeNone(), nullptr, 0, body);
 }

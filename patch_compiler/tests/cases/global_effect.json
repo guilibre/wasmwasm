@@ -1,21 +1,23 @@
 {
   "global": {
     "modules": {
-      "block_1783371683142": "OUT[0] <- 0.2 * tanh(IN[0])"
+      "block_1783451967687": "param amp = 0.2\nparam dist = 1\nstatic dist_ = 1\n\nOUT[0] <- amp*tanh(dist_*IN[0])\n\ndist_ = dist_ + 0.00001*(dist - dist_)"
     },
     "patch": {
-      "block_1783371683142_in_0": "a_out_0",
-      "dac_l": "block_1783371683142_out_0",
-      "dac_r": "block_1783371683142_out_0"
+      "block_1783451967687_in_0": "a_out_0",
+      "dac_l": "block_1783451967687_out_0",
+      "dac_r": "block_1783451967687_out_0"
     }
   },
   "instruments": {
     "a": {
       "modules": {
-        "block_1783371598500": "static block_1783371598500_freq = 440\n\nstatic block_1783371598500_two_pi = 2 * PI\nstatic block_1783371598500_t = 0\nstatic block_1783371598500_dt_base = block_1783371598500_two_pi / SAMPLE_RATE\n\nOUT[0] <- sin block_1783371598500_t\n\nblock_1783371598500_dt = block_1783371598500_freq * block_1783371598500_dt_base\nblock_1783371598500_t = block_1783371598500_t + block_1783371598500_dt\nblock_1783371598500_t >= block_1783371598500_two_pi ? block_1783371598500_t = block_1783371598500_t - block_1783371598500_two_pi\n"
+        "block_1783517161006": "param amp = 0.2\nparam atk = 0.01\nparam rel = 0.5\n\nstatic block_1783517161006_gate_ = 0\nstatic block_1783517161006_env = 0\nstatic block_1783517161006_denv = 1/(atk*SAMPLE_RATE)\n\nblock_1783517161006_env2 = block_1783517161006_env*block_1783517161006_env\nOUT[0] <- amp*block_1783517161006_env2*block_1783517161006_env2\n\nblock_1783517161006_env = min 1 (max 0 (block_1783517161006_env + block_1783517161006_denv))\nblock_1783517161006_env >= 1 ? block_1783517161006_denv = -1/(rel*SAMPLE_RATE) : (block_1783517161006_env <= 0 ? block_1783517161006_denv = 0)",
+        "block_1783531170410": "param freq = 440\n\nstatic block_1783531170410_t = 0\n\nOUT[0] <- IN[0] * block_1783531170410_t\n\nstatic block_1783531170410_sr_inv2 = 2/SAMPLE_RATE\nblock_1783531170410_t = block_1783531170410_t + freq*block_1783531170410_sr_inv2\nblock_1783531170410_t >= 1 ? block_1783531170410_t = block_1783531170410_t - 2\n"
       },
       "patch": {
-        "out_0": "block_1783371598500_out_0"
+        "block_1783531170410_in_0": "block_1783517161006_out_0",
+        "out_0": "block_1783531170410_out_0"
       }
     }
   }

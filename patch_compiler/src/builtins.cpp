@@ -25,6 +25,7 @@ auto make_builtin_env()
     return {{
         {"PI", float_type},
         {"SAMPLE_RATE", float_type},
+        {"die", void_type},
         {"cos", float_to_float},
         {"sin", float_to_float},
         {"tan", float_to_float},

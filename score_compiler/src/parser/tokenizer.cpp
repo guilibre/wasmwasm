@@ -28,10 +28,15 @@ auto make(TokenKind kind, std::string lexeme, size_t line, size_t column)
 } // namespace
 
 auto Token::to_string() const -> std::string {
-    static constexpr std::array<const char *, 18> names = {
-        "Ident",  "Number",    "String", "Equals",  "Colon",  "Plus",
-        "Minus",  "Star",      "Slash",  "LBrace",  "RBrace", "LParen",
-        "RParen", "Ampersand", "KwPlay", "Newline", "Eof",    "Invalid",
+    static constexpr std::array<const char *, 37> names = {
+        "Ident",     "Number",      "String",  "Equals",   "Colon",
+        "Semicolon", "Plus",        "Minus",   "Star",     "Slash",
+        "LBrace",    "RBrace",      "LParen",  "RParen",   "LBracket",
+        "RBracket",  "Comma",       "Tick",    "Caret",    "At",
+        "Ampersand", "Pipe",        "Bang",    "Question", "EqEq",
+        "NotEq",     "Less",        "Greater", "LessEq",   "GreaterEq",
+        "KwPlay",    "KwTransform", "KwBy",    "KwNull",   "KwReverse",
+        "Eof",       "Invalid",
     };
     std::string out = names[static_cast<uint8_t>(kind)];
     out += " '" + lexeme + "' @" + std::to_string(line) + ":" +
@@ -65,7 +70,7 @@ auto Tokenizer::advance() -> char {
 void Tokenizer::skip_whitespace() {
     while (current < source.size()) {
         char c = peek_current();
-        if (c == ' ' || c == '\t' || c == '\r') {
+        if (c == ' ' || c == '\t' || c == '\r' || c == '\n') {
             advance();
         } else if (c == '#') {
             while (current < source.size() && peek_current() != '\n') advance();
@@ -86,8 +91,15 @@ auto Tokenizer::error_token(const std::string &msg) const -> Token {
 
 auto Tokenizer::scan_identifier() -> Token {
     while (current < source.size() && is_alnum(peek_current())) advance();
+    if (peek_current() == '#') advance();
     std::string lexeme(source.substr(start, current - start));
     if (lexeme == "play") return make(TokenKind::KwPlay, lexeme, line, column);
+    if (lexeme == "transform")
+        return make(TokenKind::KwTransform, lexeme, line, column);
+    if (lexeme == "by") return make(TokenKind::KwBy, lexeme, line, column);
+    if (lexeme == "null") return make(TokenKind::KwNull, lexeme, line, column);
+    if (lexeme == "reverse")
+        return make(TokenKind::KwReverse, lexeme, line, column);
     return make(TokenKind::Ident, lexeme, line, column);
 }
 
@@ -130,9 +142,6 @@ auto Tokenizer::next() -> Token {
 
     char c = advance();
 
-    if (c == '\n')
-        return make(TokenKind::Newline, "\n", start_line, start_column);
-
     if (is_alpha(c)) {
         Token tok = scan_identifier();
         tok.line = start_line;
@@ -156,9 +165,35 @@ auto Tokenizer::next() -> Token {
 
     switch (c) {
     case '=':
+        if (peek_current() == '=') {
+            advance();
+            return make(TokenKind::EqEq, "==", start_line, start_column);
+        }
         return make(TokenKind::Equals, "=", start_line, start_column);
+    case '!':
+        if (peek_current() == '=') {
+            advance();
+            return make(TokenKind::NotEq, "!=", start_line, start_column);
+        }
+        return make(TokenKind::Bang, "!", start_line, start_column);
+    case '<':
+        if (peek_current() == '=') {
+            advance();
+            return make(TokenKind::LessEq, "<=", start_line, start_column);
+        }
+        return make(TokenKind::Less, "<", start_line, start_column);
+    case '>':
+        if (peek_current() == '=') {
+            advance();
+            return make(TokenKind::GreaterEq, ">=", start_line, start_column);
+        }
+        return make(TokenKind::Greater, ">", start_line, start_column);
     case ':':
         return make(TokenKind::Colon, ":", start_line, start_column);
+    case ';':
+        return make(TokenKind::Semicolon, ";", start_line, start_column);
+    case '?':
+        return make(TokenKind::Question, "?", start_line, start_column);
     case '+':
         return make(TokenKind::Plus, "+", start_line, start_column);
     case '-':
@@ -177,6 +212,24 @@ auto Tokenizer::next() -> Token {
         return make(TokenKind::RParen, ")", start_line, start_column);
     case '&':
         return make(TokenKind::Ampersand, "&", start_line, start_column);
+    case '[':
+        return make(TokenKind::LBracket, "[", start_line, start_column);
+    case ']':
+        return make(TokenKind::RBracket, "]", start_line, start_column);
+    case ',':
+        return make(TokenKind::Comma, ",", start_line, start_column);
+    case '\'':
+        return make(TokenKind::Tick, "'", start_line, start_column);
+    case '^':
+        return make(TokenKind::Caret, "^", start_line, start_column);
+    case '@':
+        return make(TokenKind::At, "@", start_line, start_column);
+    case '|':
+        if (peek_current() == '>') {
+            advance();
+            return make(TokenKind::Pipe, "|>", start_line, start_column);
+        }
+        return error_token("unexpected character '|'");
     default: {
         Token tok =
             error_token(std::string("unexpected character '") + c + "'");

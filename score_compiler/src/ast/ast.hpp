@@ -6,14 +6,38 @@
 #include <string>
 #include <vector>
 
-enum class BinOp : uint8_t { Add, Sub, Mul, Div };
+enum class BinOp : uint8_t {
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Pow,
+    Eq,
+    NotEq,
+    Lt,
+    Gt,
+    LtEq,
+    GtEq
+};
 
 struct Expr {
-    enum class Kind : uint8_t { Number, Binary } kind = Kind::Number;
+    enum class Kind : uint8_t {
+        Number,
+        Binary,
+        Array,
+        Ident,
+        Ternary,
+        Null
+    } kind = Kind::Number;
     double number = 0;
     BinOp op = BinOp::Add;
     std::unique_ptr<Expr> lhs;
     std::unique_ptr<Expr> rhs;
+    std::vector<std::unique_ptr<Expr>> elements;
+    std::string ident_name;
+    std::unique_ptr<Expr> ternary_cond;
+    std::unique_ptr<Expr> ternary_then;
+    std::unique_ptr<Expr> ternary_else;
     size_t line = 0;
     size_t column = 0;
 };
@@ -33,9 +57,24 @@ struct Block {
 struct CompExpr;
 
 struct Term {
-    enum class Kind : uint8_t { VarRef, Fork } kind = Kind::VarRef;
+    enum class Kind : uint8_t {
+        VarRef,
+        Fork,
+        AtomicJoin,
+        Pipe,
+        BlockLit
+    } kind = Kind::VarRef;
+    enum class PipeOp : uint8_t { Transform, Reverse };
     std::string var_name;
     std::vector<std::unique_ptr<CompExpr>> branches;
+    std::unique_ptr<CompExpr> lhs_expr;
+    std::string rhs_name;
+    bool rhs_is_block = false;
+    Block rhs_block;
+    Block block_lit;
+    PipeOp pipe_op = PipeOp::Transform;
+    std::string pipe_param_name;
+    std::unique_ptr<Expr> pipe_expr;
     size_t line = 0;
     size_t column = 0;
 };
@@ -46,9 +85,14 @@ struct CompExpr {
 
 struct VarDecl {
     std::string name;
-    enum class Kind : uint8_t { BlockDef, CompDef } kind = Kind::BlockDef;
+    enum class Kind : uint8_t {
+        BlockDef,
+        CompDef,
+        ScaleDef
+    } kind = Kind::BlockDef;
     Block block;
     CompExpr comp;
+    std::vector<std::unique_ptr<Expr>> scale;
     size_t line = 0;
     size_t column = 0;
 };

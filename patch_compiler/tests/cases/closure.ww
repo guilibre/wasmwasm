@@ -1,0 +1,11 @@
+a = 0
+b = 1
+static c = 2
+f = {x.
+    b = 3
+    c = 4
+    x + a + b + c
+}
+OUT[0] <- f 5
+OUT[1] <- b
+OUT[2] <- c

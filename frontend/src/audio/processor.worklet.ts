@@ -1,8 +1,8 @@
 import { Conductor } from './conductor';
 import type {
-    GlobalCallback,
+    GlobalCallbackHandler,
     GlobalExports,
-    InstrumentCallback,
+    InstrumentCallbackHandler,
     InstrumentCallbackMap,
     InstrumentExportsMap,
     ParamIndex,
@@ -91,11 +91,9 @@ class WasmProcessor extends AudioWorkletProcessor {
                         continue;
                     }
 
-                    if (suffix !== 'instantiate' && suffix !== 'destroy' && suffix !== 'set_param')
-                        continue;
+                    if (suffix !== 'instantiate' && suffix !== 'set_param') continue;
                     this.instrument_exports[instrument_id] ??= {
                         instantiate: () => -1,
-                        destroy: () => -1,
                         set_param: () => -1,
                     };
                     this.instrument_exports[instrument_id][suffix] = exports[key] as never;
@@ -110,14 +108,14 @@ class WasmProcessor extends AudioWorkletProcessor {
                     )) {
                         instrument_callbacks[instrument_id] = new Function(
                             `return (\n${js_source}\n);`,
-                        )() as InstrumentCallback;
+                        )() as new () => InstrumentCallbackHandler;
                     }
 
                     const global_callback_source = event.data.global_callback as string | undefined;
                     const global_callback = global_callback_source
                         ? (new Function(
                               `return (\n${global_callback_source}\n);`,
-                          )() as GlobalCallback)
+                          )() as new () => GlobalCallbackHandler)
                         : null;
 
                     this.conductor = new Conductor(

@@ -89,3 +89,32 @@
         color: #cdd6f4;
     }
 }
+
+.app__score-panel-editor-and-graph {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+
+    .app__code-wrapper {
+        flex: 1;
+        min-height: 0;
+    }
+}
+
+.app__score-panel-graph-handle {
+    flex-shrink: 0;
+    height: 5px;
+    cursor: ns-resize;
+    background: transparent;
+
+    &:hover {
+        background: #89b4fa44;
+    }
+}
+
+.app__score-panel-graph-container {
+    flex-shrink: 0;
+    display: flex;
+    min-height: 0;
+}

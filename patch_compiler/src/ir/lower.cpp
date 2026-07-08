@@ -92,7 +92,7 @@ auto Lowerer::is_special(const std::string &name) const -> bool {
     return std::ranges::contains(language_globals, name) ||
            std::ranges::contains(math_builtins, name) || fns.contains(name) ||
            bufs.contains(name) || param_names.contains(name) ||
-           array_env.contains(name);
+           array_env.contains(name) || known_arities.contains(name);
 }
 
 auto Lowerer::emit_global_read(const std::string &name, IRType type)
@@ -155,6 +155,32 @@ void Lowerer::pre_register_math_builtins() {
                               .param_shapes = {},
                           });
         fn_indices.emplace(name, fn_indices.size());
+    }
+}
+
+void Lowerer::pre_register_statics(const ExprPtr &program) {
+    if (!program) return;
+    if (const auto *block = std::get_if<CodeBlock>(&program->node)) {
+        for (const auto &expr : block->expressions) pre_register_statics(expr);
+        return;
+    }
+    if (const auto *lam = std::get_if<Lambda>(&program->node)) {
+        pre_register_statics(lam->body);
+        return;
+    }
+    if (const auto *sbind = std::get_if<StaticBind>(&program->node)) {
+        statics.insert(sbind->name.lexeme);
+        return;
+    }
+    if (const auto *pbind = std::get_if<ParamBind>(&program->node)) {
+        param_names.insert(pbind->name.lexeme);
+        return;
+    }
+    if (const auto *bind = std::get_if<Bind>(&program->node)) {
+        if (std::holds_alternative<DelayCtor>(bind->value->node))
+            bufs.insert(bind->name.lexeme);
+        else if (std::holds_alternative<Lambda>(bind->value->node))
+            pre_register_statics(bind->value);
     }
 }
 
@@ -334,6 +360,7 @@ auto lower(const ExprPtr &program, const std::string &module_name) -> IRModule {
     l.mod.init_fn = "init";
     l.pre_register_math_builtins();
     l.pre_register_arities(program);
+    l.pre_register_statics(program);
     l.scan_call_site_shapes(program);
     l.pre_register_fns(program);
     l.pre_register_lambda_args(program);

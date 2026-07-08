@@ -639,6 +639,63 @@ auto emit_stmts(FnCtx &ctx, const std::vector<IRInstr> &body)
                         ctx.resolve_mem(i.ref.buffer), ctx.get(i.value),
                         BinaryenTypeFloat64(), "0"));
                 }
+                if constexpr (std::is_same_v<T, IRDie>) {
+                    auto slot_index_of = [&]() -> BinaryenExpressionRef {
+                        return BinaryenBinary(
+                            ctx.mod, BinaryenDivUInt32(),
+                            BinaryenBinary(
+                                ctx.mod, BinaryenSubInt32(),
+                                instance_base_get(ctx.mod),
+                                BinaryenConst(
+                                    ctx.mod,
+                                    BinaryenLiteralInt32(static_cast<int32_t>(
+                                        ctx.layout->module_base)))),
+                            BinaryenConst(
+                                ctx.mod,
+                                BinaryenLiteralInt32(static_cast<int32_t>(
+                                    ctx.layout->slot_stride))));
+                    };
+
+                    const std::string count_var = "$die_pending_count";
+                    ctx.ensure_raw_var(count_var, BinaryenTypeInt32());
+                    const auto count_idx = ctx.idx.at(count_var);
+
+                    stmts.push_back(BinaryenLocalSet(
+                        ctx.mod, count_idx,
+                        BinaryenLoad(
+                            ctx.mod, 4, false, 0, 4, BinaryenTypeInt32(),
+                            BinaryenConst(
+                                ctx.mod,
+                                BinaryenLiteralInt32(static_cast<int32_t>(
+                                    ctx.layout->pending_kill_count_addr))),
+                            "0")));
+
+                    auto *pending_addr = BinaryenBinary(
+                        ctx.mod, BinaryenAddInt32(),
+                        BinaryenConst(ctx.mod,
+                                      BinaryenLiteralInt32(static_cast<int32_t>(
+                                          ctx.layout->pending_kills_base))),
+                        BinaryenBinary(
+                            ctx.mod, BinaryenMulInt32(),
+                            BinaryenLocalGet(ctx.mod, count_idx,
+                                             BinaryenTypeInt32()),
+                            BinaryenConst(ctx.mod, BinaryenLiteralInt32(4))));
+                    stmts.push_back(BinaryenStore(ctx.mod, 4, 0, 4,
+                                                  pending_addr, slot_index_of(),
+                                                  BinaryenTypeInt32(), "0"));
+
+                    stmts.push_back(BinaryenStore(
+                        ctx.mod, 4, 0, 4,
+                        BinaryenConst(
+                            ctx.mod, BinaryenLiteralInt32(static_cast<int32_t>(
+                                         ctx.layout->pending_kill_count_addr))),
+                        BinaryenBinary(
+                            ctx.mod, BinaryenAddInt32(),
+                            BinaryenLocalGet(ctx.mod, count_idx,
+                                             BinaryenTypeInt32()),
+                            BinaryenConst(ctx.mod, BinaryenLiteralInt32(1))),
+                        BinaryenTypeInt32(), "0"));
+                }
             },
             instr);
     }

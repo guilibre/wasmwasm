@@ -18,7 +18,7 @@ gate ? (
         denv < 0 ? (env <= sus ? denv = 0)
     ) : denv = 1/((sus - 1)*dec*SAMPLE_RATE)
 ) : (
-    env > 0 ? denv = -1/(rel*SAMPLE_RATE)
+    env > 0 ? denv = -1/(rel*SAMPLE_RATE) : die
 )
 
 gate_ = gate

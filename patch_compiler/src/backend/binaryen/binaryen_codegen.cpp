@@ -18,7 +18,6 @@ BinaryenCodeGen::~BinaryenCodeGen() {
 
 void BinaryenCodeGen::add_module(const IRModule &ir) {
     auto layout = compute_instance_layout(ir, next_offset_);
-    emit_ir(ir, mod_, math_module_, sample_rate_, layout);
     layouts_[ir.name] = std::move(layout);
     modules_[ir.name] = ir;
 }
@@ -30,8 +29,20 @@ void BinaryenCodeGen::finalize(const RoutingGraph &graph) {
             auto &layout = layouts_.at(name);
             layout.slots_table_base = shared_table.slots_table_base;
             layout.slots_ids_base = shared_table.slots_ids_base;
+            layout.dense_base = shared_table.dense_base;
+            layout.sparse_base = shared_table.sparse_base;
+            layout.active_count_addr = shared_table.active_count_addr;
+            layout.pending_kills_base = shared_table.pending_kills_base;
+            layout.pending_kill_count_addr =
+                shared_table.pending_kill_count_addr;
+            layout.instrument_id = group.id;
         }
+    }
 
+    for (const auto &[name, ir] : modules_)
+        emit_ir(ir, mod_, math_module_, sample_rate_, layouts_.at(name));
+
+    for (const auto &group : graph.instruments) {
         std::vector<const IRModule *> members;
         members.reserve(group.module_names.size());
         for (const auto &name : group.module_names)
@@ -46,6 +57,11 @@ void BinaryenCodeGen::finalize(const RoutingGraph &graph) {
         global_members.push_back(&modules_.at(name));
     emit_global_set_param(global_members, graph.global_param_names, mod_,
                           layouts_);
+
+    if (!global_members.empty()) {
+        auto *start_fn = emit_global_init(global_members, mod_, layouts_);
+        BinaryenSetStart(mod_, start_fn);
+    }
 
     emit_main_loop(graph, mod_, layouts_);
 }

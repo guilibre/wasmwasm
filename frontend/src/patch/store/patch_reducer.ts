@@ -85,6 +85,7 @@ function load_initial_patch(): PatchState {
                     score_source: (score_source as string | undefined) ?? '',
                     score_param_bindings: normalize_score_param_bindings(score_param_bindings),
                     global_callback_source: (global_callback_source as string | undefined) ?? '',
+                    load_serial: 0,
                 };
             }
         }
@@ -98,11 +99,12 @@ function load_initial_patch(): PatchState {
         score_source: '',
         score_param_bindings: {},
         global_callback_source: '',
+        load_serial: 0,
     };
 }
 
 export function load_initial(): HistoryState {
-    return { past: [], present: load_initial_patch(), future: [] };
+    return { past: [], present: load_initial_patch(), future: [], storage_error: null };
 }
 
 function get_active(state: PatchState): InstrumentState | undefined {
@@ -459,6 +461,7 @@ function patch_reducer(state: PatchState, action: PatchAction): PatchState {
                     : state.score_param_bindings,
                 global_callback_source:
                     action.global_callback_source ?? state.global_callback_source,
+                load_serial: state.load_serial + 1,
             };
         case 'apply_layout':
             return {
@@ -516,7 +519,7 @@ function serialize_orchestra(orchestra: OrchestraState) {
     };
 }
 
-function save(state: PatchState): void {
+function save(state: PatchState): string | null {
     try {
         localStorage.setItem(
             STORAGE_KEY,
@@ -527,8 +530,10 @@ function save(state: PatchState): void {
                 global_callback_source: state.global_callback_source,
             }),
         );
-    } catch (_e) {
-        console.error(_e);
+        return null;
+    } catch (e) {
+        console.error(e);
+        return 'Não foi possível salvar o patch localmente (armazenamento indisponível ou cheio).';
     }
 }
 
@@ -536,39 +541,42 @@ export function reducer(history: HistoryState, action: PatchAction): HistoryStat
     if (action.type === 'undo') {
         if (history.past.length === 0) return history;
         const prev = history.past[history.past.length - 1];
-        save(prev);
+        const storage_error = save(prev);
         return {
             past: history.past.slice(0, -1),
             present: prev,
             future: [history.present, ...history.future],
+            storage_error,
         };
     }
     if (action.type === 'redo') {
         if (history.future.length === 0) return history;
         const next = history.future[0];
-        save(next);
+        const storage_error = save(next);
         return {
             past: [...history.past, history.present],
             present: next,
             future: history.future.slice(1),
+            storage_error,
         };
     }
 
     const next_present = patch_reducer(history.present, action);
     if (next_present === history.present) return history;
 
-    save(next_present);
+    const storage_error = save(next_present);
 
     const only_selection =
         (action.type === 'nodes_change' && action.changes.every((c) => c.type === 'select')) ||
         (action.type === 'edges_change' && action.changes.every((c) => c.type === 'select'));
 
     if (NO_HISTORY.has(action.type) || only_selection) {
-        return { ...history, present: next_present };
+        return { ...history, present: next_present, storage_error };
     }
     return {
         past: [...history.past, history.present],
         present: next_present,
         future: [],
+        storage_error,
     };
 }

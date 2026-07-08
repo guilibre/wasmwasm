@@ -1,10 +1,8 @@
 param freq = 440
+param oversample = 8
 
-buffer = delay 4096 {_. 0}
-static idx = 0
-
-static aLow  = 1 - exp(-20*2*PI/SAMPLE_RATE)
-static aHigh = 1 - exp(-5000*2*PI/SAMPLE_RATE)
+static aLow = 0
+static aHigh = 0
 static k = 0.01
 filter = {x.
   static low = 0
@@ -19,19 +17,34 @@ filter = {x.
   ap
 }
 gd = {f.
-  static bL = 1 - aLow
-  static bH = 1 - aHigh
-  static sr_inv = 1/SAMPLE_RATE
+  sr = oversample*SAMPLE_RATE
+  sr_inv = 1/sr
+  aLow  = 1 - exp(-10*2*PI*sr_inv)
+  aHigh = 1 - exp(-10000*2*PI*sr_inv)
+  bL = 1 - aLow
+  bH = 1 - aHigh
   c = cos(2*PI*f*sr_inv)
   lp = bH*(c - bH)/(1 - 2*bH*c + bH*bH)
   hp = bL*(c - bL)/(1 - 2*bL*c + bL*bL)
   ap = (1 - k*k)/(1 + 2*k*c + k*k)
-  (hp + lp + ap)
+  sr/freq - (hp + lp + ap)
 }
 
-y = filter(@[idx]buffer)
-OUT[0] <- 0.1 * y
-@[idx]buffer = IN[0] + y
+static freq_ = -1
+static del = 2
+freq_ != freq ? (
+  del = gd(freq)
+  freq_ = freq
+)
+buffer = delay 4096 {_. 0}
 
-del = SAMPLE_RATE/freq - gd(freq)
-idx = idx < del ? idx + 1 : 0
+step = {n.
+  static idx = 0
+  y = filter(@[idx]buffer)
+  n < 1 ? y : (
+    @[idx]buffer = IN[1] + y
+    idx = idx < del ? idx + 1 : 0
+    step(n - 1)
+  )
+}
+OUT[0] <- IN[0]*step(oversample)

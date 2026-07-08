@@ -22,6 +22,12 @@ struct InstanceLayout {
 
     uint32_t slots_table_base = 0;
     uint32_t slots_ids_base = 0;
+    uint32_t dense_base = 0;
+    uint32_t sparse_base = 0;
+    uint32_t active_count_addr = 0;
+    uint32_t pending_kills_base = 0;
+    uint32_t pending_kill_count_addr = 0;
+    std::string instrument_id;
 
     [[nodiscard]] auto slot_addr(uint32_t slot_index) const -> uint32_t {
         return module_base + (slot_index * slot_stride);
@@ -31,6 +37,11 @@ struct InstanceLayout {
 struct SharedSlotTable {
     uint32_t slots_table_base = 0;
     uint32_t slots_ids_base = 0;
+    uint32_t dense_base = 0;
+    uint32_t sparse_base = 0;
+    uint32_t active_count_addr = 0;
+    uint32_t pending_kills_base = 0;
+    uint32_t pending_kill_count_addr = 0;
 };
 
 auto compute_instance_layout(const IRModule &ir, uint32_t &next_offset)

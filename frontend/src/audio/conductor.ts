@@ -1,4 +1,20 @@
-export type NodeKind = 'state' | 'fork' | 'join' | 'passthrough';
+export type NodeKind =
+    'state' | 'fork' | 'join' | 'passthrough' | 'transform_push' | 'transform_pop';
+
+export type BinOp =
+    'add' | 'sub' | 'mul' | 'div' | 'pow' | 'eq' | 'neq' | 'lt' | 'gt' | 'lte' | 'gte';
+
+export type ExprNode =
+    | { kind: 'number'; value: number }
+    | { kind: 'null' }
+    | { kind: 'ident'; name: string }
+    | { kind: 'ternary'; cond: ExprNode; then: ExprNode; else: ExprNode }
+    | { kind: 'binary'; op: BinOp; lhs: ExprNode; rhs: ExprNode };
+
+export interface TransformEntry {
+    paramName: string;
+    expr: ExprNode;
+}
 
 export interface GraphNode {
     id: number;
@@ -6,6 +22,8 @@ export interface GraphNode {
     params?: Record<string, number>;
     instrument?: string;
     joinArity?: number;
+    transforms?: TransformEntry[];
+    pushInstrument?: string;
     next: number[];
 }
 
@@ -17,7 +35,6 @@ export interface ScoreGraph {
 
 export interface InstrumentExports {
     instantiate: (id: number) => number;
-    destroy: (id: number) => number;
     set_param: (id: number, index: number, value: number) => number;
 }
 
@@ -33,28 +50,90 @@ export interface TokenParams {
     params: Record<string, number>;
 }
 
-export type InstrumentCallback = (
-    current_token_params: Record<string, number>,
-    all_tokens_params: TokenParams[],
-    bpm: number,
-) => Record<string, number>;
+export interface InstrumentCallbackHandler {
+    call(p: Record<string, number>, ap: TokenParams[]): Record<string, number>;
+}
 
-export type GlobalCallback = (
-    all_tokens_params: TokenParams[],
-    bpm: number,
-) => Record<string, number>;
+export interface GlobalCallbackHandler {
+    call(ap: TokenParams[]): Record<string, number>;
+}
 
-export type InstrumentCallbackMap = Record<string, InstrumentCallback>;
+export type InstrumentCallbackMap = Record<string, new () => InstrumentCallbackHandler>;
+
+interface ActiveTransformFrame {
+    transforms: TransformEntry[];
+    pushInstrument?: string;
+}
 
 interface Token {
     node_id: number;
-    beats_remaining: number;
+    seconds_remaining: number;
     instance_id: number;
     instrument_id: string | null;
     params: Record<string, number>;
+    transform_stack: ActiveTransformFrame[];
 }
 
-const max_steps_per_tick = 100;
+const max_steps_per_tick = 64;
+
+function eval_presence(expr: ExprNode, params: Record<string, number>): boolean {
+    if (expr.kind !== 'ident')
+        throw new Error('conductor: bare identifier expected as presence-test condition');
+    return Object.prototype.hasOwnProperty.call(params, expr.name);
+}
+
+function eval_expr(expr: ExprNode, params: Record<string, number>): number | null {
+    switch (expr.kind) {
+        case 'number':
+            return expr.value;
+        case 'null':
+            return null;
+        case 'ident': {
+            const value = params[expr.name];
+            if (value === undefined)
+                throw new Error(`conductor: parameter '${expr.name}' is not defined on this atom`);
+            return value;
+        }
+        case 'ternary': {
+            const cond =
+                expr.cond.kind === 'ident'
+                    ? eval_presence(expr.cond, params)
+                    : (eval_expr(expr.cond, params) ?? 0) !== 0;
+            return cond ? eval_expr(expr.then, params) : eval_expr(expr.else, params);
+        }
+        case 'binary': {
+            const lhs = eval_expr(expr.lhs, params);
+            const rhs = eval_expr(expr.rhs, params);
+            if (lhs === null || rhs === null)
+                throw new Error("conductor: 'null' cannot be used as an operand");
+            switch (expr.op) {
+                case 'add':
+                    return lhs + rhs;
+                case 'sub':
+                    return lhs - rhs;
+                case 'mul':
+                    return lhs * rhs;
+                case 'div':
+                    if (rhs === 0) throw new Error('conductor: division by zero');
+                    return lhs / rhs;
+                case 'pow':
+                    return Math.pow(lhs, rhs);
+                case 'eq':
+                    return lhs === rhs ? 1 : 0;
+                case 'neq':
+                    return lhs !== rhs ? 1 : 0;
+                case 'lt':
+                    return lhs < rhs ? 1 : 0;
+                case 'gt':
+                    return lhs > rhs ? 1 : 0;
+                case 'lte':
+                    return lhs <= rhs ? 1 : 0;
+                case 'gte':
+                    return lhs >= rhs ? 1 : 0;
+            }
+        }
+    }
+}
 
 export class Conductor {
     private readonly nodes_by_id: Map<number, GraphNode>;
@@ -62,8 +141,8 @@ export class Conductor {
     private readonly exports: InstrumentExportsMap;
     private readonly global_exports: GlobalExports | null;
     private readonly sample_rate: number;
-    private readonly instrument_callbacks: InstrumentCallbackMap;
-    private readonly global_callback: GlobalCallback | null;
+    private readonly instrument_callback_handlers: Record<string, InstrumentCallbackHandler>;
+    private readonly global_callback_handler: GlobalCallbackHandler | null;
 
     private bpm: number;
     private next_instance_id = 0;
@@ -78,7 +157,7 @@ export class Conductor {
         bpm: number,
         global_exports: GlobalExports | null = null,
         instrument_callbacks: InstrumentCallbackMap = {},
-        global_callback: GlobalCallback | null = null,
+        global_callback: (new () => GlobalCallbackHandler) | null = null,
     ) {
         this.nodes_by_id = new Map(graph.nodes.map((n) => [n.id, n]));
         this.param_index = param_index;
@@ -86,18 +165,24 @@ export class Conductor {
         this.global_exports = global_exports;
         this.sample_rate = sample_rate;
         this.bpm = bpm;
-        this.instrument_callbacks = instrument_callbacks;
-        this.global_callback = global_callback;
+        this.instrument_callback_handlers = Object.fromEntries(
+            Object.entries(instrument_callbacks).map(([instrument_id, ctor]) => [
+                instrument_id,
+                new ctor(),
+            ]),
+        );
+        this.global_callback_handler = global_callback ? new global_callback() : null;
 
         const initial: Token[] = [];
         for (const machine of graph.entries) {
             for (const node_id of machine) {
                 initial.push({
                     node_id,
-                    beats_remaining: 0,
+                    seconds_remaining: 0,
                     instance_id: -1,
                     instrument_id: null,
                     params: {},
+                    transform_stack: [],
                 });
             }
         }
@@ -109,13 +194,12 @@ export class Conductor {
     }
 
     tick(num_samples: number): void {
-        const beats_this_tick = (num_samples / this.sample_rate) * (this.bpm / 60);
-
+        const seconds_this_tick = num_samples / this.sample_rate;
         const tokens = this.tokens;
         let first_due = -1;
         for (let i = 0; i < tokens.length; i++) {
-            tokens[i].beats_remaining -= beats_this_tick;
-            if (first_due === -1 && tokens[i].beats_remaining <= 0) first_due = i;
+            tokens[i].seconds_remaining -= seconds_this_tick;
+            if (first_due === -1 && tokens[i].seconds_remaining <= 0) first_due = i;
         }
         if (first_due === -1) return;
 
@@ -123,7 +207,7 @@ export class Conductor {
         let write = first_due;
         for (let i = first_due; i < tokens.length; i++) {
             const token = tokens[i];
-            if (token.beats_remaining <= 0) {
+            if (token.seconds_remaining <= 0) {
                 this.destroy_instance(token);
                 if (this.advance_past_current_node(token)) ready.push(token);
             } else {
@@ -154,7 +238,7 @@ export class Conductor {
                 throw new Error('conductor: exceeded max steps per tick (instant loop?)');
             }
             for (const t of this.walk_forward(token)) {
-                if (t.beats_remaining <= 0) {
+                if (t.seconds_remaining <= 0) {
                     if (this.advance_past_current_node(t)) queue.push(t);
                 } else {
                     resolved.push(t);
@@ -174,8 +258,6 @@ export class Conductor {
 
     private destroy_instance(token: Token): void {
         if (token.instance_id === -1 || token.instrument_id === null) return;
-        const exports = this.exports[token.instrument_id];
-        exports?.destroy(token.instance_id);
         token.instance_id = -1;
         token.instrument_id = null;
     }
@@ -204,14 +286,32 @@ export class Conductor {
                 for (const branch_id of node.next) {
                     const child: Token = {
                         node_id: branch_id,
-                        beats_remaining: 0,
+                        seconds_remaining: 0,
                         instance_id: -1,
                         instrument_id: null,
                         params: {},
+                        transform_stack: [...token.transform_stack],
                     };
                     children.push(...this.walk_forward(child));
                 }
                 return children;
+            }
+
+            if (node.kind === 'transform_push') {
+                token.transform_stack = [
+                    ...token.transform_stack,
+                    { transforms: node.transforms ?? [], pushInstrument: node.pushInstrument },
+                ];
+                if (node.next.length === 0) return [];
+                node_id = node.next[0];
+                continue;
+            }
+
+            if (node.kind === 'transform_pop') {
+                token.transform_stack = token.transform_stack.slice(0, -1);
+                if (node.next.length === 0) return [];
+                node_id = node.next[0];
+                continue;
             }
 
             const arrived = (this.join_arrivals.get(node.id) ?? 0) + 1;
@@ -227,52 +327,69 @@ export class Conductor {
     }
 
     private apply_global_callback(): void {
-        if (!this.global_callback || !this.global_exports) return;
+        if (!this.global_callback_handler || !this.global_exports) return;
         const index_table = this.param_index['global'] ?? {};
-        const result = this.global_callback(this.tokens, this.bpm);
+        const result = this.global_callback_handler.call(this.tokens);
         for (const [name, value] of Object.entries(result)) {
             const index = index_table[name];
             if (index === undefined) continue;
-            if (typeof value !== 'number' || Number.isNaN(value)) {
+            if (typeof value !== 'number' || Number.isNaN(value))
                 throw new Error(`conductor: global callback did not return a number for '${name}'`);
-            }
+
             this.global_exports.set_param(index, value);
         }
     }
 
+    private to_seconds_params(params: Record<string, number>): Record<string, number> {
+        if (params.dur === undefined) return params;
+        return { ...params, dur: (60 * params.dur) / this.bpm };
+    }
+
     private enter_state(token: Token, node: GraphNode): void {
-        token.params = node.params ?? {};
-        token.beats_remaining = (node.params?.dur ?? 0) + token.beats_remaining;
+        let params = node.params ?? {};
+        let instrument = node.instrument;
+        for (let i = token.transform_stack.length - 1; i >= 0; i--) {
+            const frame = token.transform_stack[i];
+            for (const transform of frame.transforms) {
+                const value = eval_expr(transform.expr, params);
+                params = { ...params };
+                if (value === null) delete params[transform.paramName];
+                else params[transform.paramName] = value;
+            }
+            if (frame.pushInstrument !== undefined) instrument = frame.pushInstrument;
+        }
+        token.params = this.to_seconds_params(params);
+        token.seconds_remaining += token.params.dur ?? 0;
 
-        if (node.instrument) {
+        if (instrument) {
             const id = this.next_instance_id;
-            const exports = this.exports[node.instrument];
-            if (!exports) {
-                throw new Error(`conductor: unknown instrument '${node.instrument}'`);
-            }
-            const result = exports.instantiate(id);
-            if (result < 0) {
-                throw new Error(
-                    `conductor: failed to instantiate instrument '${node.instrument}' (no free slot)`,
-                );
-            }
-            token.instance_id = id;
-            token.instrument_id = node.instrument;
+            const exports = this.exports[instrument];
+            if (!exports) throw new Error(`conductor: unknown instrument '${instrument}'`);
 
-            const index_table = this.param_index[node.instrument] ?? {};
-            const callback = this.instrument_callbacks[node.instrument];
-            const params = callback ? callback(token.params, this.tokens, this.bpm) : token.params;
+            const result = exports.instantiate(id);
+            if (result < 0)
+                throw new Error(
+                    `conductor: failed to instantiate instrument '${instrument}' (no free slot)`,
+                );
+
+            token.instance_id = id;
+            token.instrument_id = instrument;
+
+            const index_table = this.param_index[instrument] ?? {};
+            const handler = this.instrument_callback_handlers[instrument];
+            const params = handler ? handler.call(token.params, this.tokens) : token.params;
             for (const [name, value] of Object.entries(params)) {
                 const index = index_table[name];
                 if (index === undefined) continue;
                 if (typeof value !== 'number' || Number.isNaN(value)) {
                     throw new Error(
-                        `conductor: instrument callback for '${node.instrument}' did not return a number for '${name}'`,
+                        `conductor: instrument callback for '${instrument}' did not return a number for '${name}'`,
                     );
                 }
                 exports.set_param(id, index, value);
             }
             ++this.next_instance_id;
+            if (this.next_instance_id >= 128) this.next_instance_id = 0;
         }
     }
 }

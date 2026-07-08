@@ -16,20 +16,23 @@ auto pfx(const IRModule &ir, const std::string &s) -> std::string {
     return ir.name + "$" + s;
 }
 
-auto used_addr(BinaryenModuleRef mod, const InstanceLayout &layout,
-               BinaryenExpressionRef slot_index) -> BinaryenExpressionRef {
+auto dense_addr(BinaryenModuleRef mod, const InstanceLayout &layout,
+                BinaryenExpressionRef idx) -> BinaryenExpressionRef {
     return BinaryenBinary(
         mod, BinaryenAddInt32(),
-        BinaryenConst(mod, BinaryenLiteralInt32(
-                               static_cast<int32_t>(layout.slots_table_base))),
-        BinaryenBinary(mod, BinaryenMulInt32(), slot_index,
+        BinaryenConst(
+            mod, BinaryenLiteralInt32(static_cast<int32_t>(layout.dense_base))),
+        BinaryenBinary(mod, BinaryenMulInt32(), idx,
                        BinaryenConst(mod, BinaryenLiteralInt32(4))));
 }
 
-auto used_at(BinaryenModuleRef mod, const InstanceLayout &layout,
-             BinaryenExpressionRef slot_index) -> BinaryenExpressionRef {
-    return BinaryenLoad(mod, 4, false, 0, 4, BinaryenTypeInt32(),
-                        used_addr(mod, layout, slot_index), "0");
+auto active_count_load(BinaryenModuleRef mod, const InstanceLayout &layout)
+    -> BinaryenExpressionRef {
+    return BinaryenLoad(
+        mod, 4, false, 0, 4, BinaryenTypeInt32(),
+        BinaryenConst(mod, BinaryenLiteralInt32(
+                               static_cast<int32_t>(layout.active_count_addr))),
+        "0");
 }
 
 auto instance_base_of_slot(BinaryenModuleRef mod, const InstanceLayout &layout,
@@ -100,9 +103,13 @@ void emit_main_loop(
 
     const auto SAMPLE = static_cast<BinaryenIndex>(param_types.size());
     const auto SLOT = SAMPLE + 1;
+    const auto CUR_SLOT = SLOT + 1;
+    const auto ACTIVE_COUNT_LOCAL = CUR_SLOT + 1;
+    const auto KILL_IDX = ACTIVE_COUNT_LOCAL + 1;
 
-    std::vector<BinaryenType> var_types = {BinaryenTypeInt32(),
-                                           BinaryenTypeInt32()};
+    std::vector<BinaryenType> var_types = {
+        BinaryenTypeInt32(), BinaryenTypeInt32(), BinaryenTypeInt32(),
+        BinaryenTypeInt32(), BinaryenTypeInt32()};
 
     OutLocalMap out_locals;
     OutLocalMap cur_locals;
@@ -205,8 +212,16 @@ void emit_main_loop(
 
             std::vector<BinaryenExpressionRef> loop_stmts;
             auto slot_get = [&]() -> BinaryenExpressionRef {
-                return BinaryenLocalGet(mod, SLOT, BinaryenTypeInt32());
+                return BinaryenLocalGet(mod, CUR_SLOT, BinaryenTypeInt32());
             };
+
+            loop_stmts.push_back(BinaryenLocalSet(
+                mod, CUR_SLOT,
+                BinaryenLoad(mod, 4, false, 0, 4, BinaryenTypeInt32(),
+                             dense_addr(mod, shared_layout,
+                                        BinaryenLocalGet(mod, SLOT,
+                                                         BinaryenTypeInt32())),
+                             "0")));
 
             std::vector<BinaryenExpressionRef> live_body;
             for (const auto &name : group.module_names)
@@ -218,35 +233,103 @@ void emit_main_loop(
                 emit_block_body(route, layout, slot_get, cur_locals, live_body);
             }
 
-            auto *live_block =
-                BinaryenBlock(mod, nullptr, live_body.data(),
-                              static_cast<BinaryenIndex>(live_body.size()),
-                              BinaryenTypeNone());
-            loop_stmts.push_back(
-                BinaryenIf(mod, used_at(mod, shared_layout, slot_get()),
-                           live_block, nullptr));
+            for (auto *live_stmt : live_body) loop_stmts.push_back(live_stmt);
 
             loop_stmts.push_back(BinaryenLocalSet(
                 mod, SLOT,
-                BinaryenBinary(mod, BinaryenAddInt32(), slot_get(),
+                BinaryenBinary(mod, BinaryenAddInt32(),
+                               BinaryenLocalGet(mod, SLOT, BinaryenTypeInt32()),
                                BinaryenConst(mod, BinaryenLiteralInt32(1)))));
 
             const auto loop_label = group.id + "$main$instance_loop";
             loop_stmts.push_back(BinaryenBreak(
                 mod, loop_label.c_str(),
-                BinaryenBinary(
-                    mod, BinaryenLtUInt32(),
-                    BinaryenLocalGet(mod, SLOT, BinaryenTypeInt32()),
-                    BinaryenConst(mod,
-                                  BinaryenLiteralInt32(static_cast<int32_t>(
-                                      max_instances_per_module)))),
+                BinaryenBinary(mod, BinaryenLtUInt32(),
+                               BinaryenLocalGet(mod, SLOT, BinaryenTypeInt32()),
+                               active_count_load(mod, shared_layout)),
                 nullptr));
 
             auto *loop_body =
                 BinaryenBlock(mod, nullptr, loop_stmts.data(),
                               static_cast<BinaryenIndex>(loop_stmts.size()),
                               BinaryenTypeNone());
-            stmts.push_back(BinaryenLoop(mod, loop_label.c_str(), loop_body));
+            stmts.push_back(BinaryenIf(
+                mod,
+                BinaryenBinary(mod, BinaryenLtUInt32(),
+                               BinaryenLocalGet(mod, SLOT, BinaryenTypeInt32()),
+                               active_count_load(mod, shared_layout)),
+                BinaryenLoop(mod, loop_label.c_str(), loop_body), nullptr));
+
+            {
+                std::vector<BinaryenExpressionRef> kill_loop_stmts;
+                auto kill_idx_get = [&]() -> BinaryenExpressionRef {
+                    return BinaryenLocalGet(mod, KILL_IDX, BinaryenTypeInt32());
+                };
+                auto *pending_slot = BinaryenLoad(
+                    mod, 4, false, 0, 4, BinaryenTypeInt32(),
+                    BinaryenBinary(
+                        mod, BinaryenAddInt32(),
+                        BinaryenConst(mod,
+                                      BinaryenLiteralInt32(static_cast<int32_t>(
+                                          shared_layout.pending_kills_base))),
+                        BinaryenBinary(
+                            mod, BinaryenMulInt32(), kill_idx_get(),
+                            BinaryenConst(mod, BinaryenLiteralInt32(4)))),
+                    "0");
+                std::array<BinaryenExpressionRef, 1> free_args = {pending_slot};
+                const auto free_fn_name = group.id + "$free_slot";
+                kill_loop_stmts.push_back(
+                    BinaryenCall(mod, free_fn_name.c_str(), free_args.data(), 1,
+                                 BinaryenTypeNone()));
+
+                kill_loop_stmts.push_back(BinaryenLocalSet(
+                    mod, KILL_IDX,
+                    BinaryenBinary(
+                        mod, BinaryenAddInt32(), kill_idx_get(),
+                        BinaryenConst(mod, BinaryenLiteralInt32(1)))));
+
+                auto *pending_count = BinaryenLoad(
+                    mod, 4, false, 0, 4, BinaryenTypeInt32(),
+                    BinaryenConst(mod,
+                                  BinaryenLiteralInt32(static_cast<int32_t>(
+                                      shared_layout.pending_kill_count_addr))),
+                    "0");
+                const auto kill_loop_label = group.id + "$main$kill_loop";
+                kill_loop_stmts.push_back(
+                    BinaryenBreak(mod, kill_loop_label.c_str(),
+                                  BinaryenBinary(mod, BinaryenLtUInt32(),
+                                                 kill_idx_get(), pending_count),
+                                  nullptr));
+
+                auto *kill_loop_body = BinaryenBlock(
+                    mod, nullptr, kill_loop_stmts.data(),
+                    static_cast<BinaryenIndex>(kill_loop_stmts.size()),
+                    BinaryenTypeNone());
+
+                stmts.push_back(BinaryenLocalSet(
+                    mod, KILL_IDX,
+                    BinaryenConst(mod, BinaryenLiteralInt32(0))));
+                auto *pending_count_check = BinaryenLoad(
+                    mod, 4, false, 0, 4, BinaryenTypeInt32(),
+                    BinaryenConst(mod,
+                                  BinaryenLiteralInt32(static_cast<int32_t>(
+                                      shared_layout.pending_kill_count_addr))),
+                    "0");
+                stmts.push_back(BinaryenIf(
+                    mod,
+                    BinaryenBinary(mod, BinaryenLtUInt32(), kill_idx_get(),
+                                   pending_count_check),
+                    BinaryenLoop(mod, kill_loop_label.c_str(), kill_loop_body),
+                    nullptr));
+
+                stmts.push_back(BinaryenStore(
+                    mod, 4, 0, 4,
+                    BinaryenConst(mod,
+                                  BinaryenLiteralInt32(static_cast<int32_t>(
+                                      shared_layout.pending_kill_count_addr))),
+                    BinaryenConst(mod, BinaryenLiteralInt32(0)),
+                    BinaryenTypeInt32(), "0"));
+            }
         }
 
         for (const auto &route : graph.modules) {

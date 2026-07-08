@@ -7,7 +7,7 @@ $ErrorActionPreference = "Stop"
 
 try {
     Set-Location -Path "patch_compiler"
-    emcmake cmake -S . -B build -DBUILD_TESTS_WW=OFF
+    emcmake cmake -S . -B build -DBUILD_TESTS_WW=OFF -DCMAKE_BUILD_TYPE=Release
     if ($Jobs -gt 0) {
         cmake --build build -- "-j$Jobs"
     }
@@ -16,7 +16,7 @@ try {
     }
 
     Set-Location -Path "..\score_compiler"
-    emcmake cmake -S . -B build
+    emcmake cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
     if ($Jobs -gt 0) {
         cmake --build build -- "-j$Jobs"
     }

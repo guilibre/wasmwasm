@@ -1,0 +1,6 @@
+static level = 1
+
+level = level * 0.5
+die
+
+OUT[0] <- level

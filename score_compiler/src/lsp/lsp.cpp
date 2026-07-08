@@ -43,6 +43,10 @@ auto lsp_tokens(const std::string &src) -> std::string {
             emit(tok.line, tok.column, len + 2, "string");
             break;
         case TokenKind::KwPlay:
+        case TokenKind::KwTransform:
+        case TokenKind::KwReverse:
+        case TokenKind::KwBy:
+        case TokenKind::KwNull:
             emit(tok.line, tok.column, len, "keyword");
             break;
         case TokenKind::Ident:
@@ -57,7 +61,18 @@ auto lsp_tokens(const std::string &src) -> std::string {
         case TokenKind::Slash:
         case TokenKind::Equals:
         case TokenKind::Colon:
+        case TokenKind::Semicolon:
         case TokenKind::Ampersand:
+        case TokenKind::At:
+        case TokenKind::Caret:
+        case TokenKind::Pipe:
+        case TokenKind::Question:
+        case TokenKind::EqEq:
+        case TokenKind::NotEq:
+        case TokenKind::Less:
+        case TokenKind::Greater:
+        case TokenKind::LessEq:
+        case TokenKind::GreaterEq:
             emit(tok.line, tok.column, len, "operator");
             break;
         default:
@@ -110,6 +125,10 @@ auto lsp_completions(const std::string &src, size_t /*line*/, size_t /*col*/)
     };
 
     emit("play", "", "keyword");
+    emit("transform", "", "keyword");
+    emit("reverse", "", "keyword");
+    emit("by", "", "keyword");
+    emit("null", "", "keyword");
     emit("instrument", "String", "keyword");
     emit("dur", "Float", "variable");
 

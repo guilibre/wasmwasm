@@ -131,8 +131,15 @@ auto Lowerer::free_vars_of(const ExprPtr &e,
                                        ? node.name.lexeme
                                        : node.resolved_name;
                 if (!bound.contains(name) && !is_special(node.name.lexeme) &&
-                    locals.contains(name))
+                    !statics.contains(node.name.lexeme))
                     return {name};
+                const auto fn_it = fns.find(node.name.lexeme);
+                if (fn_it != fns.end()) {
+                    std::unordered_set<std::string> result;
+                    for (const auto &fv : fn_it->second.free_vars)
+                        if (!bound.contains(fv)) result.insert(fv);
+                    return result;
+                }
                 return {};
             }
             if constexpr (std::is_same_v<T, BinaryOp>) {

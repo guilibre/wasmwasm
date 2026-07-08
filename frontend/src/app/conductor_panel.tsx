@@ -16,6 +16,7 @@ interface Props {
     global_callback_source: string;
     on_global_callback_source_change: (source: string) => void;
     on_bpm_change: (bpm: number) => void;
+    load_serial: number;
 }
 
 const global_id = 'global';
@@ -27,6 +28,7 @@ export function ConductorPanel({
     global_callback_source,
     on_global_callback_source_change,
     on_bpm_change,
+    load_serial,
 }: Props) {
     const [patch_param_index, set_patch_param_index] = useState<ParamIndex>({});
     const [selected, set_selected] = useState<string | null>(null);
@@ -89,7 +91,7 @@ export function ConductorPanel({
             </div>
             {selected === global_id && (
                 <ConductorCallbackEditor
-                    key={global_id}
+                    key={`${global_id}-${load_serial}`}
                     path={global_id}
                     initial_value={global_callback_source}
                     on_change={on_global_callback_source_change}
@@ -98,7 +100,7 @@ export function ConductorPanel({
             )}
             {selected && selected !== global_id && (
                 <ConductorCallbackEditor
-                    key={selected}
+                    key={`${selected}-${load_serial}`}
                     path={selected}
                     initial_value={score_param_bindings[selected] ?? ''}
                     on_change={(source) => update_source(selected, source)}
