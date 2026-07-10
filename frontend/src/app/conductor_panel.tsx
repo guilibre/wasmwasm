@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react';
 import WasmWasm from '../audio/compiler';
+import ScoreWasm from '../scorewasm/compiler';
 import { orchestra_to_json } from '../patch/orchestra_to_json';
 import type { OrchestraState, ScoreParamBindings } from '../patch/store/patch_types';
 import type { ParamIndex } from '../audio/conductor';
+import { score_scale_ambient_source, update_score_ambient } from './ts_env';
 import ConductorCallbackEditor, {
     instrument_callback_example,
     global_callback_example,
@@ -11,6 +13,7 @@ import './conductor_panel.scss';
 
 interface Props {
     orchestra: OrchestraState;
+    score_source: string;
     score_param_bindings: ScoreParamBindings;
     on_change: (bindings: ScoreParamBindings) => void;
     global_callback_source: string;
@@ -23,6 +26,7 @@ const global_id = 'global';
 
 export function ConductorPanel({
     orchestra,
+    score_source,
     score_param_bindings,
     on_change,
     global_callback_source,
@@ -48,6 +52,21 @@ export function ConductorPanel({
             cancelled = true;
         };
     }, [orchestra]);
+
+    useEffect(() => {
+        let cancelled = false;
+        ScoreWasm.compile_score(score_source)
+            .then((graph) => {
+                if (cancelled) return;
+                return update_score_ambient(score_scale_ambient_source(graph.scales));
+            })
+            .catch(() => {
+                // invalid score source - leave the previous ambient declarations in place
+            });
+        return () => {
+            cancelled = true;
+        };
+    }, [score_source, load_serial]);
 
     const instrument_ids = Object.keys(patch_param_index).filter((id) => id !== global_id);
 

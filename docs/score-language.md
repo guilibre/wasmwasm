@@ -43,10 +43,38 @@ see [Composition expressions](#composition-expressions) below.
 major = [0, 2, 4, 5, 7, 9, 11]
 ```
 
-An array of numbers, sorted and de-duplicated at compile time. (Scales are
-carried through to the compiled graph for use by callback handlers - see
-[conductor.md](conductor.md) - they aren't otherwise interpreted by the
-compiler.)
+An array of numbers, sorted and de-duplicated at compile time. Scales are
+carried through to the compiled graph (as a top-level `scales` array) for use
+by callback handlers - see [conductor.md](conductor.md).
+
+A block field named `scale` may reference a scale declaration by name:
+
+```SCORE
+major = [2^(0/12), 2^(2/12), 2^(4/12), 2^(5/12), 2^(7/12), 2^(9/12), 2^(11/12)]
+melody = ({degree: 0} {degree: 1} {degree: 2})@{octave: 4}@{scale: major}
+```
+
+At compile time `scale: major` resolves to the numeric index of `major`
+within the compiled graph's `scales` array - it's an error to reference an
+undefined scale. `degree` and `octave` are not special to the compiler; they
+are ordinary numeric fields, by convention interpreted by a callback handler
+together with the referenced scale to compute `freq` at playback time (see
+[conductor.md](conductor.md#callback-handlers-live-control)).
+
+### Predefined scales
+
+Five scales are predefined, as frequency ratios (`2^(semitone/12)`) over
+their semitone steps within an octave:
+
+- `chromatic`: `0 1 2 3 4 5 6 7 8 9 10 11`
+- `major`: `0 2 4 5 7 9 11`
+- `minor`: `0 2 3 5 7 8 10`
+- `harmonic_minor`: `0 2 3 5 7 8 11`
+- `melodic_minor`: `0 2 3 5 7 9 11`
+
+Declaring your own scale with one of these names overrides it (in place, at
+the same index in the compiled `scales` array) rather than adding a
+duplicate.
 
 ## Built-in notes
 
@@ -57,9 +85,13 @@ degrees of a major scale with sharp (`s`) and flat (`b`) variants:
 A As Ab  B Bs Bb  C Cs Cb  D Ds Db  E Es Eb  F Fs Fb  G Gs Gb
 ```
 
-Each is a block with `freq = 440 * 2^(semitone/12)` and `dur = 1`. You may
-redeclare one of these names yourself, but only with another atomic value
-(a block, or a reference that resolves to one) - a redeclaration is used to
+Each is a block with `freq = 440 * 2^(semitone/12)`, `dur = 1`,
+`degree = <semitone mod 12>`, `octave = 4`, and `scale` set to the index of
+the predefined `chromatic` scale - so `scales[p['scale']](p['degree'],
+p['octave'])` (see [conductor.md](conductor.md#scale-functions)) works for
+built-in notes too, not just custom `{degree, octave, scale}` blocks. You may
+redeclare one of these names yourself, but only with another atomic value (a
+block, or a reference that resolves to one) - a redeclaration is used to
 shadow a note with a different sound, not to turn it into a sequence.
 
 ## Composition expressions
@@ -104,11 +136,48 @@ The right-hand side's fields win where both sides define the same field.
 
 ### Octave suffixes - `'` and `,`
 
-Written directly after an atom, `'` shifts its `freq` up an octave and `,`
-shifts it down (both are sugar for a `freq` transform):
+Written directly after an atom, `'` shifts it up an octave and `,` shifts it
+down. Both are sugar for two guarded transforms: `freq` is multiplied/divided
+by 2 wherever it's present, and - independently - `octave` is
+incremented/decremented by 1 wherever *it's* present. A note's `freq` and a
+`{degree: ...}@{octave: ...}` block's `octave` respond to the same suffix, so
+both styles compose the same way:
 
 ```SCORE
-C E G C'   # ...then C one octave up
+C E G C'                                # ...then C one octave up (freq * 2)
+{degree: 0} @ {octave: 4}
+{degree: 0}'@{octave: 4}                # octave becomes 5
+```
+
+### Legato - `~`
+
+`~` between two terms in a sequence marks legato: the left term gets
+`legato: true` and `legato_id: <n>` params, tying it to the term that
+follows. The last term in a `~` chain gets `legato: false` instead (but
+keeps the same `legato_id`):
+
+```SCORE
+a ~ b ~ c   # a, b, c all share one legato_id; a and b get legato: true, c gets legato: false
+```
+
+`legato_id` is unique per `~` chain (a fresh id every time a chain starts),
+letting the runtime tell separate legato groups apart - e.g. `a~b c~d` uses
+two different ids. `repeat` and `reverse` also assign a fresh `legato_id` to
+each copy they produce, so a `~` chain inside a repeated/reversed
+composition still gets a distinct id per repetition. The note affected is
+always the last real note of the
+term on the left of `~` - for a multi-note group this is its last note, not
+its first (`(C E) ~ D` only marks `E`). `~` cannot connect a term that forks
+(`&`), since a fork has no single "last note". Terms not adjacent to `~` get
+no `legato`/`legato_id` params at all.
+
+`~` can also tie into a self-referential loop (see below): `body ~ name`,
+where `name` is the composition's own name, marks `body`'s last note as
+tying into the loop's first note the next time it plays - the loop restarts
+without retriggering:
+
+```SCORE
+melody = C D E ~ melody   # E ties into C every time the loop repeats
 ```
 
 ### Self-reference (loops)
@@ -149,6 +218,16 @@ expr |> reverse
 ```
 
 Reverses the playback order of `expr`.
+
+### `repeat`
+
+```SCORE
+expr |> repeat n
+```
+
+Repeats `expr` `n` times in sequence. `n` is a compile-time constant, at
+least `1`; a fractional `n` is floored (`repeat 5.31` behaves like
+`repeat 5`). `expr` may not itself be an unbounded self-referential loop.
 
 ### `!` (duration shorthand)
 

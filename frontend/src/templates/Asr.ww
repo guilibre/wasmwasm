@@ -1,11 +1,20 @@
-param gate = 0
 param atk = 0.01
+param dur = 1
 param rel = 0.5
+param legato = 0
 
 static env = 0
 
 OUT[0] <- env
 
-env = env + (gate ? 1/(atk*SAMPLE_RATE) : -1/(rel*SAMPLE_RATE))
+static gate = 1
+gate ? (
+  env < 1 ? env = atk <= 0 ? 1 : env + 1/(atk*SAMPLE_RATE)
+) : env = env - 1/(rel*SAMPLE_RATE)
 env = min 1 (max 0 env)
-env == 0 ? die
+env <= 0 ? die
+
+static dt = 1/SAMPLE_RATE
+static t = 0
+legato == 0 ? t = t + dt
+t >= dur ? gate = 0

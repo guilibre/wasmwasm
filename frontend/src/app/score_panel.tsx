@@ -21,11 +21,11 @@ interface Props {
 type Tab = 'score' | 'conductor';
 
 const MIN_WIDTH = 220;
-const MAX_WIDTH = 600;
+const MAX_WIDTH = 1600;
 const DEFAULT_WIDTH = 600;
 
 const MIN_GRAPH_HEIGHT = 80;
-const MAX_GRAPH_HEIGHT = 800;
+const MAX_GRAPH_HEIGHT = 1800;
 const DEFAULT_GRAPH_HEIGHT = 200;
 
 export function ScorePanel({
@@ -157,6 +157,7 @@ export function ScorePanel({
             {tab === 'conductor' && (
                 <ConductorPanel
                     orchestra={orchestra}
+                    score_source={source}
                     score_param_bindings={score_param_bindings}
                     on_change={on_score_param_bindings_change}
                     global_callback_source={global_callback_source}

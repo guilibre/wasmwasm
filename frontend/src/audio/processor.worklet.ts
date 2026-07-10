@@ -11,6 +11,21 @@ import type {
 
 const inv_sample_rate = 1 / sampleRate;
 
+function build_scale_prelude(scales: ScoreGraph['scales']): string {
+    const functions = scales
+        .map(({ name, values }) => {
+            const n = values.length;
+            return `function ${name}(degree, octave) {
+                const n = ${n};
+                const i = ((degree % n) + n) % n;
+                return ${JSON.stringify(values)}[i] * Math.pow(2, Math.floor(degree / n)) * Math.pow(2, octave);
+            }`;
+        })
+        .join('\n');
+    const index = `const scales = [${scales.map(({ name }) => name).join(', ')}];`;
+    return `${functions}\n${index}`;
+}
+
 interface WasmExports extends WebAssembly.Exports {
     main: (...args: number[]) => void;
     [key: string]: WebAssembly.ExportValue;
@@ -100,6 +115,10 @@ class WasmProcessor extends AudioWorkletProcessor {
                 }
 
                 if (event.data.score_graph) {
+                    const scale_prelude = build_scale_prelude(
+                        (event.data.score_graph as ScoreGraph).scales ?? [],
+                    );
+
                     const instrument_callbacks_source =
                         (event.data.instrument_callbacks as Record<string, string>) ?? {};
                     const instrument_callbacks: InstrumentCallbackMap = {};
@@ -107,14 +126,14 @@ class WasmProcessor extends AudioWorkletProcessor {
                         instrument_callbacks_source,
                     )) {
                         instrument_callbacks[instrument_id] = new Function(
-                            `return (\n${js_source}\n);`,
+                            `${scale_prelude}\nreturn (\n${js_source}\n);`,
                         )() as new () => InstrumentCallbackHandler;
                     }
 
                     const global_callback_source = event.data.global_callback as string | undefined;
                     const global_callback = global_callback_source
                         ? (new Function(
-                              `return (\n${global_callback_source}\n);`,
+                              `${scale_prelude}\nreturn (\n${global_callback_source}\n);`,
                           )() as new () => GlobalCallbackHandler)
                         : null;
 

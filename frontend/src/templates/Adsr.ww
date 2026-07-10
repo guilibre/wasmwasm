@@ -1,23 +1,34 @@
-param gate = 0
 param atk = 0.01
-param dec = 0.1
+param dec = 2
+param dur = 1
 param sus = 0.8
 param rel = 0.5
+param legato = 0
 
-static gate_ = 0
 static env = 0
-static denv = 0
 
 OUT[0] <- env
 
-gate > gate_ ? denv = 1/(atk*SAMPLE_RATE)
-env = min 1 (max 0 (env + denv))
-gate ? (
-    env < 1 ? (
-        denv < 0 ? (env <= sus ? denv = 0)
-    ) : denv = 1/((sus - 1)*dec*SAMPLE_RATE)
-) : (
-    env > 0 ? denv = -1/(rel*SAMPLE_RATE) : die
-)
+static gate = 1
+static denv = 1
 
-gate_ = gate
+gate ? (
+  env < 1 ? (
+    denv > 0 ? (
+      denv = 1/(atk*SAMPLE_RATE)
+    ) : (
+      env <= sus ? denv = 0
+    )
+  ) : (
+    denv = 1/((sus - 1)*dec*SAMPLE_RATE)
+  )
+) : (
+  denv = -1/(rel*SAMPLE_RATE)
+)
+env = min 1 (max 0 (env + denv))
+env <= 0 ? die
+
+static dt = 1/SAMPLE_RATE
+static t = 0
+legato == 0 ? t = t + dt
+t >= dur ? gate = 0

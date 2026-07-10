@@ -45,7 +45,7 @@ auto Parser::expect(TokenKind kind, const std::string &what) -> Token {
         throw ParseException("expected " + what + ", got '" + current.lexeme +
                                  "'",
                              current.line, current.column);
-    Token tok = current;
+    const auto tok = current;
     advance();
     return tok;
 }
@@ -86,7 +86,7 @@ auto Parser::parse_factor() -> std::unique_ptr<Expr> {
         return expr;
     }
     if (current.kind == TokenKind::Ident) {
-        Token tok = current;
+        const auto tok = current;
         advance();
         auto expr = std::make_unique<Expr>();
         expr->kind = Expr::Kind::Ident;
@@ -95,7 +95,7 @@ auto Parser::parse_factor() -> std::unique_ptr<Expr> {
         expr->column = tok.column;
         return expr;
     }
-    Token tok = expect(TokenKind::Number, "number");
+    const auto &tok = expect(TokenKind::Number, "number");
     return make_number(std::stod(tok.lexeme));
 }
 
@@ -160,7 +160,8 @@ auto Parser::parse_arith_term() -> std::unique_ptr<Expr> {
     auto lhs = parse_pow();
     while (current.kind == TokenKind::Star ||
            current.kind == TokenKind::Slash) {
-        BinOp op = current.kind == TokenKind::Star ? BinOp::Mul : BinOp::Div;
+        const auto op =
+            current.kind == TokenKind::Star ? BinOp::Mul : BinOp::Div;
         advance();
         auto rhs = parse_pow();
         lhs = make_binary(op, std::move(lhs), std::move(rhs));
@@ -172,7 +173,8 @@ auto Parser::parse_expr() -> std::unique_ptr<Expr> {
     auto lhs = parse_arith_term();
     while (current.kind == TokenKind::Plus ||
            current.kind == TokenKind::Minus) {
-        BinOp op = current.kind == TokenKind::Plus ? BinOp::Add : BinOp::Sub;
+        const auto op =
+            current.kind == TokenKind::Plus ? BinOp::Add : BinOp::Sub;
         advance();
         auto rhs = parse_arith_term();
         lhs = make_binary(op, std::move(lhs), std::move(rhs));
@@ -186,13 +188,13 @@ auto Parser::parse_block() -> Block {
     block.column = current.column;
     expect(TokenKind::LBrace, "'{'");
     while (current.kind != TokenKind::RBrace) {
-        Token name = expect(TokenKind::Ident, "parameter name");
+        const auto &name = expect(TokenKind::Ident, "parameter name");
         expect(TokenKind::Colon, "':'");
         if (name.lexeme == "instrument") {
             if (block.instrument.has_value())
                 throw ParseException("duplicate 'instrument' field", name.line,
                                      name.column);
-            Token value = expect(TokenKind::String, "string literal");
+            const auto &value = expect(TokenKind::String, "string literal");
             block.instrument = value.lexeme;
         } else {
             Param param;
@@ -218,49 +220,62 @@ auto Parser::parse_comp_atom() -> Term {
         term.kind = Term::Kind::BlockLit;
         term.block_lit = parse_block();
     } else {
-        Token name = expect(TokenKind::Ident, "variable name");
+        const auto &name = expect(TokenKind::Ident, "variable name");
         term.kind = Term::Kind::VarRef;
         term.var_name = name.lexeme;
     }
 
     while (current.kind == TokenKind::Tick ||
            current.kind == TokenKind::Comma) {
-        bool is_up = current.kind == TokenKind::Tick;
+        const auto is_up = current.kind == TokenKind::Tick;
         advance();
-        Term pipe;
-        pipe.kind = Term::Kind::Pipe;
-        pipe.pipe_op = Term::PipeOp::Transform;
-        pipe.line = term.line;
-        pipe.column = term.column;
-        pipe.pipe_param_name = "freq";
 
-        auto make_freq_ident = []() -> std::unique_ptr<Expr> {
+        const auto make_ident =
+            [](const std::string &name) -> std::unique_ptr<Expr> {
             auto ident = std::make_unique<Expr>();
             ident->kind = Expr::Kind::Ident;
-            ident->ident_name = "freq";
+            ident->ident_name = name;
             return ident;
         };
 
-        auto scaled = make_binary(BinOp::Mul, make_freq_ident(),
-                                  make_number(is_up ? 2.0 : 0.5));
+        const auto make_guarded_pipe = [&](const std::string &param_name,
+                                           std::unique_ptr<Expr> new_value,
+                                           Term inner) -> Term {
+            Term pipe;
+            pipe.kind = Term::Kind::Pipe;
+            pipe.pipe_op = Term::PipeOp::Transform;
+            pipe.line = inner.line;
+            pipe.column = inner.column;
+            pipe.pipe_param_name = param_name;
 
-        auto guarded = std::make_unique<Expr>();
-        guarded->kind = Expr::Kind::Ternary;
-        guarded->ternary_cond = make_freq_ident();
-        guarded->ternary_then = std::move(scaled);
-        guarded->ternary_else = std::make_unique<Expr>();
-        guarded->ternary_else->kind = Expr::Kind::Null;
+            auto guarded = std::make_unique<Expr>();
+            guarded->kind = Expr::Kind::Ternary;
+            guarded->ternary_cond = make_ident(param_name);
+            guarded->ternary_then = std::move(new_value);
+            guarded->ternary_else = std::make_unique<Expr>();
+            guarded->ternary_else->kind = Expr::Kind::Null;
 
-        pipe.pipe_expr = std::move(guarded);
-        pipe.lhs_expr = wrap_as_comp_expr(std::move(term));
-        term = std::move(pipe);
+            pipe.pipe_expr = std::move(guarded);
+            pipe.lhs_expr = wrap_as_comp_expr(std::move(inner));
+            return pipe;
+        };
+
+        auto freq_value = make_binary(BinOp::Mul, make_ident("freq"),
+                                      make_number(is_up ? 2.0 : 0.5));
+        term =
+            make_guarded_pipe("freq", std::move(freq_value), std::move(term));
+
+        auto octave_value = make_binary(is_up ? BinOp::Add : BinOp::Sub,
+                                        make_ident("octave"), make_number(1.0));
+        term = make_guarded_pipe("octave", std::move(octave_value),
+                                 std::move(term));
     }
 
     return term;
 }
 
 auto Parser::parse_atomic_join() -> Term {
-    Term lhs = parse_comp_atom();
+    auto lhs = parse_comp_atom();
     if (current.kind != TokenKind::At) return lhs;
     while (current.kind == TokenKind::At) {
         advance();
@@ -273,7 +288,7 @@ auto Parser::parse_atomic_join() -> Term {
             join.rhs_is_block = true;
             join.rhs_block = parse_block();
         } else {
-            Token rhs_name = expect(TokenKind::Ident, "variable name");
+            const auto &rhs_name = expect(TokenKind::Ident, "variable name");
             join.rhs_name = rhs_name.lexeme;
         }
         lhs = std::move(join);
@@ -282,8 +297,8 @@ auto Parser::parse_atomic_join() -> Term {
 }
 
 auto Parser::parse_pipe_suffix(std::unique_ptr<CompExpr> lhs) -> Term {
-    size_t line = lhs->terms.front().line;
-    size_t column = lhs->terms.front().column;
+    const auto line = lhs->terms.front().line;
+    const auto column = lhs->terms.front().column;
     advance();
 
     Term pipe;
@@ -297,8 +312,14 @@ auto Parser::parse_pipe_suffix(std::unique_ptr<CompExpr> lhs) -> Term {
         return pipe;
     }
 
+    if (match(TokenKind::KwRepeat)) {
+        pipe.pipe_op = Term::PipeOp::Repeat;
+        pipe.pipe_expr = parse_ternary();
+        return pipe;
+    }
+
     expect(TokenKind::KwTransform, "'transform'");
-    Token param = expect(TokenKind::Ident, "parameter name");
+    const auto &param = expect(TokenKind::Ident, "parameter name");
     expect(TokenKind::KwBy, "'by'");
     auto expr = parse_ternary();
 
@@ -309,8 +330,8 @@ auto Parser::parse_pipe_suffix(std::unique_ptr<CompExpr> lhs) -> Term {
 }
 
 auto Parser::parse_bang_suffix(std::unique_ptr<CompExpr> lhs) -> Term {
-    size_t line = lhs->terms.front().line;
-    size_t column = lhs->terms.front().column;
+    const auto line = lhs->terms.front().line;
+    const auto column = lhs->terms.front().column;
     advance();
     auto expr = parse_ternary();
 
@@ -354,9 +375,24 @@ auto Parser::parse_fork_term() -> Term {
     return continue_fork_term(parse_pipe_term());
 }
 
+void Parser::consume_legato_tilde(Term &term) {
+    if (!match(TokenKind::Tilde)) return;
+    term.legato_after = true;
+    if (!starts_term())
+        throw ParseException("expected a note after '~'", current.line,
+                             current.column);
+}
+
+void Parser::parse_comp_terms(CompExpr &comp) {
+    while (starts_term()) {
+        comp.terms.push_back(parse_fork_term());
+        consume_legato_tilde(comp.terms.back());
+    }
+}
+
 auto Parser::parse_comp_expr() -> CompExpr {
     CompExpr comp;
-    while (starts_term()) comp.terms.push_back(parse_fork_term());
+    parse_comp_terms(comp);
     return comp;
 }
 
@@ -364,12 +400,12 @@ auto Parser::parse_var_decl() -> VarDecl {
     VarDecl decl;
     decl.line = current.line;
     decl.column = current.column;
-    Token name = expect(TokenKind::Ident, "variable name");
+    const auto &name = expect(TokenKind::Ident, "variable name");
     decl.name = name.lexeme;
     expect(TokenKind::Equals, "'='");
     if (current.kind == TokenKind::LBrace) {
-        size_t block_line = current.line;
-        size_t block_column = current.column;
+        const auto block_line = current.line;
+        const auto block_column = current.column;
         Block block = parse_block();
         if (current.kind == TokenKind::Semicolon ||
             current.kind == TokenKind::Eof ||
@@ -386,7 +422,8 @@ auto Parser::parse_var_decl() -> VarDecl {
             Term first =
                 continue_fork_term(continue_pipe_term(std::move(term)));
             decl.comp.terms.push_back(std::move(first));
-            while (starts_term()) decl.comp.terms.push_back(parse_fork_term());
+            consume_legato_tilde(decl.comp.terms.back());
+            parse_comp_terms(decl.comp);
         }
     } else if (current.kind == TokenKind::LBracket) {
         decl.kind = VarDecl::Kind::ScaleDef;

@@ -45,6 +45,7 @@ auto lsp_tokens(const std::string &src) -> std::string {
         case TokenKind::KwPlay:
         case TokenKind::KwTransform:
         case TokenKind::KwReverse:
+        case TokenKind::KwRepeat:
         case TokenKind::KwBy:
         case TokenKind::KwNull:
             emit(tok.line, tok.column, len, "keyword");
@@ -64,6 +65,7 @@ auto lsp_tokens(const std::string &src) -> std::string {
         case TokenKind::Semicolon:
         case TokenKind::Ampersand:
         case TokenKind::At:
+        case TokenKind::Tilde:
         case TokenKind::Caret:
         case TokenKind::Pipe:
         case TokenKind::Question:
@@ -85,7 +87,7 @@ auto lsp_tokens(const std::string &src) -> std::string {
 }
 
 auto lsp_diagnostics(const std::string &src) -> std::string {
-    Tokenizer tokenizer(src);
+    const Tokenizer tokenizer(src);
     Parser parser(tokenizer);
     try {
         const auto program = parser.parse();
@@ -127,12 +129,13 @@ auto lsp_completions(const std::string &src, size_t /*line*/, size_t /*col*/)
     emit("play", "", "keyword");
     emit("transform", "", "keyword");
     emit("reverse", "", "keyword");
+    emit("repeat", "", "keyword");
     emit("by", "", "keyword");
     emit("null", "", "keyword");
     emit("instrument", "String", "keyword");
     emit("dur", "Float", "variable");
 
-    Tokenizer tokenizer(src);
+    const Tokenizer tokenizer(src);
     Parser parser(tokenizer);
     try {
         const auto program = parser.parse();

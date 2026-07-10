@@ -71,6 +71,24 @@ When a token reaches a `state` node (`enter_state`):
    output), then `set_param` for each resolved parameter that the
    instrument exposes (via a per-instrument `param_index`).
 
+## Legato
+
+A `state` node produced by the score language's `~` operator carries two
+extra params: `legato` (1 on every note but the last of a `~` chain, 0 on
+the last) and `legato_id` (unique per chain, including per copy produced by
+`repeat`/`reverse`).
+
+When entering a `state` whose `legato_id` matches a chain `Conductor` is
+already tracking (`legato_voices`, keyed by `legato_id`), it reuses that
+chain's `instance_id` instead of calling `instantiate` again - only
+`set_param` runs, so the instrument voice glides into the new params instead
+of being retriggered. `instantiate` only runs for the first note of a chain
+(or any note with no `legato_id` at all). After resolving params, `legato:
+1` records the voice under `legato_id` for the next note to pick up;
+`legato: 0` removes it, since the chain ends there. If a chain's instrument
+name were to change mid-chain, the voice isn't reused (a fresh `instantiate`
+runs instead) to avoid handing one instrument's voice to another.
+
 ## Wiring instruments in
 
 `Conductor` is constructed with:
@@ -99,6 +117,56 @@ Two kinds of user-authored JS handlers can hook into playback, edited via
 Both receive `TokenParams[]` (`{ instrument_id, params }` for every currently
 active token), which lets a handler react to what else is playing right now -
 e.g. detuning a voice based on how many other notes are active.
+
+### Scale functions
+
+For every scale declared in the score (`major = [...]`, see
+[score-language.md](score-language.md#scale-declarations)), the worklet
+synthesizes a same-named function available directly in callback code - no
+extra parameter needed:
+
+```js
+major(degree, octave) // -> values[((degree % n) + n) % n] * 2^floor(degree/n) * 2^octave
+```
+
+where `n` is the scale's length. It returns a plain multiplier; combine it
+with your own root frequency and the note's `scale`/`degree`/`octave` params
+(see [score-language.md](score-language.md#scale-declarations)) to compute
+`freq`:
+
+```js
+class GlobalCallbackHandler {
+    call(ap) {
+        const p = ap[0]?.params;
+        if (!p || p.degree === undefined || p.octave === undefined) return {};
+        return { freq: 440 * major(p.degree, p.octave) };
+    }
+}
+```
+
+A `scale` param (as set by `@{scale: <name>}`, see
+[score-language.md](score-language.md#scale-declarations)) is only a numeric
+index, not itself callable - to dispatch on it dynamically, use the
+also-synthesized `scales` array, indexed in the same order as the compiled
+graph's `scales`:
+
+```js
+class GlobalCallbackHandler {
+    call(ap) {
+        const p = ap[0]?.params;
+        if (!p || p.scale === undefined || p.degree === undefined || p.octave === undefined)
+            return {};
+        return { freq: 440 * scales[p.scale](p.degree, p.octave) };
+    }
+}
+```
+
+The in-browser callback editor also type-checks calls to these - `conductor_panel.tsx`
+recompiles the current score source and pushes
+`declare function <name>(degree: number, octave: number): number;` plus
+`declare const scales: ((degree: number, octave: number) => number)[];` ambient
+declarations into the shared TS environment (`ts_env.ts`) whenever the score
+or scale definitions change.
 
 ## UI
 

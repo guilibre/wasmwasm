@@ -8,6 +8,7 @@
 #include <type_traits>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 #include <variant>
 #include <vector>
 
@@ -18,7 +19,7 @@ auto lookup_env(
     const std::vector<std::unordered_map<std::string, TypePtr>> &env,
     size_t boundary = 0) -> std::optional<TypePtr> {
     for (int i = static_cast<int>(env.size()) - 1;
-         i >= static_cast<int>(boundary); --i) {
+         std::cmp_greater_equal(i, boundary); --i) {
         auto it = env[static_cast<size_t>(i)].find(name);
         if (it != env[static_cast<size_t>(i)].end()) return it->second;
     }

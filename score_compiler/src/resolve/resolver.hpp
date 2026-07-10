@@ -50,3 +50,5 @@ class ResolveException : public std::runtime_error {
 };
 
 [[nodiscard]] auto expand_program(const Program &program) -> ExpandedGraph;
+
+auto prune_unreachable(ExpandedGraph &graph) -> void;

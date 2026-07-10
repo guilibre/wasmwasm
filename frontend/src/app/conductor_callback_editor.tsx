@@ -14,16 +14,20 @@ export const instrument_callback_example = `class InstrumentHandler implements I
     p: Record<string, number>,
     ap: TokenParams[],
   ): Record<string, number> {
-    const amp = p['amp'] ?? 0.2;
     const atk = p['atk'] ?? 0.01;
-    const rel = p['rel'] ?? (p['dur'] ?? 0.5);
+    const dur = p['dur'] ?? 1;
+    const rel = p['rel'] ?? 0.5;
+    const legato = p['legato'] ?? 0;
+    const amp = p['amp'] ?? 0.2;
     const freq = p['freq'] ?? 440;
     const pan = p['pan'] ?? 0;
 
     return {
-      amp,
       atk,
+      dur,
       rel,
+      legato,
+      amp,
       freq,
       pan,
     };
@@ -135,7 +139,6 @@ export default function ConductorCallbackEditor({
             const language_compartment = new Compartment();
 
             const update_listener = EditorView.updateListener.of((update) => {
-                if (!update.docChanged) return;
                 on_change_ref.current(update.state.doc.toString());
             });
 

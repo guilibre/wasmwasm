@@ -6,6 +6,7 @@ add_library(${PROJECT_NAME}_lib STATIC
     parser/parser.cpp
     parser/tokenizer.cpp
     resolve/resolver.cpp
+    resolve/optimize.cpp
 )
 
 target_link_libraries(${PROJECT_NAME}_lib PRIVATE compiler_flags)

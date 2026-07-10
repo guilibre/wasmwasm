@@ -71,13 +71,41 @@ struct MathCallVecInfo {
 };
 
 constexpr std::array<MathCallVecInfo, 7> kVectorizableMathCalls{{
-    {"wasmwasm_sin", "wasmwasm_sin_x2", 1},
-    {"wasmwasm_cos", "wasmwasm_cos_x2", 1},
-    {"wasmwasm_clip", "wasmwasm_clip_x2", 1},
-    {"wasmwasm_min", "wasmwasm_min_x2", 2},
-    {"wasmwasm_max", "wasmwasm_max_x2", 2},
-    {"wasmwasm_uniform", "wasmwasm_uniform_x2", 2},
-    {"wasmwasm_gaussian", "wasmwasm_gaussian_x2", 2},
+    {
+        .scalar_name = "wasmwasm_sin",
+        .vec_name = "wasmwasm_sin_x2",
+        .arity = 1,
+    },
+    {
+        .scalar_name = "wasmwasm_cos",
+        .vec_name = "wasmwasm_cos_x2",
+        .arity = 1,
+    },
+    {
+        .scalar_name = "wasmwasm_clip",
+        .vec_name = "wasmwasm_clip_x2",
+        .arity = 1,
+    },
+    {
+        .scalar_name = "wasmwasm_min",
+        .vec_name = "wasmwasm_min_x2",
+        .arity = 2,
+    },
+    {
+        .scalar_name = "wasmwasm_max",
+        .vec_name = "wasmwasm_max_x2",
+        .arity = 2,
+    },
+    {
+        .scalar_name = "wasmwasm_uniform",
+        .vec_name = "wasmwasm_uniform_x2",
+        .arity = 2,
+    },
+    {
+        .scalar_name = "wasmwasm_gaussian",
+        .vec_name = "wasmwasm_gaussian_x2",
+        .arity = 2,
+    },
 }};
 
 auto lookup_vectorizable_math_call(std::string_view name)
@@ -150,7 +178,7 @@ auto try_vectorize_expr_pair(const VectorizeContext &ctx,
         auto op_b = BinaryenBinaryGetOp(expr_b);
         if (op_a != op_b) return std::nullopt;
 
-        bool op_ok = false;
+        auto op_ok = false;
         auto vec_op = f64_binary_to_vec_op(op_a, op_ok);
         if (!op_ok) return std::nullopt;
 
@@ -158,7 +186,7 @@ auto try_vectorize_expr_pair(const VectorizeContext &ctx,
             ctx, BinaryenBinaryGetLeft(expr_a), BinaryenBinaryGetLeft(expr_b),
             side_effects, /*is_nested_operand=*/true);
         if (!left_index.has_value()) return std::nullopt;
-        auto right_index = try_vectorize_expr_pair(
+        const auto right_index = try_vectorize_expr_pair(
             ctx, BinaryenBinaryGetRight(expr_a), BinaryenBinaryGetRight(expr_b),
             side_effects, /*is_nested_operand=*/true);
         if (!right_index.has_value()) return std::nullopt;
@@ -172,12 +200,6 @@ auto try_vectorize_expr_pair(const VectorizeContext &ctx,
     if (is_nested_operand && id_a == id_b &&
         (id_a == BinaryenConstId() || id_a == BinaryenLocalGetId()) &&
         expressions_structurally_equal(expr_a, expr_b)) {
-        // Only worth splatting when this is an operand shared by a real
-        // vectorized computation above (e.g. `sample_rate` in
-        // `mul(load(a), sample_rate)` / `mul(load(b), sample_rate)`).
-        // At the top level (two independent statements with no shared
-        // computation, e.g. two accumulator resets to the same constant),
-        // splat+extract is pure overhead vs. the original scalar stores.
         auto *splat = BinaryenUnary(ctx.mod, BinaryenSplatVecF64x2(), expr_a);
         return make_temp_v128(ctx, splat, side_effects);
     }
@@ -186,8 +208,8 @@ auto try_vectorize_expr_pair(const VectorizeContext &ctx,
         if (BinaryenCallIsReturn(expr_a) || BinaryenCallIsReturn(expr_b))
             return std::nullopt;
 
-        std::string_view target_a{BinaryenCallGetTarget(expr_a)};
-        std::string_view target_b{BinaryenCallGetTarget(expr_b)};
+        const std::string_view target_a{BinaryenCallGetTarget(expr_a)};
+        const std::string_view target_b{BinaryenCallGetTarget(expr_b)};
         if (target_a != target_b) return std::nullopt;
 
         const auto *info = lookup_vectorizable_math_call(target_a);
@@ -226,7 +248,7 @@ struct CandidateExpr {
 
 auto match_candidate_expr(BinaryenExpressionRef stmt) -> CandidateExpr {
     CandidateExpr result;
-    auto id = BinaryenExpressionGetId(stmt);
+    const auto id = BinaryenExpressionGetId(stmt);
     if (id == BinaryenLoadId() || id == BinaryenBinaryId() ||
         id == BinaryenCallId()) {
         result.value = stmt;
@@ -285,12 +307,6 @@ auto make_replace_lane_pack(BinaryenModuleRef mod,
                                value_b);
 }
 
-// Recognizes `call wasmwasm_sin(x)` paired with `call wasmwasm_cos(x)` on the
-// SAME argument (in either order) and fuses them into one
-// `wasmwasm_sincos_x2(splat(x))` call, sharing the argument-reduction work.
-// On success, `lane_a`/`lane_b` report which lane (0/1) of the returned temp
-// v128 corresponds to `expr_a`/`expr_b` respectively (wasmwasm_sincos_x2
-// returns [sin, cos]).
 auto try_vectorize_sincos_pair(const VectorizeContext &ctx,
                                BinaryenExpressionRef expr_a,
                                BinaryenExpressionRef expr_b,
@@ -301,13 +317,13 @@ auto try_vectorize_sincos_pair(const VectorizeContext &ctx,
         BinaryenExpressionGetId(expr_b) != BinaryenCallId())
         return std::nullopt;
 
-    std::string_view target_a{BinaryenCallGetTarget(expr_a)};
-    std::string_view target_b{BinaryenCallGetTarget(expr_b)};
+    const std::string_view target_a{BinaryenCallGetTarget(expr_a)};
+    const std::string_view target_b{BinaryenCallGetTarget(expr_b)};
 
-    bool a_is_sin = target_a == "wasmwasm_sin";
-    bool a_is_cos = target_a == "wasmwasm_cos";
-    bool b_is_sin = target_b == "wasmwasm_sin";
-    bool b_is_cos = target_b == "wasmwasm_cos";
+    const auto a_is_sin = target_a == "wasmwasm_sin";
+    const auto a_is_cos = target_a == "wasmwasm_cos";
+    const auto b_is_sin = target_b == "wasmwasm_sin";
+    const auto b_is_cos = target_b == "wasmwasm_cos";
     if (!((a_is_sin && b_is_cos) || (a_is_cos && b_is_sin)))
         return std::nullopt;
 
@@ -336,16 +352,16 @@ auto try_vectorize_sincos_pair(const VectorizeContext &ctx,
 
 void try_vectorize_block(BinaryenModuleRef mod, BinaryenFunctionRef fn,
                          BinaryenExpressionRef block) {
-    VectorizeContext ctx{.mod = mod, .fn = fn};
-    BinaryenIndex count = BinaryenBlockGetNumChildren(block);
+    const VectorizeContext ctx{.mod = mod, .fn = fn};
+    auto count = BinaryenBlockGetNumChildren(block);
     if (count < 2) return;
 
     for (BinaryenIndex i = 0; i + 1 < count; ++i) {
         auto *stmt_a = BinaryenBlockGetChildAt(block, i);
         auto *stmt_b = BinaryenBlockGetChildAt(block, i + 1);
 
-        auto cand_a = match_candidate_expr(stmt_a);
-        auto cand_b = match_candidate_expr(stmt_b);
+        const auto cand_a = match_candidate_expr(stmt_a);
+        const auto cand_b = match_candidate_expr(stmt_b);
         if (cand_a.value != nullptr && cand_b.value != nullptr &&
             BinaryenExpressionGetType(cand_a.value) == BinaryenTypeFloat64() &&
             BinaryenExpressionGetType(cand_b.value) == BinaryenTypeFloat64()) {
@@ -360,14 +376,14 @@ void try_vectorize_block(BinaryenModuleRef mod, BinaryenFunctionRef fn,
                     BinaryenSIMDExtract(mod, BinaryenExtractLaneVecF64x2(),
                                         get_temp_v128(ctx, *vec_index), 1);
 
-                BinaryenExpressionRef new_a = lane0;
-                BinaryenExpressionRef new_b = lane1;
+                auto *new_a = lane0;
+                auto *new_b = lane1;
                 if (cand_a.is_local_set)
                     new_a = BinaryenLocalSet(mod, cand_a.local_index, lane0);
                 if (cand_b.is_local_set)
                     new_b = BinaryenLocalSet(mod, cand_b.local_index, lane1);
 
-                BinaryenIndex insert_at = i;
+                auto insert_at = i;
                 for (auto *effect : side_effects) {
                     BinaryenBlockInsertChildAt(block, insert_at, effect);
                     ++insert_at;
@@ -395,8 +411,8 @@ void try_vectorize_block(BinaryenModuleRef mod, BinaryenFunctionRef fn,
                     mod, BinaryenExtractLaneVecF64x2(),
                     get_temp_v128(ctx, *sincos_index), lane_b);
 
-                BinaryenExpressionRef new_a = extract_a;
-                BinaryenExpressionRef new_b = extract_b;
+                auto *new_a = extract_a;
+                auto *new_b = extract_b;
                 if (cand_a.is_local_set)
                     new_a =
                         BinaryenLocalSet(mod, cand_a.local_index, extract_a);
@@ -404,7 +420,7 @@ void try_vectorize_block(BinaryenModuleRef mod, BinaryenFunctionRef fn,
                     new_b =
                         BinaryenLocalSet(mod, cand_b.local_index, extract_b);
 
-                BinaryenIndex insert_at = i;
+                auto insert_at = i;
                 for (auto *effect : sincos_side_effects) {
                     BinaryenBlockInsertChildAt(block, insert_at, effect);
                     ++insert_at;
@@ -429,8 +445,8 @@ void try_vectorize_block(BinaryenModuleRef mod, BinaryenFunctionRef fn,
                 auto *value_b = BinaryenStoreGetValue(stmt_b);
 
                 std::vector<BinaryenExpressionRef> side_effects;
-                auto vec_index = try_vectorize_expr_pair(ctx, value_a, value_b,
-                                                         side_effects);
+                const auto vec_index = try_vectorize_expr_pair(
+                    ctx, value_a, value_b, side_effects);
 
                 BinaryenExpressionRef packed = nullptr;
                 if (vec_index.has_value()) {
@@ -443,7 +459,7 @@ void try_vectorize_block(BinaryenModuleRef mod, BinaryenFunctionRef fn,
                 auto *vec_store = BinaryenStore(mod, 16, 0, 8, base_ptr, packed,
                                                 BinaryenTypeVec128(), "0");
 
-                BinaryenIndex insert_at = i;
+                auto insert_at = i;
                 for (auto *effect : side_effects) {
                     BinaryenBlockInsertChildAt(block, insert_at, effect);
                     ++insert_at;
@@ -462,7 +478,7 @@ void try_vectorize_block(BinaryenModuleRef mod, BinaryenFunctionRef fn,
 void visit(BinaryenModuleRef mod, BinaryenFunctionRef fn,
            BinaryenExpressionRef expr) {
     if (expr == nullptr) return;
-    auto id = BinaryenExpressionGetId(expr);
+    const auto id = BinaryenExpressionGetId(expr);
     if (id == BinaryenBlockId()) {
         auto count = BinaryenBlockGetNumChildren(expr);
         for (BinaryenIndex i = 0; i < count; ++i)
@@ -479,7 +495,7 @@ void visit(BinaryenModuleRef mod, BinaryenFunctionRef fn,
 } // namespace
 
 void run_simd_vectorization_pass(BinaryenModuleRef mod) {
-    auto num_functions = BinaryenGetNumFunctions(mod);
+    const auto num_functions = BinaryenGetNumFunctions(mod);
     for (BinaryenIndex i = 0; i < num_functions; ++i) {
         auto *fn = BinaryenGetFunctionByIndex(mod, i);
         visit(mod, fn, BinaryenFunctionGetBody(fn));

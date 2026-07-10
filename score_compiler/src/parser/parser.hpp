@@ -33,6 +33,8 @@ class Parser {
     [[nodiscard]] auto parse_array_literal()
         -> std::vector<std::unique_ptr<Expr>>;
     [[nodiscard]] auto parse_block() -> Block;
+    void consume_legato_tilde(Term &term);
+    void parse_comp_terms(CompExpr &comp);
     [[nodiscard]] auto parse_comp_expr() -> CompExpr;
     [[nodiscard]] auto parse_comp_atom() -> Term;
     [[nodiscard]] auto parse_atomic_join() -> Term;

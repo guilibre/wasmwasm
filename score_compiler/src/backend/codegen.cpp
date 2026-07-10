@@ -106,7 +106,18 @@ void write_node(const GraphNode &node, std::string &out) {
 } // namespace
 
 auto graph_to_json(const ExpandedGraph &graph) -> std::string {
-    std::string out = R"({"version":1,"nodes":[)";
+    std::string out = R"({"version":1,"scales":[)";
+    for (size_t i = 0; i < graph.scales.size(); ++i) {
+        if (i != 0) out += ",";
+        const auto &[name, values] = graph.scales[i];
+        out += R"({"name":)" + json_string(name) + R"(,"values":[)";
+        for (size_t j = 0; j < values.size(); ++j) {
+            if (j != 0) out += ",";
+            out += format_number(values[j]);
+        }
+        out += "]}";
+    }
+    out += R"(],"nodes":[)";
     for (size_t i = 0; i < graph.nodes.size(); ++i) {
         if (i != 0) out += ",";
         write_node(graph.nodes[i], out);

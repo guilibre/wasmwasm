@@ -164,7 +164,7 @@ auto Lowerer::lower_static_bind(const StaticBind &node)
         mod.alloc_order.push_back(name);
         std::vector<std::string> elem_names;
         elem_names.reserve(ctor.size);
-        for (int i = 0; i < static_cast<int>(ctor.size); ++i) {
+        for (int i = 0; std::cmp_less(i, ctor.size); ++i) {
             elem_names.push_back(name + "__" + std::to_string(i));
             std::vector<IRValue> call_args = {
                 IRLiteral{static_cast<double>(i)}};
@@ -197,7 +197,7 @@ auto Lowerer::lower_static_bind(const StaticBind &node)
         elem_names.reserve(n);
         auto *saved = cur;
         cur = &static_init_body;
-        for (int i = 0; i < static_cast<int>(n); ++i) {
+        for (int i = 0; std::cmp_less(i, n); ++i) {
             elem_names.push_back(name + "__" + std::to_string(i));
             const auto v = lower_expr(arr.elements[static_cast<size_t>(i)]);
             if (v)

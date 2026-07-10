@@ -64,7 +64,7 @@ struct Term {
         Pipe,
         BlockLit
     } kind = Kind::VarRef;
-    enum class PipeOp : uint8_t { Transform, Reverse };
+    enum class PipeOp : uint8_t { Transform, Reverse, Repeat };
     std::string var_name;
     std::vector<std::unique_ptr<CompExpr>> branches;
     std::unique_ptr<CompExpr> lhs_expr;
@@ -75,6 +75,7 @@ struct Term {
     PipeOp pipe_op = PipeOp::Transform;
     std::string pipe_param_name;
     std::unique_ptr<Expr> pipe_expr;
+    bool legato_after = false;
     size_t line = 0;
     size_t column = 0;
 };

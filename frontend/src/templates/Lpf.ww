@@ -1,7 +1,7 @@
-param cf = 1000
+param cf = 5000
 
 static sr_inv = 1/SAMPLE_RATE
-static a = 1 - exp(-cf*2*PIsr_inv)
+a = 1 - exp(-cf*2*PI*sr_inv)
 
 static x = 0
 

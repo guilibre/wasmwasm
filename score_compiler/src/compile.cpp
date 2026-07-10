@@ -6,9 +6,9 @@
 #include "resolve/resolver.hpp"
 
 auto compile_to_json(const std::string &source) -> std::string {
-    Tokenizer tokenizer(source);
+    const Tokenizer tokenizer(source);
     Parser parser(tokenizer);
-    Program program = parser.parse();
-    ExpandedGraph graph = expand_program(program);
+    const Program program = parser.parse();
+    const ExpandedGraph graph = expand_program(program);
     return graph_to_json(graph);
 }

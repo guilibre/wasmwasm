@@ -23,6 +23,7 @@ enum class TokenKind : uint8_t {
     RBracket,
     Comma,
     Tick,
+    Tilde,
     Caret,
     At,
     Ampersand,
@@ -40,6 +41,7 @@ enum class TokenKind : uint8_t {
     KwBy,
     KwNull,
     KwReverse,
+    KwRepeat,
     Eof,
     Invalid,
 };

@@ -27,8 +27,14 @@ export interface GraphNode {
     next: number[];
 }
 
+export interface ScoreScale {
+    name: string;
+    values: number[];
+}
+
 export interface ScoreGraph {
     version: number;
+    scales: ScoreScale[];
     nodes: GraphNode[];
     entries: number[][];
 }
@@ -148,6 +154,7 @@ export class Conductor {
     private next_instance_id = 0;
     private tokens: Token[] = [];
     private join_arrivals: Map<number, number> = new Map();
+    private legato_voices: Map<number, { instance_id: number; instrument_id: string }> = new Map();
 
     constructor(
         graph: ScoreGraph,
@@ -225,6 +232,7 @@ export class Conductor {
         }
         this.tokens = [];
         this.join_arrivals.clear();
+        this.legato_voices.clear();
     }
 
     private resolve_ready(initial_queue: Token[]): Token[] {
@@ -362,15 +370,28 @@ export class Conductor {
         token.seconds_remaining += token.params.dur ?? 0;
 
         if (instrument) {
-            const id = this.next_instance_id;
             const exports = this.exports[instrument];
             if (!exports) throw new Error(`conductor: unknown instrument '${instrument}'`);
 
-            const result = exports.instantiate(id);
-            if (result < 0)
-                throw new Error(
-                    `conductor: failed to instantiate instrument '${instrument}' (no free slot)`,
-                );
+            const legato_id = token.params.legato_id;
+            const existing_voice =
+                legato_id !== undefined ? this.legato_voices.get(legato_id) : undefined;
+            const reuse_voice =
+                existing_voice !== undefined && existing_voice.instrument_id === instrument;
+
+            let id: number;
+            if (reuse_voice) {
+                id = existing_voice.instance_id;
+            } else {
+                id = this.next_instance_id;
+                const result = exports.instantiate(id);
+                if (result < 0)
+                    throw new Error(
+                        `conductor: failed to instantiate instrument '${instrument}' (no free slot)`,
+                    );
+                ++this.next_instance_id;
+                if (this.next_instance_id >= 128) this.next_instance_id = 0;
+            }
 
             token.instance_id = id;
             token.instrument_id = instrument;
@@ -388,8 +409,17 @@ export class Conductor {
                 }
                 exports.set_param(id, index, value);
             }
-            ++this.next_instance_id;
-            if (this.next_instance_id >= 128) this.next_instance_id = 0;
+
+            if (legato_id !== undefined) {
+                if (token.params.legato === 1) {
+                    this.legato_voices.set(legato_id, {
+                        instance_id: id,
+                        instrument_id: instrument,
+                    });
+                } else {
+                    this.legato_voices.delete(legato_id);
+                }
+            }
         }
     }
 }

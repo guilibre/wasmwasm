@@ -27,6 +27,7 @@ interface GlobalCallbackHandler {
 `;
 
 const callback_types_file = '/callback-types.d.ts';
+const score_ambient_file = '/score-ambient.d.ts';
 
 let env_promise: Promise<VirtualTypeScriptEnvironment> | null = null;
 
@@ -35,10 +36,11 @@ export function get_ts_env(): Promise<VirtualTypeScriptEnvironment> {
         env_promise = createDefaultMapFromCDN(compiler_options, ts.version, true, ts).then(
             (fs_map) => {
                 fs_map.set(callback_types_file, callback_types_source);
+                fs_map.set(score_ambient_file, '// score scales\n');
                 const system = createSystem(fs_map);
                 return createVirtualTypeScriptEnvironment(
                     system,
-                    [callback_types_file],
+                    [callback_types_file, score_ambient_file],
                     ts,
                     compiler_options,
                 );
@@ -46,6 +48,19 @@ export function get_ts_env(): Promise<VirtualTypeScriptEnvironment> {
         );
     }
     return env_promise;
+}
+
+export function score_scale_ambient_source(scales: { name: string }[]): string {
+    const functions = scales
+        .map(({ name }) => `declare function ${name}(degree: number, octave: number): number;`)
+        .join('\n');
+    const index = `declare const scales: ((degree: number, octave: number) => number)[];`;
+    return `${functions}\n${index}`;
+}
+
+export async function update_score_ambient(source: string): Promise<void> {
+    const env = await get_ts_env();
+    env.updateFile(score_ambient_file, source || '// score scales\n');
 }
 
 export function callback_source_file(path: string): string {
