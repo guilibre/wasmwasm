@@ -799,26 +799,16 @@ dt = freq*dt_base
 t = t + dt
 t >= two_pi ? t = t - two_pi
 `,ar=`param freq = 440
-param mod = 2
+param mod = 1
 
 static two_pi = 2*PI
 static t = 0
 static dt_base = two_pi/SAMPLE_RATE
 static x = 0
 
-mod2 = mod*mod
-step = {n x. n < 1 ? x : (
-  aux0 = t + mod*x
-  aux1 = sin(aux0)
-  f = x - aux1
-  fp = 1 - mod*cos(aux0)
-  denom = 2*fp*fp - f*mod2*aux1
-  step (n - 1) (denom == 0 ? x - f/fp : x - (2*f*fp)/denom)
-)}
-
-x = IN[0]*step(4)(sin(t + mod*x))
 OUT[0] <- x
 
+x = IN[0]*sin(t + mod*x)
 dt = freq*dt_base
 t = t + dt
 t >= two_pi ? t = t - two_pi
