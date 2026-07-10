@@ -1,6 +1,7 @@
 #include "binaryen_codegen.hpp"
 
 #include "binaryen_emit.hpp"
+#include "binaryen_simd_vectorize_pass.hpp"
 #include <memory>
 #include <stdexcept>
 
@@ -64,11 +65,11 @@ void BinaryenCodeGen::finalize(const RoutingGraph &graph) {
     }
 
     emit_main_loop(graph, mod_, layouts_);
-}
 
-auto BinaryenCodeGen::build() -> BackendArtifact {
     if (!BinaryenModuleValidate(mod_))
         throw std::runtime_error("invalid module");
+
+    run_simd_vectorization_pass(mod_);
 
     BinaryenSetOptimizeLevel(3);
     BinaryenSetShrinkLevel(0);
@@ -79,6 +80,13 @@ auto BinaryenCodeGen::build() -> BackendArtifact {
     BinaryenSetOneCallerInlineMaxSize(250);
     BinaryenModuleOptimize(mod_);
 
+    if (!BinaryenModuleValidate(mod_))
+        throw std::runtime_error("invalid module");
+
+    run_simd_vectorization_pass(mod_);
+}
+
+auto BinaryenCodeGen::build() -> BackendArtifact {
     if (!BinaryenModuleValidate(mod_))
         throw std::runtime_error("invalid module");
 

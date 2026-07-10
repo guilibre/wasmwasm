@@ -109,39 +109,6 @@ auto parse_expectations(const std::string &text) -> std::vector<Assertion> {
 auto finish_and_dump_wat(BinaryenCodeGen &codegen_impl) -> std::string {
     auto *main_module = codegen_impl.raw_module();
 
-    if (!BinaryenModuleValidate(main_module)) {
-        std::cerr << "Invalid module before optimization.\n";
-        std::unique_ptr<char, decltype(&free)> wat{
-            BinaryenModuleAllocateAndWriteText(main_module), free};
-        std::cerr << wat.get() << "\n";
-        throw std::runtime_error("invalid module");
-    }
-
-    {
-        std::cerr << "Module before optimization.\n";
-        std::unique_ptr<char, decltype(&free)> wat{
-            BinaryenModuleAllocateAndWriteText(main_module), free};
-        std::cerr << wat.get() << "\n";
-    }
-
-    BinaryenSetOptimizeLevel(3);
-    BinaryenSetShrinkLevel(0);
-    BinaryenSetFastMath(true);
-    BinaryenSetLowMemoryUnused(true);
-    BinaryenSetAlwaysInlineMaxSize(100);
-    BinaryenSetFlexibleInlineMaxSize(250);
-    BinaryenSetOneCallerInlineMaxSize(250);
-    BinaryenModuleOptimize(main_module);
-
-    if (!BinaryenModuleValidate(main_module)) {
-        std::cerr << "Invalid module after optimization.\n";
-        std::unique_ptr<char, decltype(&free)> wat{
-            BinaryenModuleAllocateAndWriteText(main_module), free};
-        std::cerr << wat.get() << "\n";
-        throw std::runtime_error("invalid module");
-    }
-
-    std::cerr << "Module after optimization.\n";
     std::unique_ptr<char, decltype(&free)> wat{
         BinaryenModuleAllocateAndWriteText(main_module), free};
     std::cerr << wat.get() << "\n";

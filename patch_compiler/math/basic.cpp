@@ -3,10 +3,20 @@
 #include <cmath>
 #include <numbers>
 
+using v2df = double __attribute__((vector_size(16)));
+using v2di = long long __attribute__((vector_size(16)));
+
 namespace {
 
 [[clang::always_inline]] auto fast_round(double x) -> double {
     return __builtin_trunc(x + (x >= 0.0 ? 0.5 : -0.5));
+}
+
+[[clang::always_inline]] auto fast_round_x2(v2df x) -> v2df {
+    const v2di neg_mask = x < 0.0;
+    const v2df half =
+        0.5 - __builtin_convertvector(neg_mask & v2di{1, 1}, v2df);
+    return __builtin_elementwise_trunc(x + half);
 }
 
 constexpr auto HALF_PI = std::numbers::pi / 2.0;
@@ -23,6 +33,16 @@ constexpr auto COS_C2 = -0.4999999999999999444888;
 constexpr auto COS_C4 = 0.0416666666666665519596;
 constexpr auto COS_C6 = -0.0013888888888888530298;
 constexpr auto COS_C8 = 0.000024801587301571904;
+
+[[clang::always_inline]] void reduce_x2(v2df x, v2df &x_reduced, v2df &x2,
+                                        v2df &x_abs) {
+    const auto q = fast_round_x2(x * INV_TWO_PI);
+    x -= q * TWO_PI;
+
+    x_abs = __builtin_elementwise_abs(x);
+    x_reduced = HALF_PI - __builtin_elementwise_abs(x_abs - HALF_PI);
+    x2 = x_reduced * x_reduced;
+}
 
 } // namespace
 
@@ -63,6 +83,85 @@ auto wasmwasm_tan(double x) -> double {
     return wasmwasm_sin(x) / wasmwasm_cos(x);
 }
 
+auto wasmwasm_sin_x2(v2df x) -> v2df {
+    v2df x_reduced;
+    v2df x2;
+    v2df x_abs;
+    reduce_x2(x, x_reduced, x2, x_abs);
+
+    const v2df poly =
+        x_reduced *
+        (SIN_C1 + (x2 * (SIN_C3 + (x2 * (SIN_C5 + (x2 * SIN_C7))))));
+
+    const v2di neg_mask = x < 0.0;
+    const v2df sign =
+        1.0 - (2.0 * __builtin_convertvector(neg_mask & v2di{1, 1}, v2df));
+    return sign * poly;
+}
+
+auto wasmwasm_cos_x2(v2df x) -> v2df {
+    v2df x_reduced;
+    v2df x2;
+    v2df x_abs;
+    reduce_x2(x, x_reduced, x2, x_abs);
+
+    const v2df poly =
+        COS_C0 +
+        (x2 * (COS_C2 + (x2 * (COS_C4 + (x2 * (COS_C6 + (x2 * COS_C8)))))));
+
+    const v2di ge_mask = x_abs >= HALF_PI;
+    const v2df sign =
+        1.0 - (2.0 * __builtin_convertvector(ge_mask & v2di{1, 1}, v2df));
+    return sign * poly;
+}
+
+auto wasmwasm_sincos_x2(v2df x) -> v2df {
+    v2df x_reduced;
+    v2df x2;
+    v2df x_abs;
+    reduce_x2(x, x_reduced, x2, x_abs);
+
+    const v2df sin_poly =
+        x_reduced *
+        (SIN_C1 + (x2 * (SIN_C3 + (x2 * (SIN_C5 + (x2 * SIN_C7))))));
+    const v2df cos_poly =
+        COS_C0 +
+        (x2 * (COS_C2 + (x2 * (COS_C4 + (x2 * (COS_C6 + (x2 * COS_C8)))))));
+
+    const v2di sin_neg_mask = x < 0.0;
+    const v2df sin_sign =
+        1.0 - (2.0 * __builtin_convertvector(sin_neg_mask & v2di{1, 1}, v2df));
+    const v2di cos_ge_mask = x_abs >= HALF_PI;
+    const v2df cos_sign =
+        1.0 - (2.0 * __builtin_convertvector(cos_ge_mask & v2di{1, 1}, v2df));
+
+    const v2df sin_result = sin_sign * sin_poly;
+    const v2df cos_result = cos_sign * cos_poly;
+    return v2df{sin_result[0], cos_result[1]};
+}
+
+[[clang::always_inline]] auto vec_min(v2df a, v2df b) -> v2df {
+    const v2di mask = a < b;
+    const v2di bits = (mask & __builtin_bit_cast(v2di, a)) |
+                      (~mask & __builtin_bit_cast(v2di, b));
+    return __builtin_bit_cast(v2df, bits);
+}
+
+[[clang::always_inline]] auto vec_max(v2df a, v2df b) -> v2df {
+    const v2di mask = a > b;
+    const v2di bits = (mask & __builtin_bit_cast(v2di, a)) |
+                      (~mask & __builtin_bit_cast(v2di, b));
+    return __builtin_bit_cast(v2df, bits);
+}
+
+auto wasmwasm_clip_x2(v2df x) -> v2df {
+    return vec_min(vec_max(x, v2df{-1.0, -1.0}), v2df{1.0, 1.0});
+}
+
+auto wasmwasm_min_x2(v2df a, v2df b) -> v2df { return vec_min(a, b); }
+
+auto wasmwasm_max_x2(v2df a, v2df b) -> v2df { return vec_max(a, b); }
+
 auto wasmwasm_sign(double x) -> double {
     if (x >= 0) return 1.0;
     return -1.0;
@@ -95,6 +194,10 @@ namespace {
     return std::bit_cast<double>((s >> 12) | 0x3FF0000000000000ULL) - 1.0;
 }
 
+[[clang::always_inline]] auto next_u01_x2() -> v2df {
+    return v2df{next_u01(), next_u01()};
+}
+
 } // namespace
 
 auto wasmwasm_uniform(double lower, double upper) -> double {
@@ -103,6 +206,16 @@ auto wasmwasm_uniform(double lower, double upper) -> double {
 
 auto wasmwasm_gaussian(double mean, double std) -> double {
     const auto u = next_u01() + next_u01() + next_u01() + next_u01();
+    return mean + (std * (u - 2.0) * std::numbers::sqrt3);
+}
+
+auto wasmwasm_uniform_x2(v2df lower, v2df upper) -> v2df {
+    return lower + (next_u01_x2() * (upper - lower));
+}
+
+auto wasmwasm_gaussian_x2(v2df mean, v2df std) -> v2df {
+    const v2df u =
+        next_u01_x2() + next_u01_x2() + next_u01_x2() + next_u01_x2();
     return mean + (std * (u - 2.0) * std::numbers::sqrt3);
 }
 

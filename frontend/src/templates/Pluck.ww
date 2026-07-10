@@ -1,5 +1,5 @@
 param freq = 440
-param oversample = 8
+param oversample = 4
 
 static aLow = 0
 static aHigh = 0
@@ -27,20 +27,20 @@ gd = {f.
   lp = bH*(c - bH)/(1 - 2*bH*c + bH*bH)
   hp = bL*(c - bL)/(1 - 2*bL*c + bL*bL)
   ap = (1 - k*k)/(1 + 2*k*c + k*k)
-  sr/freq - (hp + lp + ap)
+  sr/f - (hp + lp + ap)
 }
 
 static freq_ = -1
 static del = 2
 freq_ != freq ? (
-  del = gd(freq)
+  del = gd(2*freq)
   freq_ = freq
 )
 buffer = delay 4096 {_. 0}
 
 step = {n.
   static idx = 0
-  y = filter(@[idx]buffer)
+  y = filter(-@[idx]buffer)
   n < 1 ? y : (
     @[idx]buffer = IN[1] + y
     idx = idx < del ? idx + 1 : 0

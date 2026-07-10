@@ -8,6 +8,7 @@
 struct ModuleRoute {
     IRModule ir;
     std::vector<std::string> inputs;
+    std::vector<bool> feedback_inputs;
 };
 
 struct InstrumentGroup {

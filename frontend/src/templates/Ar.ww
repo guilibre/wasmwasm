@@ -1,11 +1,10 @@
-param amp = 0.2
 param atk = 0.01
 param rel = 0.5
 
 static env = 0
 static denv = 0
 
-OUT[0] <- amp * env
+OUT[0] <- env
 
 denv == 0 ? denv = 1/(atk*SAMPLE_RATE)
 env = min 1 (max 0 (env + denv))

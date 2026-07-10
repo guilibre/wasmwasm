@@ -2,7 +2,7 @@ param a_lin = 0
 param b_lin = 1
 param a_exp = 0
 param b_exp = 1
-param curvature = 2
+param curvature = 5
 
 b_lin == a_lin ? b_lin = a_lin + 1
 a_exp == b_exp ? b_exp = a_exp + 1

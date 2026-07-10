@@ -164,6 +164,8 @@ namespace {
 struct RoutedGraph {
     std::vector<std::string> order;
     std::unordered_map<std::string, std::vector<std::string>> mod_inputs;
+    std::unordered_map<std::string, std::unordered_set<std::string>>
+        feedback_producers;
     std::string dac_l;
     std::string dac_r;
     std::vector<std::string> out_sources;
@@ -256,6 +258,7 @@ auto route_one_graph(
         std::unordered_set<std::string> seen_deps;
         for (const auto &src : mod_inputs[mod_name]) {
             for (const auto &[other, _] : module_sources) {
+                if (other == mod_name) continue;
                 if (src.starts_with(other + "_out_") &&
                     !seen_deps.contains(other)) {
                     seen_deps.insert(other);
@@ -265,13 +268,31 @@ auto route_one_graph(
         }
     }
 
+    std::unordered_map<std::string, std::unordered_set<std::string>>
+        feedback_producers;
+    for (const auto &[mod_name, _] : module_sources) {
+        for (const auto &src : mod_inputs[mod_name]) {
+            if (src.starts_with(mod_name + "_out_"))
+                feedback_producers[mod_name].insert(mod_name);
+        }
+    }
+
     std::vector<std::string> order;
     std::unordered_set<std::string> visited;
+    std::unordered_set<std::string> in_stack;
     std::function<void(const std::string &)> topo =
         [&](const std::string &name) -> void {
         if (visited.contains(name)) return;
         visited.insert(name);
-        for (const auto &dep : deps[name]) topo(dep);
+        in_stack.insert(name);
+        for (const auto &dep : deps[name]) {
+            if (in_stack.contains(dep)) {
+                feedback_producers[name].insert(dep);
+                continue;
+            }
+            topo(dep);
+        }
+        in_stack.erase(name);
         order.push_back(name);
     };
     for (const auto &[name, _] : module_sources) topo(name);
@@ -279,6 +300,7 @@ auto route_one_graph(
     return RoutedGraph{
         .order = std::move(order),
         .mod_inputs = std::move(mod_inputs),
+        .feedback_producers = std::move(feedback_producers),
         .dac_l = std::move(dac_l),
         .dac_r = std::move(dac_r),
         .out_sources = std::move(out_sources),
@@ -333,9 +355,19 @@ auto build_routing_graph(const ParsedPatch &patch,
                 [&](const IRModule &m) -> bool { return m.name == name; });
             if (it == compiled_modules.end())
                 throw std::runtime_error("Module not found: " + name);
+            const auto &inputs = routed.mod_inputs[name];
+            const auto &producers = routed.feedback_producers[name];
+            std::vector<bool> feedback_inputs(inputs.size(), false);
+            for (size_t i = 0; i < inputs.size(); ++i) {
+                const auto under = inputs[i].rfind("_out_");
+                if (under != std::string::npos &&
+                    producers.contains(inputs[i].substr(0, under)))
+                    feedback_inputs[i] = true;
+            }
             graph.modules.push_back({
                 .ir = std::move(*it),
-                .inputs = routed.mod_inputs[name],
+                .inputs = inputs,
+                .feedback_inputs = std::move(feedback_inputs),
             });
         }
 
@@ -386,9 +418,19 @@ auto build_routing_graph(const ParsedPatch &patch,
                 global_param_names.push_back(param_name);
             }
         }
+        const auto &inputs = global_routed.mod_inputs[name];
+        const auto &producers = global_routed.feedback_producers[name];
+        std::vector<bool> feedback_inputs(inputs.size(), false);
+        for (size_t i = 0; i < inputs.size(); ++i) {
+            const auto under = inputs[i].rfind("_out_");
+            if (under != std::string::npos &&
+                producers.contains(inputs[i].substr(0, under)))
+                feedback_inputs[i] = true;
+        }
         graph.modules.push_back({
             .ir = std::move(*it),
-            .inputs = global_routed.mod_inputs[name],
+            .inputs = inputs,
+            .feedback_inputs = std::move(feedback_inputs),
         });
     }
 

@@ -151,10 +151,11 @@ class WasmProcessor extends AudioWorkletProcessor {
     }
 
     process(inputs: Float32Array[][], outputs: Float32Array[][]): boolean {
+        const process_start = Date.now();
+
         if (this.stopped) return false;
         if (!this.heap) return true;
 
-        const process_start = Date.now();
         const num_samples = outputs[0][0].length;
         const heap = this.heap;
         const num_in_channels = 2;
@@ -164,7 +165,7 @@ class WasmProcessor extends AudioWorkletProcessor {
         for (let ch = 0; ch < num_in_channels; ch++) {
             const dst = in_base_floats + ch * num_samples;
             const src = inputs[0][ch];
-            if (src) heap.set(src.subarray(0, num_samples), dst);
+            if (src) heap.set(src.length === num_samples ? src : src.subarray(0, num_samples), dst);
         }
 
         if (this.conductor) {
@@ -181,7 +182,10 @@ class WasmProcessor extends AudioWorkletProcessor {
 
         for (let ch = 0; ch < num_out_channels; ch++) {
             const out_ch = outputs[0][ch];
-            if (out_ch) out_ch.set(heap.subarray(ch * num_samples, (ch + 1) * num_samples));
+            if (out_ch) {
+                const start = ch * num_samples;
+                out_ch.set(heap.subarray(start, start + num_samples));
+            }
         }
 
         this._busy_time += Date.now() - process_start;

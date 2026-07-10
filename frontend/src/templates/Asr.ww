@@ -1,11 +1,10 @@
 param gate = 0
-param amp = 0.2
 param atk = 0.01
 param rel = 0.5
 
 static env = 0
 
-OUT[0] <- amp*env
+OUT[0] <- env
 
 env = env + (gate ? 1/(atk*SAMPLE_RATE) : -1/(rel*SAMPLE_RATE))
 env = min 1 (max 0 env)

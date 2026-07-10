@@ -1,24 +1,24 @@
 {
-  "global": {
-    "modules": {
-      "block_1783451967687": "param amp = 0.2\nparam dist = 1\nstatic dist_ = 1\n\nOUT[0] <- amp*tanh(dist_*IN[0])\n\ndist_ = dist_ + 0.00001*(dist - dist_)"
-    },
-    "patch": {
-      "block_1783451967687_in_0": "a_out_0",
-      "dac_l": "block_1783451967687_out_0",
-      "dac_r": "block_1783451967687_out_0"
-    }
-  },
   "instruments": {
     "a": {
       "modules": {
-        "block_1783517161006": "param amp = 0.2\nparam atk = 0.01\nparam rel = 0.5\n\nstatic block_1783517161006_gate_ = 0\nstatic block_1783517161006_env = 0\nstatic block_1783517161006_denv = 1/(atk*SAMPLE_RATE)\n\nblock_1783517161006_env2 = block_1783517161006_env*block_1783517161006_env\nOUT[0] <- amp*block_1783517161006_env2*block_1783517161006_env2\n\nblock_1783517161006_env = min 1 (max 0 (block_1783517161006_env + block_1783517161006_denv))\nblock_1783517161006_env >= 1 ? block_1783517161006_denv = -1/(rel*SAMPLE_RATE) : (block_1783517161006_env <= 0 ? block_1783517161006_denv = 0)",
-        "block_1783531170410": "param freq = 440\n\nstatic block_1783531170410_t = 0\n\nOUT[0] <- IN[0] * block_1783531170410_t\n\nstatic block_1783531170410_sr_inv2 = 2/SAMPLE_RATE\nblock_1783531170410_t = block_1783531170410_t + freq*block_1783531170410_sr_inv2\nblock_1783531170410_t >= 1 ? block_1783531170410_t = block_1783531170410_t - 2\n"
+        "block_1783689206916": "param atk = 0.01\nparam rel = 0.5\n\nstatic block_1783689206916_env = 0\nstatic block_1783689206916_denv = 0\n\nOUT[0] <- block_1783689206916_env\n\nblock_1783689206916_denv == 0 ? block_1783689206916_denv = 1/(atk*SAMPLE_RATE)\nblock_1783689206916_env = min 1 (max 0 (block_1783689206916_env + block_1783689206916_denv))\nblock_1783689206916_env >= 1 ? block_1783689206916_denv = -1/(rel*SAMPLE_RATE) : (block_1783689206916_env <= 0 ? die)\n",
+        "block_1783703893928": "param freq = 440\n\nstatic block_1783703893928_two_pi = 2*PI\nstatic block_1783703893928_t = 0\nstatic block_1783703893928_dt_base = block_1783703893928_two_pi/SAMPLE_RATE\n\nOUT[0] <- IN[0]*sin(block_1783703893928_t)\n\nblock_1783703893928_dt = freq*block_1783703893928_dt_base\nblock_1783703893928_t = block_1783703893928_t + block_1783703893928_dt\nblock_1783703893928_t >= block_1783703893928_two_pi ? block_1783703893928_t = block_1783703893928_t - block_1783703893928_two_pi\n"
       },
       "patch": {
-        "block_1783531170410_in_0": "block_1783517161006_out_0",
-        "out_0": "block_1783531170410_out_0"
+        "block_1783703893928_in_0": "block_1783689206916_out_0",
+        "out_0": "block_1783703893928_out_0"
       }
+    }
+  },
+  "global": {
+    "modules": {
+      "block_1783703904114": "param room_size = 0.5\nparam damping = 0.5\nparam mix = 0.5\n\ncf1_buf = delay 1557 {_. 0}\ncf2_buf = delay 1617 {_. 0}\ncf3_buf = delay 1491 {_. 0}\ncf4_buf = delay 1422 {_. 0}\n\nap1_buf = delay 225 {_. 0}\nap2_buf = delay 341 {_. 0}\n\nstatic cf1_filt = 0\nstatic cf2_filt = 0\nstatic cf3_filt = 0\nstatic cf4_filt = 0\n\ng = 0.28 + room_size*0.7\ndamp1 = damping*0.4\n\ncf1_out = @cf1_buf\ncf2_out = @cf2_buf\ncf3_out = @cf3_buf\ncf4_out = @cf4_buf\n\ncf1_filt = cf1_out*(1 - damp1) + cf1_filt*damp1\ncf2_filt = cf2_out*(1 - damp1) + cf2_filt*damp1\ncf3_filt = cf3_out*(1 - damp1) + cf3_filt*damp1\ncf4_filt = cf4_out*(1 - damp1) + cf4_filt*damp1\n\ncf1_buf <- IN[0] + g*cf1_filt\ncf2_buf <- IN[0] + g*cf2_filt\ncf3_buf <- IN[0] + g*cf3_filt\ncf4_buf <- IN[0] + g*cf4_filt\n\nwet = (cf1_out + cf2_out + cf3_out + cf4_out)*0.25\n\nap1_g = 0.5\nap1_delayed = @ap1_buf\nap1_y = ap1_delayed - ap1_g*wet\nap1_buf <- wet + ap1_g*ap1_y\n\nap2_g = 0.5\nap2_delayed = @ap2_buf\nap2_y = ap2_delayed - ap2_g*ap1_y\nap2_buf <- ap1_y + ap2_g*ap2_y\n\nOUT[0] <- IN[0] + mix*(ap2_y - IN[0])\n"
+    },
+    "patch": {
+      "block_1783703904114_in_0": "a_out_0",
+      "dac_l": "block_1783703904114_out_0",
+      "dac_r": "block_1783703904114_out_0"
     }
   }
 }

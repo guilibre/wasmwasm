@@ -164,7 +164,7 @@ auto Lowerer::lower_static_bind(const StaticBind &node)
         mod.alloc_order.push_back(name);
         std::vector<std::string> elem_names;
         elem_names.reserve(ctor.size);
-        for (size_t i = 0; i < ctor.size; ++i) {
+        for (int i = 0; i < static_cast<int>(ctor.size); ++i) {
             elem_names.push_back(name + "__" + std::to_string(i));
             std::vector<IRValue> call_args = {
                 IRLiteral{static_cast<double>(i)}};
@@ -177,7 +177,7 @@ auto Lowerer::lower_static_bind(const StaticBind &node)
                 .ref =
                     IRMemRef{
                         .buffer = name,
-                        .byte_offset = static_cast<uint32_t>(i * 8),
+                        .byte_offset = i * 8,
                     },
                 .value = IRLocalRef{r},
             });
@@ -197,15 +197,15 @@ auto Lowerer::lower_static_bind(const StaticBind &node)
         elem_names.reserve(n);
         auto *saved = cur;
         cur = &static_init_body;
-        for (size_t i = 0; i < n; ++i) {
+        for (int i = 0; i < static_cast<int>(n); ++i) {
             elem_names.push_back(name + "__" + std::to_string(i));
-            const auto v = lower_expr(arr.elements[i]);
+            const auto v = lower_expr(arr.elements[static_cast<size_t>(i)]);
             if (v)
                 static_init_body.emplace_back(IRMemWrite{
                     .ref =
                         IRMemRef{
                             .buffer = name,
-                            .byte_offset = static_cast<uint32_t>(i * 8),
+                            .byte_offset = i * 8,
                         },
                     .value = *v,
                 });

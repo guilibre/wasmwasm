@@ -8,6 +8,7 @@ add_library(${PROJECT_NAME}_lib STATIC
     backend/binaryen/binaryen_emit_instances.cpp
     backend/binaryen/binaryen_emit_main_loop.cpp
     backend/binaryen/binaryen_math_module.cpp
+    backend/binaryen/binaryen_simd_vectorize_pass.cpp
     backend/binaryen/instance_layout.cpp
     ir/lower.cpp
     ir/lower_arrays.cpp

@@ -1,6 +1,8 @@
+param amp = 0.2
 param pan = 0
 theta = (pan + 1) * PI/4
 l = cos(theta)
 r = sin(theta)
-OUT[0] <- l*IN[0]
-OUT[1] <- r*IN[0]
+in = amp*IN[0]
+OUT[0] <- l*in
+OUT[1] <- r*in

@@ -14,22 +14,30 @@ add_custom_command(
     -Wl,--export=wasmwasm_abs
     -Wl,--export=wasmwasm_ceil
     -Wl,--export=wasmwasm_clip
+    -Wl,--export=wasmwasm_clip_x2
     -Wl,--export=wasmwasm_cos
+    -Wl,--export=wasmwasm_cos_x2
     -Wl,--export=wasmwasm_exp
     -Wl,--export=wasmwasm_floor
     -Wl,--export=wasmwasm_fract
     -Wl,--export=wasmwasm_gaussian
+    -Wl,--export=wasmwasm_gaussian_x2
     -Wl,--export=wasmwasm_log
     -Wl,--export=wasmwasm_max
+    -Wl,--export=wasmwasm_max_x2
     -Wl,--export=wasmwasm_min
+    -Wl,--export=wasmwasm_min_x2
     -Wl,--export=wasmwasm_pow
     -Wl,--export=wasmwasm_round
     -Wl,--export=wasmwasm_sign
     -Wl,--export=wasmwasm_sin
+    -Wl,--export=wasmwasm_sin_x2
+    -Wl,--export=wasmwasm_sincos_x2
     -Wl,--export=wasmwasm_sqrt
     -Wl,--export=wasmwasm_tan
     -Wl,--export=wasmwasm_tanh
     -Wl,--export=wasmwasm_uniform
+    -Wl,--export=wasmwasm_uniform_x2
     -Wl,--lto-O3
     -Wl,--gc-sections
     -isystem ${WASM_SYSROOT}/include/c++/v1

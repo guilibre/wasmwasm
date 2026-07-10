@@ -90,7 +90,7 @@ struct IRStaticWrite {
 
 struct IRMemRef {
     std::string buffer;
-    uint32_t byte_offset = 0;
+    int32_t byte_offset = 0;
 };
 
 struct IRMemRead {

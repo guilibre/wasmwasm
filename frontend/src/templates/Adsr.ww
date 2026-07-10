@@ -1,5 +1,4 @@
 param gate = 0
-param amp = 0.2
 param atk = 0.01
 param dec = 0.1
 param sus = 0.8
@@ -9,7 +8,7 @@ static gate_ = 0
 static env = 0
 static denv = 0
 
-OUT[0] <- amp*env
+OUT[0] <- env
 
 gate > gate_ ? denv = 1/(atk*SAMPLE_RATE)
 env = min 1 (max 0 (env + denv))

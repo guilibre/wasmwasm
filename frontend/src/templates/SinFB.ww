@@ -1,0 +1,14 @@
+param freq = 440
+param mod = 1
+
+static two_pi = 2*PI
+static t = 0
+static dt_base = two_pi/SAMPLE_RATE
+static x = 0
+
+OUT[0] <- x
+
+x = IN[0]*sin(t + mod*x)
+dt = freq*dt_base
+t = t + dt
+t >= two_pi ? t = t - two_pi

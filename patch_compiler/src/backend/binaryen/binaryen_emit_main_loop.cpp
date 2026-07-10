@@ -80,6 +80,23 @@ auto resolve_source(BinaryenModuleRef mod, const RoutingGraph &graph,
     return BinaryenConst(mod, BinaryenLiteralFloat64(0.0));
 }
 
+auto resolve_feedback_source(
+    BinaryenModuleRef mod, const std::string &src,
+    const std::unordered_map<std::string, InstanceLayout> &layouts,
+    const std::function<BinaryenExpressionRef()> &slot_get)
+    -> BinaryenExpressionRef {
+    const auto under = src.rfind("_out_");
+    const auto mod_name = src.substr(0, under);
+    const auto port_idx = std::stoul(src.substr(under + 5));
+    const auto &layout = layouts.at(mod_name);
+    auto *instance_base = instance_base_of_slot(mod, layout, slot_get());
+    auto *addr = BinaryenBinary(
+        mod, BinaryenAddInt32(), instance_base,
+        BinaryenConst(mod, BinaryenLiteralInt32(static_cast<int32_t>(
+                               layout.out_ports_offset + (port_idx * 8)))));
+    return BinaryenLoad(mod, 8, false, 0, 8, BinaryenTypeFloat64(), addr, "0");
+}
+
 } // namespace
 
 void emit_main_loop(
@@ -141,8 +158,11 @@ void emit_main_loop(
             std::vector<BinaryenExpressionRef> &out_stmts) -> void {
         for (size_t i = 0; i < route.inputs.size(); ++i) {
             auto *val =
-                resolve_source(mod, graph, input_locals, route.inputs[i],
-                               IN_BASE, SAMPLE, NUM_SAMPLES);
+                (i < route.feedback_inputs.size() && route.feedback_inputs[i])
+                    ? resolve_feedback_source(mod, route.inputs[i], layouts,
+                                              slot_get)
+                    : resolve_source(mod, graph, input_locals, route.inputs[i],
+                                     IN_BASE, SAMPLE, NUM_SAMPLES);
             auto *instance_base =
                 instance_base_of_slot(mod, layout, slot_get());
             auto *in_field_addr = BinaryenBinary(
