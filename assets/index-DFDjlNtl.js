@@ -40,9 +40,10 @@ interface GlobalCallbackHandler {
     const legato = p['legato'] ?? 0;
     const amp = p['amp'] ?? 0.2;
     const freq =
+      p['freq'] != undefined ? p['freq'] :
       p['scale'] != undefined && p['degree'] != undefined && p['octave'] != undefined
       ? 440*scales[p['scale']](p['degree'], p['octave'])
-      : p['freq'] ?? 440;
+      : 440;
     const pan = p['pan'] ?? 0;
 
     return {
