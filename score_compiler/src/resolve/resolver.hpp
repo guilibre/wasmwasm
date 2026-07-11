@@ -6,6 +6,7 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 enum class NodeKind : uint8_t {
@@ -14,7 +15,8 @@ enum class NodeKind : uint8_t {
     Join,
     Passthrough,
     TransformPush,
-    TransformPop
+    TransformPop,
+    Branch
 };
 
 struct TransformEntry {
@@ -31,6 +33,7 @@ struct GraphNode {
     std::vector<size_t> next;
     std::vector<TransformEntry> transforms;
     std::optional<std::string> push_instrument;
+    const Expr *branch_cond = nullptr;
 };
 
 struct ExpandedGraph {
@@ -38,6 +41,7 @@ struct ExpandedGraph {
     std::vector<std::vector<size_t>> entries;
     std::vector<std::pair<std::string, std::vector<double>>> scales;
     std::vector<std::unique_ptr<Expr>> owned_exprs;
+    std::unordered_map<size_t, size_t> transform_pop_of_push;
 };
 
 class ResolveException : public std::runtime_error {

@@ -1,8 +1,21 @@
 export type NodeKind =
-    'state' | 'fork' | 'join' | 'passthrough' | 'transform_push' | 'transform_pop';
+    'state' | 'fork' | 'join' | 'passthrough' | 'transform_push' | 'transform_pop' | 'branch';
 
 export type BinOp =
-    'add' | 'sub' | 'mul' | 'div' | 'pow' | 'eq' | 'neq' | 'lt' | 'gt' | 'lte' | 'gte';
+    | 'add'
+    | 'sub'
+    | 'mul'
+    | 'div'
+    | 'mod'
+    | 'pow'
+    | 'eq'
+    | 'neq'
+    | 'lt'
+    | 'gt'
+    | 'lte'
+    | 'gte'
+    | 'and'
+    | 'or';
 
 export type ExprNode =
     | { kind: 'number'; value: number }
@@ -24,6 +37,7 @@ export interface GraphNode {
     joinArity?: number;
     transforms?: TransformEntry[];
     pushInstrument?: string;
+    cond?: ExprNode;
     next: number[];
 }
 
@@ -82,13 +96,13 @@ interface Token {
 
 const max_steps_per_tick = 64;
 
-function eval_presence(expr: ExprNode, params: Record<string, number>): boolean {
+export function eval_presence(expr: ExprNode, params: Record<string, number>): boolean {
     if (expr.kind !== 'ident')
         throw new Error('conductor: bare identifier expected as presence-test condition');
     return Object.prototype.hasOwnProperty.call(params, expr.name);
 }
 
-function eval_expr(expr: ExprNode, params: Record<string, number>): number | null {
+export function eval_expr(expr: ExprNode, params: Record<string, number>): number | null {
     switch (expr.kind) {
         case 'number':
             return expr.value;
@@ -122,6 +136,9 @@ function eval_expr(expr: ExprNode, params: Record<string, number>): number | nul
                 case 'div':
                     if (rhs === 0) throw new Error('conductor: division by zero');
                     return lhs / rhs;
+                case 'mod':
+                    if (rhs === 0) throw new Error('conductor: division by zero');
+                    return lhs % rhs;
                 case 'pow':
                     return Math.pow(lhs, rhs);
                 case 'eq':
@@ -136,6 +153,10 @@ function eval_expr(expr: ExprNode, params: Record<string, number>): number | nul
                     return lhs <= rhs ? 1 : 0;
                 case 'gte':
                     return lhs >= rhs ? 1 : 0;
+                case 'and':
+                    return lhs !== 0 && rhs !== 0 ? 1 : 0;
+                case 'or':
+                    return lhs !== 0 || rhs !== 0 ? 1 : 0;
             }
         }
     }
@@ -227,9 +248,7 @@ export class Conductor {
     }
 
     destroy_all(): void {
-        for (const token of this.tokens) {
-            this.destroy_instance(token);
-        }
+        for (const token of this.tokens) this.destroy_instance(token);
         this.tokens = [];
         this.join_arrivals.clear();
         this.legato_voices.clear();
@@ -272,14 +291,20 @@ export class Conductor {
 
     private walk_forward(token: Token): Token[] {
         let node_id = token.node_id;
+        const visited = new Set<number>();
         for (;;) {
+            if (visited.has(node_id))
+                throw new Error(
+                    `conductor: graph cycle with no state node (zero-duration infinite loop at node ${node_id})`,
+                );
+            visited.add(node_id);
+
             const node = this.nodes_by_id.get(node_id);
             if (!node) throw new Error(`conductor: unknown node id ${node_id}`);
 
             if (node.kind === 'state') {
                 token.node_id = node.id;
                 this.enter_state(token, node);
-                this.apply_global_callback();
                 return [token];
             }
 
@@ -322,6 +347,16 @@ export class Conductor {
                 continue;
             }
 
+            if (node.kind === 'branch') {
+                const cond = node.cond!;
+                const truthy =
+                    cond.kind === 'ident'
+                        ? eval_presence(cond, token.params)
+                        : (eval_expr(cond, token.params) ?? 0) !== 0;
+                node_id = node.next[truthy ? 0 : 1];
+                continue;
+            }
+
             const arrived = (this.join_arrivals.get(node.id) ?? 0) + 1;
             const arity = node.joinArity ?? 1;
             if (arrived < arity) {
@@ -359,7 +394,7 @@ export class Conductor {
         for (let i = token.transform_stack.length - 1; i >= 0; i--) {
             const frame = token.transform_stack[i];
             for (const transform of frame.transforms) {
-                const value = eval_expr(transform.expr, params);
+                const value = eval_expr(transform.expr, this.to_seconds_params(params));
                 params = { ...params };
                 if (value === null) delete params[transform.paramName];
                 else params[transform.paramName] = value;
@@ -421,5 +456,7 @@ export class Conductor {
                 }
             }
         }
+
+        this.apply_global_callback();
     }
 }

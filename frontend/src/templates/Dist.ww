@@ -1,0 +1,22 @@
+param drive = 10
+param bias = 0.15
+param tone = 4000
+param level = 0.5
+
+static sr_inv = 1/SAMPLE_RATE
+a = 1 - exp(-tone*2*PI*sr_inv)
+
+static dc_x1 = 0
+static dc_y1 = 0
+static lp = 0
+
+x = IN[0]*drive + bias
+clipped = tanh(x)
+
+dc = clipped - dc_x1 + 0.995*dc_y1
+dc_x1 = clipped
+dc_y1 = dc
+
+lp = lp + a*(dc - lp)
+
+OUT[0] <- lp*level

@@ -15,6 +15,7 @@ enum class TokenKind : uint8_t {
     Minus,
     Star,
     Slash,
+    Percent,
     LBrace,
     RBrace,
     LParen,
@@ -42,6 +43,8 @@ enum class TokenKind : uint8_t {
     KwNull,
     KwReverse,
     KwRepeat,
+    KwChoose,
+    Or,
     Eof,
     Invalid,
 };

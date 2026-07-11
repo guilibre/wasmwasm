@@ -14,7 +14,10 @@ score source -> compile_score (score_compiler, Emscripten) -> JSON ScoreGraph
 `compile_score` is exported from `score_compiler/app/bindings.cpp` and wraps
 `compile_to_json`. The frontend's `ScoreGraph`/`GraphNode`/`ExprNode`/
 `TransformEntry` types (`frontend/src/audio/conductor.ts`) mirror the C++
-structs written by `score_compiler/src/backend/codegen.cpp`.
+structs written by `score_compiler/src/backend/codegen.cpp`. `ExprNode.op`
+(for `{kind: 'binary'}` nodes) is one of `add sub mul div mod pow eq neq lt
+gt lte gte and or`, matching the score language's
+[expression operators](score-language.md#expressions).
 
 A graph node has a `kind`:
 
@@ -26,6 +29,7 @@ A graph node has a `kind`:
 | `passthrough`    | plumbing node (self-reference loops), no-op at runtime |
 | `transform_push` | pushes a parameter transform onto the token's stack   |
 | `transform_pop`  | pops the most recent transform                        |
+| `branch`         | evaluates `cond` (an `ExprNode`) against the token's current params, then follows `next[0]` if true or `next[1]` if false - compiled from [`choose`](score-language.md#choose) |
 
 `ScoreGraph.entries` lists one node-id list per `play` statement - the
 starting points for tokens when playback begins.
@@ -42,8 +46,8 @@ starting points for tokens when playback begins.
 
 On construction, `Conductor` seeds one token per graph entry and immediately
 walks each forward (`walk_forward`) through any leading `passthrough`,
-`fork`, `transform_push`/`pop`, or `join` nodes until it reaches a `state`
-node or dead-ends.
+`fork`, `transform_push`/`pop`, `branch`, or `join` nodes until it reaches a
+`state` node or dead-ends.
 
 `tick(num_samples)` is called once per audio-processing block:
 
@@ -54,7 +58,11 @@ node or dead-ends.
 
 Graph walking inside a single tick is bounded by `max_steps_per_tick` (64) -
 if a cycle produces events with zero duration, `Conductor` throws rather than
-looping forever.
+looping forever. Within a single `walk_forward` call, revisiting the same
+node before reaching a `state` (a cycle of `fork`/`join`/`branch`/
+`transform_push`/`transform_pop`/`passthrough` nodes with no `state` in
+between) is also detected and throws immediately, rather than spinning
+forever inside that call.
 
 ## Entering a `state` node
 

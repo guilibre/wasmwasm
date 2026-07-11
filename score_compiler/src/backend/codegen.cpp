@@ -31,6 +31,8 @@ auto node_kind_name(NodeKind kind) -> std::string {
         return "transform_push";
     case NodeKind::TransformPop:
         return "transform_pop";
+    case NodeKind::Branch:
+        return "branch";
     }
     return "state";
 }
@@ -51,9 +53,9 @@ auto expr_to_json(const Expr &expr) -> std::string {
                expr_to_json(*expr.ternary_then) + R"(,"else":)" +
                expr_to_json(*expr.ternary_else) + "}";
     case Expr::Kind::Binary: {
-        static constexpr std::array<const char *, 11> kOpNames = {
-            "add", "sub", "mul", "div", "pow", "eq",
-            "neq", "lt",  "gt",  "lte", "gte",
+        static constexpr std::array<const char *, 14> kOpNames = {
+            "add", "sub", "mul", "div", "mod", "pow", "eq",
+            "neq", "lt",  "gt",  "lte", "gte", "and", "or",
         };
         return R"({"kind":"binary","op":)" +
                json_string(kOpNames[static_cast<uint8_t>(expr.op)]) +
@@ -95,6 +97,8 @@ void write_node(const GraphNode &node, std::string &out) {
         if (node.push_instrument)
             out += ",\"pushInstrument\":" + json_string(*node.push_instrument);
     }
+    if (node.kind == NodeKind::Branch)
+        out += ",\"cond\":" + expr_to_json(*node.branch_cond);
     out += ",\"next\":[";
     for (size_t i = 0; i < node.next.size(); ++i) {
         if (i != 0) out += ",";

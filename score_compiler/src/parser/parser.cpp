@@ -59,7 +59,8 @@ void Parser::end_statement() {
 auto Parser::starts_term() const -> bool {
     return current.kind == TokenKind::Ident ||
            current.kind == TokenKind::LParen ||
-           current.kind == TokenKind::LBrace;
+           current.kind == TokenKind::LBrace ||
+           current.kind == TokenKind::KwChoose;
 }
 
 auto Parser::parse_factor() -> std::unique_ptr<Expr> {
@@ -88,6 +89,8 @@ auto Parser::parse_factor() -> std::unique_ptr<Expr> {
     if (current.kind == TokenKind::Ident) {
         const auto tok = current;
         advance();
+        if (tok.lexeme == "true" || tok.lexeme == "false")
+            return make_number(tok.lexeme == "true" ? 1.0 : 0.0);
         auto expr = std::make_unique<Expr>();
         expr->kind = Expr::Kind::Ident;
         expr->ident_name = tok.lexeme;
@@ -119,8 +122,28 @@ auto Parser::parse_comparison() -> std::unique_ptr<Expr> {
     return lhs;
 }
 
+auto Parser::parse_logic_and() -> std::unique_ptr<Expr> {
+    auto lhs = parse_comparison();
+    while (current.kind == TokenKind::Ampersand) {
+        advance();
+        auto rhs = parse_comparison();
+        lhs = make_binary(BinOp::And, std::move(lhs), std::move(rhs));
+    }
+    return lhs;
+}
+
+auto Parser::parse_logic_or() -> std::unique_ptr<Expr> {
+    auto lhs = parse_logic_and();
+    while (current.kind == TokenKind::Or) {
+        advance();
+        auto rhs = parse_logic_and();
+        lhs = make_binary(BinOp::Or, std::move(lhs), std::move(rhs));
+    }
+    return lhs;
+}
+
 auto Parser::parse_ternary() -> std::unique_ptr<Expr> {
-    auto cond = parse_comparison();
+    auto cond = parse_logic_or();
     if (current.kind != TokenKind::Question) return cond;
     advance();
     auto then_expr = parse_ternary();
@@ -159,9 +182,11 @@ auto Parser::parse_pow() -> std::unique_ptr<Expr> {
 auto Parser::parse_arith_term() -> std::unique_ptr<Expr> {
     auto lhs = parse_pow();
     while (current.kind == TokenKind::Star ||
-           current.kind == TokenKind::Slash) {
-        const auto op =
-            current.kind == TokenKind::Star ? BinOp::Mul : BinOp::Div;
+           current.kind == TokenKind::Slash ||
+           current.kind == TokenKind::Percent) {
+        const auto op = current.kind == TokenKind::Star    ? BinOp::Mul
+                        : current.kind == TokenKind::Slash ? BinOp::Div
+                                                           : BinOp::Mod;
         advance();
         auto rhs = parse_pow();
         lhs = make_binary(op, std::move(lhs), std::move(rhs));
@@ -219,12 +244,21 @@ auto Parser::parse_comp_atom() -> Term {
     } else if (current.kind == TokenKind::LBrace) {
         term.kind = Term::Kind::BlockLit;
         term.block_lit = parse_block();
+    } else if (match(TokenKind::KwChoose)) {
+        term.kind = Term::Kind::Choose;
+        term.pipe_expr = parse_ternary();
+        term.branches.push_back(wrap_as_comp_expr(parse_fork_term()));
+        term.branches.push_back(wrap_as_comp_expr(parse_fork_term()));
     } else {
         const auto &name = expect(TokenKind::Ident, "variable name");
         term.kind = Term::Kind::VarRef;
         term.var_name = name.lexeme;
     }
 
+    return continue_octave_suffix(std::move(term));
+}
+
+auto Parser::continue_octave_suffix(Term term) -> Term {
     while (current.kind == TokenKind::Tick ||
            current.kind == TokenKind::Comma) {
         const auto is_up = current.kind == TokenKind::Tick;
@@ -275,8 +309,10 @@ auto Parser::parse_comp_atom() -> Term {
 }
 
 auto Parser::parse_atomic_join() -> Term {
-    auto lhs = parse_comp_atom();
-    if (current.kind != TokenKind::At) return lhs;
+    return continue_atomic_join(parse_comp_atom());
+}
+
+auto Parser::continue_atomic_join(Term lhs) -> Term {
     while (current.kind == TokenKind::At) {
         advance();
         Term join;
@@ -347,10 +383,15 @@ auto Parser::parse_bang_suffix(std::unique_ptr<CompExpr> lhs) -> Term {
 }
 
 auto Parser::continue_pipe_term(Term term) -> Term {
-    while (current.kind == TokenKind::Pipe || current.kind == TokenKind::Bang) {
-        term = current.kind == TokenKind::Pipe
-                   ? parse_pipe_suffix(wrap_as_comp_expr(std::move(term)))
-                   : parse_bang_suffix(wrap_as_comp_expr(std::move(term)));
+    while (current.kind == TokenKind::Pipe || current.kind == TokenKind::Bang ||
+           current.kind == TokenKind::At) {
+        if (current.kind == TokenKind::At) {
+            term = continue_atomic_join(std::move(term));
+        } else {
+            term = current.kind == TokenKind::Pipe
+                       ? parse_pipe_suffix(wrap_as_comp_expr(std::move(term)))
+                       : parse_bang_suffix(wrap_as_comp_expr(std::move(term)));
+        }
     }
     return term;
 }
@@ -419,8 +460,8 @@ auto Parser::parse_var_decl() -> VarDecl {
             term.block_lit = std::move(block);
             term.line = block_line;
             term.column = block_column;
-            Term first =
-                continue_fork_term(continue_pipe_term(std::move(term)));
+            Term first = continue_fork_term(continue_pipe_term(
+                continue_atomic_join(continue_octave_suffix(std::move(term)))));
             decl.comp.terms.push_back(std::move(first));
             consume_legato_tilde(decl.comp.terms.back());
             parse_comp_terms(decl.comp);

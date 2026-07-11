@@ -28,15 +28,16 @@ auto make(TokenKind kind, std::string lexeme, size_t line, size_t column)
 } // namespace
 
 auto Token::to_string() const -> std::string {
-    static constexpr std::array<const char *, 39> names = {
-        "Ident",     "Number",    "String",      "Equals",  "Colon",
-        "Semicolon", "Plus",      "Minus",       "Star",    "Slash",
-        "LBrace",    "RBrace",    "LParen",      "RParen",  "LBracket",
-        "RBracket",  "Comma",     "Tick",        "Tilde",   "Caret",
-        "At",        "Ampersand", "Pipe",        "Bang",    "Question",
-        "EqEq",      "NotEq",     "Less",        "Greater", "LessEq",
-        "GreaterEq", "KwPlay",    "KwTransform", "KwBy",    "KwNull",
-        "KwReverse", "KwRepeat",  "Eof",         "Invalid",
+    static constexpr std::array<const char *, 42> names = {
+        "Ident",     "Number",    "String",    "Equals",      "Colon",
+        "Semicolon", "Plus",      "Minus",     "Star",        "Slash",
+        "Percent",   "LBrace",    "RBrace",    "LParen",      "RParen",
+        "LBracket",  "RBracket",  "Comma",     "Tick",        "Tilde",
+        "Caret",     "At",        "Ampersand", "Pipe",        "Bang",
+        "Question",  "EqEq",      "NotEq",     "Less",        "Greater",
+        "LessEq",    "GreaterEq", "KwPlay",    "KwTransform", "KwBy",
+        "KwNull",    "KwReverse", "KwRepeat",  "KwChoose",    "Or",
+        "Eof",       "Invalid",
     };
     std::string out = names[static_cast<uint8_t>(kind)];
     out += " '" + lexeme + "' @" + std::to_string(line) + ":" +
@@ -102,6 +103,8 @@ auto Tokenizer::scan_identifier() -> Token {
         return make(TokenKind::KwReverse, lexeme, line, column);
     if (lexeme == "repeat")
         return make(TokenKind::KwRepeat, lexeme, line, column);
+    if (lexeme == "choose")
+        return make(TokenKind::KwChoose, lexeme, line, column);
     return make(TokenKind::Ident, lexeme, line, column);
 }
 
@@ -204,6 +207,8 @@ auto Tokenizer::next() -> Token {
         return make(TokenKind::Star, "*", start_line, start_column);
     case '/':
         return make(TokenKind::Slash, "/", start_line, start_column);
+    case '%':
+        return make(TokenKind::Percent, "%", start_line, start_column);
     case '{':
         return make(TokenKind::LBrace, "{", start_line, start_column);
     case '}':
@@ -233,7 +238,7 @@ auto Tokenizer::next() -> Token {
             advance();
             return make(TokenKind::Pipe, "|>", start_line, start_column);
         }
-        return error_token("unexpected character '|'");
+        return make(TokenKind::Or, "|", start_line, start_column);
     default: {
         auto tok = error_token(std::string("unexpected character '") + c + "'");
         tok.line = start_line;

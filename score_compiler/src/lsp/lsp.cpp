@@ -9,7 +9,8 @@
 namespace {
 
 auto is_keyword_ident(const std::string &lexeme) -> bool {
-    static const std::unordered_set<std::string> keywords = {"instrument"};
+    static const std::unordered_set<std::string> keywords = {"instrument",
+                                                             "true", "false"};
     return keywords.contains(lexeme);
 }
 
@@ -46,6 +47,7 @@ auto lsp_tokens(const std::string &src) -> std::string {
         case TokenKind::KwTransform:
         case TokenKind::KwReverse:
         case TokenKind::KwRepeat:
+        case TokenKind::KwChoose:
         case TokenKind::KwBy:
         case TokenKind::KwNull:
             emit(tok.line, tok.column, len, "keyword");
@@ -60,6 +62,7 @@ auto lsp_tokens(const std::string &src) -> std::string {
         case TokenKind::Minus:
         case TokenKind::Star:
         case TokenKind::Slash:
+        case TokenKind::Percent:
         case TokenKind::Equals:
         case TokenKind::Colon:
         case TokenKind::Semicolon:
@@ -68,6 +71,7 @@ auto lsp_tokens(const std::string &src) -> std::string {
         case TokenKind::Tilde:
         case TokenKind::Caret:
         case TokenKind::Pipe:
+        case TokenKind::Or:
         case TokenKind::Question:
         case TokenKind::EqEq:
         case TokenKind::NotEq:
@@ -130,8 +134,11 @@ auto lsp_completions(const std::string &src, size_t /*line*/, size_t /*col*/)
     emit("transform", "", "keyword");
     emit("reverse", "", "keyword");
     emit("repeat", "", "keyword");
+    emit("choose", "", "keyword");
     emit("by", "", "keyword");
     emit("null", "", "keyword");
+    emit("true", "", "keyword");
+    emit("false", "", "keyword");
     emit("instrument", "String", "keyword");
     emit("dur", "Float", "variable");
 

@@ -90,7 +90,28 @@ clock = (C E G C)@{instrument: "Lead"}!1/2 clock;
 play clock;
 ```
 
-## 9. Live control from JS
+## 9. Conditional loops with `choose`
+
+`choose <predicate> <a> <b>` plays `a` if `<predicate>` is true, `b`
+otherwise - checked against the parameters of the last note played before
+it. Combined with self-reference (step 8), this lets a loop stop instead of
+running forever:
+
+```SCORE
+verse = (C E G C)@{instrument: "Lead", count: 0}!1/2;
+outro = (C, C,)@{instrument: "Lead"}!2;
+song = verse choose count < 3 (song |> transform count by count + 1) outro;
+
+play song;
+```
+
+`song` plays `verse`, then either loops back into itself (bumping `count`)
+or falls through to `outro`, depending on whether `count` is still under 3.
+This is the compile-time counterpart to step 9's live control: `choose`
+picks a path based on parameters baked into the score itself, while a JS
+callback reacts to state from outside it.
+
+## 10. Live control from JS
 
 Everything so far is fixed at compile time. To react to what's currently
 playing - e.g. add drift, follow a live scale, or read UI state - author an

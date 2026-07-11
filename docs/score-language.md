@@ -192,6 +192,43 @@ play clock
 Note that `,` immediately after an atom is always the octave-down suffix
 (above), never a term separator - sequencing is done with whitespace alone.
 
+### choose
+
+```SCORE
+choose <predicate> <a> <b>
+```
+
+`choose` is a term (not a pipe) that picks between two compositions at
+playback time: it plays `a` if `<predicate>` is true, `b` otherwise. Anywhere
+a note or composition is expected, `choose ...` can appear instead.
+
+The predicate is an [expression](#expressions) evaluated against the
+parameters of the last atomic event reached before the `choose` - the same
+"current value of a parameter" semantics as a `transform ... by` expression.
+Combined with self-reference, this lets a loop stop (or branch) based on how
+it was last played, instead of repeating forever unconditionally:
+
+```SCORE
+verse = (C E G C)@{count: 0};
+song =
+  verse
+  choose count < 3 (song |> transform count by count + 1) outro;
+
+play song;
+```
+
+There's no mutable variable that truly accumulates across iterations here -
+`count` is a parameter baked into each atomic event, and `transform count by
+count + 1` recomputes it from whatever value is currently in scope each time
+through the loop. Test this kind of counter carefully; it's easy to end up
+with a predicate that's always (or never) true.
+
+Note the two different meanings of `&`: between composition terms (as in
+[Fork](#fork---), or as `<a>`/`<b>` here) it means "play in parallel"; inside
+an expression (the predicate above, a `transform ... by` expression, a
+ternary condition) it means logical AND. Which one applies is determined by
+where `&` appears in the grammar, not by the character itself.
+
 ## Pipe operators
 
 Pipe operators wrap a whole sub-expression and apply while inside it.
@@ -243,15 +280,22 @@ Shorthand for `expr |> transform dur by <expr>`:
 
 ## Expressions
 
-Used for block field values and transform amounts:
+Used for block field values, transform amounts, and `choose` predicates:
 
 - Numbers: `440`, `0.5`
-- Identifiers: only valid inside a `transform ... by` expression, where they
-  read the current value of a parameter (e.g. `freq`)
+- `true` / `false`: sugar for `1` / `0`
+- Identifiers: only valid inside a `transform ... by` expression or a
+  `choose` predicate, where they read the current value of a parameter
+  (e.g. `freq`)
 - Arrays: `[a, b, c]` (only valid in a scale declaration)
 - Ternary: `cond ? then : else`
-- Binary operators: `+ - * / ^ == != < > <= >=`
+- Binary operators: `+ - * / % ^ == != < > <= >= & |`
 - `null`
+
+`&` and `|` are logical AND/OR here - see the note on `&` under
+[choose](#choose) for how this differs from `&` between composition terms.
+Precedence (highest to lowest): `^`, unary `-`, `* / %`, `+ -`,
+comparisons (`== != < > <= >=`), `&`, `|`, `?:`.
 
 ## `play`
 

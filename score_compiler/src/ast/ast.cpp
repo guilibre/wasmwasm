@@ -49,6 +49,9 @@ void print_expr(const Expr &expr, std::string &out) {
     case BinOp::Div:
         out += " / ";
         break;
+    case BinOp::Mod:
+        out += " % ";
+        break;
     case BinOp::Pow:
         out += " ^ ";
         break;
@@ -69,6 +72,12 @@ void print_expr(const Expr &expr, std::string &out) {
         break;
     case BinOp::GtEq:
         out += " >= ";
+        break;
+    case BinOp::And:
+        out += " && ";
+        break;
+    case BinOp::Or:
+        out += " || ";
         break;
     }
     print_expr(*expr.rhs, out);
@@ -92,10 +101,30 @@ void print_term(const Term &term, std::string &out) {
             "@" + (term.rhs_is_block ? std::string("{block}") : term.rhs_name);
         return;
     }
+    if (term.kind == Term::Kind::Choose) {
+        out += "choose ";
+        print_expr(*term.pipe_expr, out);
+        out += " ";
+        print_comp_expr(*term.branches[0], out);
+        out += " ";
+        print_comp_expr(*term.branches[1], out);
+        return;
+    }
     if (term.kind == Term::Kind::Pipe) {
         print_comp_expr(*term.lhs_expr, out);
-        out += " |> transform " + term.pipe_param_name + " by ";
-        print_expr(*term.pipe_expr, out);
+        switch (term.pipe_op) {
+        case Term::PipeOp::Reverse:
+            out += " |> reverse";
+            break;
+        case Term::PipeOp::Repeat:
+            out += " |> repeat ";
+            print_expr(*term.pipe_expr, out);
+            break;
+        case Term::PipeOp::Transform:
+            out += " |> transform " + term.pipe_param_name + " by ";
+            print_expr(*term.pipe_expr, out);
+            break;
+        }
         return;
     }
     out += "(";

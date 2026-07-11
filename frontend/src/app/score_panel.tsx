@@ -150,7 +150,7 @@ export function ScorePanel({
                         className="app__score-panel-graph-container"
                         style={{ height: graph_height }}
                     >
-                        <ScoreGraphView source={source} />
+                        <ScoreGraphView source={source} bpm={orchestra.bpm} />
                     </div>
                 </div>
             )}

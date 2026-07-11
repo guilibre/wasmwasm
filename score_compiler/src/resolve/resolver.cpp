@@ -1,5 +1,6 @@
 #include "resolver.hpp"
 
+#include "ast/ast.hpp"
 #include "optimize.hpp"
 
 #include <algorithm>
@@ -39,13 +40,14 @@ struct Piece {
     size_t entry_id;
     size_t exit_id;
     MemberSet members;
-    std::shared_ptr<PassthroughInfo> open_passthrough;
+    std::vector<std::shared_ptr<PassthroughInfo>> open_passthrough;
+    bool exit_unreachable = false;
 };
 
 auto link_after(std::vector<GraphNode> &nodes, const Piece &piece,
                 size_t next_id) -> void {
-    if (piece.open_passthrough) {
-        auto &info = *piece.open_passthrough;
+    if (!piece.open_passthrough.empty()) {
+        auto &info = *piece.open_passthrough.front();
         if (info.head_id.has_value())
             nodes[info.tail_id].next.push_back(next_id);
         else
@@ -100,6 +102,7 @@ struct ExpansionContext {
     std::unordered_map<size_t, size_t> transform_pop_of_push;
     std::vector<std::unique_ptr<Expr>> owned_exprs;
     size_t next_legato_id = 0;
+    std::unordered_map<size_t, size_t> legato_id_parent;
 
     auto alloc(NodeKind kind) -> size_t {
         if (nodes.size() >= kMaxNodes)
@@ -139,6 +142,10 @@ auto fold_expr(const Expr &expr) -> double {
         if (rhs == 0)
             throw ResolveException("division by zero", expr.line, expr.column);
         return lhs / rhs;
+    case BinOp::Mod:
+        if (rhs == 0)
+            throw ResolveException("division by zero", expr.line, expr.column);
+        return std::fmod(lhs, rhs);
     case BinOp::Pow:
         return std::pow(lhs, rhs);
     case BinOp::Eq:
@@ -153,6 +160,10 @@ auto fold_expr(const Expr &expr) -> double {
         return lhs <= rhs ? 1.0 : 0.0;
     case BinOp::GtEq:
         return lhs >= rhs ? 1.0 : 0.0;
+    case BinOp::And:
+        return (lhs != 0 && rhs != 0) ? 1.0 : 0.0;
+    case BinOp::Or:
+        return (lhs != 0 || rhs != 0) ? 1.0 : 0.0;
     }
     throw ResolveException("unknown operator", expr.line, expr.column);
 }
@@ -162,15 +173,19 @@ auto fold_block_params(const std::vector<Param> &params, ExpansionContext &ctx)
     std::map<std::string, double> result;
     for (const auto &param : params) {
         if (param.name == "scale") {
-            if (param.value->kind != Expr::Kind::Ident)
+            if (param.value->kind == Expr::Kind::Number) {
+                result[param.name] = param.value->number;
+            } else if (param.value->kind != Expr::Kind::Ident) {
                 throw ResolveException("'scale' field requires a scale name",
                                        param.value->line, param.value->column);
-            const auto it = ctx.scale_index.find(param.value->ident_name);
-            if (it == ctx.scale_index.end())
-                throw ResolveException("undefined scale '" +
-                                           param.value->ident_name + "'",
-                                       param.value->line, param.value->column);
-            result[param.name] = static_cast<double>(it->second);
+            } else {
+                const auto it = ctx.scale_index.find(param.value->ident_name);
+                if (it == ctx.scale_index.end())
+                    throw ResolveException(
+                        "undefined scale '" + param.value->ident_name + "'",
+                        param.value->line, param.value->column);
+                result[param.name] = static_cast<double>(it->second);
+            }
             continue;
         }
         result[param.name] = fold_expr(*param.value);
@@ -201,7 +216,8 @@ auto expand_var_ref(const std::string &name, size_t line, size_t column,
             .entry_id = frame.passthrough->id,
             .exit_id = frame.passthrough->id,
             .members = frame.passthrough->members,
-            .open_passthrough = frame.passthrough,
+            .open_passthrough = {frame.passthrough},
+            .exit_unreachable = true,
         };
     }
 
@@ -234,13 +250,21 @@ auto expand_var_ref(const std::string &name, size_t line, size_t column,
 
     frame.passthrough->pending_target = body.entry_id;
     merge_members(frame.passthrough->members, body.members);
-    const auto closes_own_cycle = body.open_passthrough == frame.passthrough;
+
+    auto propagated = body.open_passthrough;
+    const auto own_it = std::ranges::find(propagated, frame.passthrough);
+    const auto closes_own_cycle = own_it != propagated.end();
+    if (closes_own_cycle) {
+        propagated.erase(own_it);
+        propagated.push_back(frame.passthrough);
+    }
+
     return Piece{
         .entry_id = frame.passthrough->id,
         .exit_id = frame.passthrough->id,
         .members = frame.passthrough->members,
-        .open_passthrough =
-            closes_own_cycle ? frame.passthrough : body.open_passthrough,
+        .open_passthrough = std::move(propagated),
+        .exit_unreachable = closes_own_cycle ? true : body.exit_unreachable,
     };
 }
 
@@ -361,7 +385,7 @@ auto expand_term(const Term &term, ExpansionContext &ctx) -> Piece {
         ctx.nodes[push_id].push_instrument = b.instrument;
         ctx.nodes[push_id].next.push_back(lhs_piece.entry_id);
 
-        if (lhs_piece.open_passthrough) {
+        if (lhs_piece.exit_unreachable) {
             const auto members = make_members({push_id});
             merge_members(members, lhs_piece.members);
             return Piece{
@@ -369,6 +393,7 @@ auto expand_term(const Term &term, ExpansionContext &ctx) -> Piece {
                 .exit_id = lhs_piece.exit_id,
                 .members = members,
                 .open_passthrough = lhs_piece.open_passthrough,
+                .exit_unreachable = true,
             };
         }
 
@@ -382,7 +407,41 @@ auto expand_term(const Term &term, ExpansionContext &ctx) -> Piece {
             .entry_id = push_id,
             .exit_id = pop_id,
             .members = members,
-            .open_passthrough = nullptr,
+            .open_passthrough = lhs_piece.open_passthrough,
+        };
+    }
+
+    if (term.kind == Term::Kind::Choose) {
+        const auto branch_id = ctx.alloc(NodeKind::Branch);
+        ctx.nodes[branch_id].branch_cond = term.pipe_expr.get();
+
+        const auto a_piece = expand_comp_expr(*term.branches[0], ctx);
+        const auto b_piece = expand_comp_expr(*term.branches[1], ctx);
+        ctx.nodes[branch_id].next.push_back(a_piece.entry_id);
+        ctx.nodes[branch_id].next.push_back(b_piece.entry_id);
+
+        const auto join_id = ctx.alloc(NodeKind::Join);
+        size_t infinite_branches = 0;
+        for (const auto &branch : {a_piece, b_piece})
+            if (branch.exit_unreachable) ++infinite_branches;
+        ctx.nodes[join_id].join_arity = 2 - infinite_branches;
+
+        const auto members = make_members({branch_id, join_id});
+        std::vector<std::shared_ptr<PassthroughInfo>> propagated;
+        for (const auto &branch : {a_piece, b_piece}) {
+            if (!branch.exit_unreachable)
+                ctx.nodes[branch.exit_id].next.push_back(join_id);
+            merge_members(members, branch.members);
+            for (const auto &p : branch.open_passthrough)
+                propagated.push_back(p);
+        }
+
+        return Piece{
+            .entry_id = branch_id,
+            .exit_id = join_id,
+            .members = members,
+            .open_passthrough = std::move(propagated),
+            .exit_unreachable = infinite_branches == 2,
         };
     }
 
@@ -397,7 +456,7 @@ auto expand_term(const Term &term, ExpansionContext &ctx) -> Piece {
             if (count == 1) return expand_comp_expr(*term.lhs_expr, ctx);
 
             const auto body = expand_comp_expr(*term.lhs_expr, ctx);
-            if (body.open_passthrough)
+            if (body.exit_unreachable)
                 throw ResolveException(
                     "'repeat' cannot wrap a composition that already "
                     "repeats infinitely",
@@ -405,6 +464,8 @@ auto expand_term(const Term &term, ExpansionContext &ctx) -> Piece {
 
             const auto entry_anchor = ctx.alloc(NodeKind::Passthrough);
             const auto exit_anchor = ctx.alloc(NodeKind::Passthrough);
+            body.members->insert(entry_anchor);
+            body.members->insert(exit_anchor);
 
             ctx.pending_repeat_clones.push_back(PendingRepeatClone{
                 .members = body.members,
@@ -418,8 +479,8 @@ auto expand_term(const Term &term, ExpansionContext &ctx) -> Piece {
             return Piece{
                 .entry_id = entry_anchor,
                 .exit_id = exit_anchor,
-                .members = make_members({entry_anchor, exit_anchor}),
-                .open_passthrough = nullptr,
+                .members = body.members,
+                .open_passthrough = {},
             };
         }
 
@@ -433,9 +494,9 @@ auto expand_term(const Term &term, ExpansionContext &ctx) -> Piece {
                 .members = body.members,
                 .body_entry_id = body.entry_id,
                 .body_exit_id = body.exit_id,
-                .ring_members = body.open_passthrough
-                                    ? body.open_passthrough->members
-                                    : nullptr,
+                .ring_members = body.open_passthrough.empty()
+                                    ? nullptr
+                                    : body.open_passthrough.front()->members,
                 .entry_anchor = entry_anchor,
                 .exit_anchor = exit_anchor,
             });
@@ -444,7 +505,7 @@ auto expand_term(const Term &term, ExpansionContext &ctx) -> Piece {
                 .entry_id = entry_anchor,
                 .exit_id = exit_anchor,
                 .members = make_members({entry_anchor, exit_anchor}),
-                .open_passthrough = nullptr,
+                .open_passthrough = {},
             };
         }
 
@@ -455,7 +516,7 @@ auto expand_term(const Term &term, ExpansionContext &ctx) -> Piece {
         const auto lhs_piece = expand_comp_expr(*term.lhs_expr, ctx);
         ctx.nodes[push_id].next.push_back(lhs_piece.entry_id);
 
-        if (lhs_piece.open_passthrough) {
+        if (lhs_piece.exit_unreachable) {
             const auto members = make_members({push_id});
             merge_members(members, lhs_piece.members);
             return Piece{
@@ -463,6 +524,7 @@ auto expand_term(const Term &term, ExpansionContext &ctx) -> Piece {
                 .exit_id = lhs_piece.exit_id,
                 .members = members,
                 .open_passthrough = lhs_piece.open_passthrough,
+                .exit_unreachable = true,
             };
         }
 
@@ -476,7 +538,7 @@ auto expand_term(const Term &term, ExpansionContext &ctx) -> Piece {
             .entry_id = push_id,
             .exit_id = pop_id,
             .members = members,
-            .open_passthrough = nullptr,
+            .open_passthrough = lhs_piece.open_passthrough,
         };
     }
 
@@ -491,20 +553,23 @@ auto expand_term(const Term &term, ExpansionContext &ctx) -> Piece {
     const auto join_id = ctx.alloc(NodeKind::Join);
     size_t infinite_branches = 0;
     for (const auto &branch : branches)
-        if (branch.open_passthrough) ++infinite_branches;
+        if (branch.exit_unreachable) ++infinite_branches;
     ctx.nodes[join_id].join_arity = branches.size() - infinite_branches;
     const auto members = make_members({fork_id, join_id});
+    std::vector<std::shared_ptr<PassthroughInfo>> propagated;
     for (const auto &branch : branches) {
         ctx.nodes[fork_id].next.push_back(branch.entry_id);
-        if (!branch.open_passthrough)
+        if (!branch.exit_unreachable)
             ctx.nodes[branch.exit_id].next.push_back(join_id);
         merge_members(members, branch.members);
+        for (const auto &p : branch.open_passthrough) propagated.push_back(p);
     }
     return Piece{
         .entry_id = fork_id,
         .exit_id = join_id,
         .members = members,
-        .open_passthrough = {},
+        .open_passthrough = std::move(propagated),
+        .exit_unreachable = infinite_branches == branches.size(),
     };
 }
 
@@ -531,8 +596,45 @@ auto find_first_state(ExpansionContext &ctx, size_t start_id)
     return id;
 }
 
+auto legato_find(std::unordered_map<size_t, size_t> &parent, size_t x)
+    -> size_t {
+    const auto it = parent.find(x);
+    if (it == parent.end() || it->second == x) return x;
+    const auto root = legato_find(parent, it->second);
+    it->second = root;
+    return root;
+}
+
+auto legato_union(std::unordered_map<size_t, size_t> &parent, size_t a,
+                  size_t b) -> void {
+    const auto ra = legato_find(parent, a);
+    const auto rb = legato_find(parent, b);
+    if (ra != rb) parent[ra] = rb;
+}
+
+auto stamp_legato_id(ExpansionContext &ctx, size_t state_id, size_t chain_id)
+    -> void {
+    auto &params = ctx.nodes[state_id].params;
+    const auto it = params.find("legato_id");
+    if (it != params.end()) {
+        const auto existing = static_cast<size_t>(it->second);
+        if (existing != chain_id)
+            legato_union(ctx.legato_id_parent, existing, chain_id);
+    }
+    params["legato_id"] = static_cast<double>(chain_id);
+}
+
+auto canonicalize_legato_ids(ExpansionContext &ctx) -> void {
+    for (auto &node : ctx.nodes) {
+        const auto it = node.params.find("legato_id");
+        if (it == node.params.end()) continue;
+        const auto id = static_cast<size_t>(it->second);
+        it->second = static_cast<double>(legato_find(ctx.legato_id_parent, id));
+    }
+}
+
 auto apply_legato(ExpansionContext &ctx, const Piece &piece, const Term &term,
-                  bool in_chain, bool has_after,
+                  bool in_chain, bool incoming, bool has_after,
                   std::optional<size_t> &chain_id) -> void {
     if (!in_chain) {
         chain_id.reset();
@@ -540,13 +642,17 @@ auto apply_legato(ExpansionContext &ctx, const Piece &piece, const Term &term,
     }
     if (!chain_id) chain_id = ctx.next_legato_id++;
 
+    if (incoming) {
+        const auto entry_state = find_first_state(ctx, piece.entry_id);
+        if (entry_state) stamp_legato_id(ctx, *entry_state, *chain_id);
+    }
+
     const auto state_id =
         find_boundary_state(ctx, piece.entry_id, piece.exit_id);
     if (state_id) {
+        stamp_legato_id(ctx, *state_id, *chain_id);
         ctx.nodes[*state_id].params["legato"] = has_after ? 1.0 : 0.0;
-        ctx.nodes[*state_id].params["legato_id"] =
-            static_cast<double>(*chain_id);
-    } else if (piece.open_passthrough) {
+    } else if (piece.exit_unreachable) {
         ctx.pending_legato_boundaries.push_back(PendingLegatoBoundary{
             .passthrough_id = piece.entry_id,
             .has_after = has_after,
@@ -570,7 +676,7 @@ auto expand_comp_expr(const CompExpr &comp, ExpansionContext &ctx) -> Piece {
 
     std::optional<size_t> legato_chain_id;
     apply_legato(ctx, first, comp.terms.front(),
-                 comp.terms.front().legato_after,
+                 comp.terms.front().legato_after, false,
                  comp.terms.front().legato_after, legato_chain_id);
 
     const auto members = make_members();
@@ -581,15 +687,17 @@ auto expand_comp_expr(const CompExpr &comp, ExpansionContext &ctx) -> Piece {
         apply_legato(ctx, next, comp.terms[i],
                      comp.terms[i - 1].legato_after ||
                          comp.terms[i].legato_after,
-                     comp.terms[i].legato_after, legato_chain_id);
+                     comp.terms[i - 1].legato_after, comp.terms[i].legato_after,
+                     legato_chain_id);
         merge_members(members, next.members);
-        if (prev.open_passthrough) continue;
+        if (prev.exit_unreachable) continue;
         link_after(ctx.nodes, prev, next.entry_id);
         prev = Piece{
             .entry_id = prev.entry_id,
             .exit_id = next.exit_id,
             .members = nullptr,
             .open_passthrough = next.open_passthrough,
+            .exit_unreachable = next.exit_unreachable,
         };
     }
     return Piece{
@@ -597,37 +705,36 @@ auto expand_comp_expr(const CompExpr &comp, ExpansionContext &ctx) -> Piece {
         .exit_id = prev.exit_id,
         .members = members,
         .open_passthrough = prev.open_passthrough,
+        .exit_unreachable = prev.exit_unreachable,
     };
 }
 
 auto make_predefined_decls(size_t chromatic_scale_index)
     -> std::vector<VarDecl> {
-    constexpr std::array<std::pair<char, int>, 7> kMajorDegrees = {{
-        {'a', 0},
-        {'b', 2},
-        {'c', 3},
-        {'d', 5},
-        {'e', 7},
-        {'f', 8},
-        {'g', 10},
+    constexpr std::array<std::pair<char, int>, 7> major_degrees = {{
+        {'A', 0},
+        {'B', 2},
+        {'C', 3},
+        {'D', 5},
+        {'E', 7},
+        {'F', 8},
+        {'G', 10},
     }};
-    constexpr std::array<std::pair<const char *, int>, 3> kAccidentals = {{
+    constexpr std::array<std::pair<const char *, int>, 3> accidentals = {{
         {"", 0},
         {"s", 1},
         {"b", -1},
     }};
     std::vector<VarDecl> decls;
     decls.reserve(21);
-    for (const auto &[letter, degree] : kMajorDegrees) {
-        for (const auto &[suffix, offset] : kAccidentals) {
+    for (const auto &[letter, degree] : major_degrees) {
+        for (const auto &[suffix, offset] : accidentals) {
             const auto semitone = degree + offset;
             const auto freq = 440.0 * std::pow(2.0, semitone / 12.0);
             const auto chromatic_degree = ((semitone % 12) + 12) % 12;
 
             VarDecl decl;
-            decl.name =
-                std::string(1, static_cast<char>(std::toupper(letter))) +
-                suffix;
+            decl.name = std::string(1, letter) + suffix;
             decl.kind = VarDecl::Kind::BlockDef;
             decl.block.params.push_back(
                 Param{.name = "freq", .value = make_expr(freq)});
@@ -636,11 +743,12 @@ auto make_predefined_decls(size_t chromatic_scale_index)
             decl.block.params.push_back(
                 Param{.name = "degree", .value = make_expr(chromatic_degree)});
             decl.block.params.push_back(
-                Param{.name = "octave", .value = make_expr(4)});
+                Param{.name = "octave", .value = make_expr(0)});
+            auto chromatic_expr = std::make_unique<Expr>();
+            chromatic_expr->kind = Expr::Kind::Ident;
+            chromatic_expr->ident_name = "chromatic";
             decl.block.params.push_back(Param{
-                .name = "scale",
-                .value =
-                    make_expr(static_cast<double>(chromatic_scale_index))});
+                .name = "scale", .value = make_expr(chromatic_scale_index)});
             decls.push_back(std::move(decl));
         }
     }
@@ -747,10 +855,33 @@ auto prune_unreachable(ExpandedGraph &graph) -> void {
     for (auto &machine : graph.entries)
         for (auto &id : machine) id = new_id[id];
 
+    std::unordered_map<size_t, size_t> new_pop_of_push;
+    for (const auto &[push_id, pop_id] : graph.transform_pop_of_push) {
+        if (!reachable[push_id] || !reachable[pop_id]) continue;
+        new_pop_of_push[new_id[push_id]] = new_id[pop_id];
+    }
+    graph.transform_pop_of_push = std::move(new_pop_of_push);
+
     graph.nodes = std::move(kept);
 }
 
 namespace {
+
+auto collect_body_members(const ExpansionContext &ctx, size_t entry_id,
+                          size_t exit_id) -> std::vector<size_t> {
+    std::vector<size_t> members;
+    std::unordered_set<size_t> visited;
+    std::vector<size_t> stack{entry_id};
+    while (!stack.empty()) {
+        const auto id = stack.back();
+        stack.pop_back();
+        if (!visited.insert(id).second) continue;
+        members.push_back(id);
+        if (id == exit_id) continue;
+        for (auto succ : ctx.nodes[id].next) stack.push_back(succ);
+    }
+    return members;
+}
 
 auto remap_legato_ids(ExpansionContext &ctx,
                       const std::unordered_map<size_t, size_t> &clone_of)
@@ -856,6 +987,8 @@ auto resolve_pending_reverse_clones(ExpansionContext &ctx) -> void {
 
 auto resolve_pending_repeat_clones(ExpansionContext &ctx) -> void {
     for (const auto &pr : ctx.pending_repeat_clones) {
+        const auto members =
+            collect_body_members(ctx, pr.body_entry_id, pr.body_exit_id);
         auto prev_exit = pr.entry_anchor;
 
         for (size_t copy = 0; copy < pr.count; ++copy) {
@@ -872,14 +1005,24 @@ auto resolve_pending_repeat_clones(ExpansionContext &ctx) -> void {
                 return clone_id;
             };
 
-            for (auto original : *pr.members) get_clone(original);
+            for (auto original : members) get_clone(original);
             remap_legato_ids(ctx, clone_of);
-            for (auto original : *pr.members) {
+            for (auto original : members) {
                 const auto clone_id = clone_of[original];
                 for (auto succ : ctx.nodes[original].next) {
                     if (!clone_of.contains(succ)) continue;
                     ctx.nodes[clone_id].next.push_back(clone_of[succ]);
                 }
+            }
+            for (auto original : members) {
+                if (ctx.nodes[original].kind != NodeKind::TransformPush)
+                    continue;
+                const auto pop_it = ctx.transform_pop_of_push.find(original);
+                if (pop_it == ctx.transform_pop_of_push.end()) continue;
+                const auto original_pop = pop_it->second;
+                if (!clone_of.contains(original_pop)) continue;
+                ctx.transform_pop_of_push[clone_of[original]] =
+                    clone_of[original_pop];
             }
 
             ctx.nodes[prev_exit].next.push_back(clone_of[pr.body_entry_id]);
@@ -902,7 +1045,7 @@ auto expand_program(const Program &program) -> ExpandedGraph {
     }
 
     const auto predefined_decls =
-        make_predefined_decls(ctx.scale_index.at("chromatic"));
+        make_predefined_decls(ctx.scale_index["chromatic"]);
     std::unordered_set<std::string> predefined_names;
     for (const auto &decl : predefined_decls) {
         predefined_names.insert(decl.name);
@@ -953,10 +1096,12 @@ auto expand_program(const Program &program) -> ExpandedGraph {
     }
     resolve_passthroughs(ctx);
     resolve_pending_legato_boundaries(ctx);
+    canonicalize_legato_ids(ctx);
     resolve_pending_reverse_clones(ctx);
     resolve_pending_repeat_clones(ctx);
     graph.nodes = std::move(ctx.nodes);
     graph.owned_exprs = std::move(ctx.owned_exprs);
+    graph.transform_pop_of_push = std::move(ctx.transform_pop_of_push);
     optimize_graph(graph);
     return graph;
 }

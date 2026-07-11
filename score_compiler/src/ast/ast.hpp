@@ -11,13 +11,16 @@ enum class BinOp : uint8_t {
     Sub,
     Mul,
     Div,
+    Mod,
     Pow,
     Eq,
     NotEq,
     Lt,
     Gt,
     LtEq,
-    GtEq
+    GtEq,
+    And,
+    Or
 };
 
 struct Expr {
@@ -62,7 +65,8 @@ struct Term {
         Fork,
         AtomicJoin,
         Pipe,
-        BlockLit
+        BlockLit,
+        Choose
     } kind = Kind::VarRef;
     enum class PipeOp : uint8_t { Transform, Reverse, Repeat };
     std::string var_name;

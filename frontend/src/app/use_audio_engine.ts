@@ -53,6 +53,11 @@ export function useAudioEngine(
                 set_cpu_load(total);
                 return;
             }
+            if (event.data.type === 'conductor-error') {
+                set_error(String(event.data.message));
+                set_is_playing(false);
+                return;
+            }
             if (existing_onmessage) {
                 (existing_onmessage as (this: MessagePort, ev: MessageEvent) => void).call(
                     node.port,

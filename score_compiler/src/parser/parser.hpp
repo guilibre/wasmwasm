@@ -25,6 +25,8 @@ class Parser {
     [[nodiscard]] auto starts_term() const -> bool;
 
     [[nodiscard]] auto parse_ternary() -> std::unique_ptr<Expr>;
+    [[nodiscard]] auto parse_logic_or() -> std::unique_ptr<Expr>;
+    [[nodiscard]] auto parse_logic_and() -> std::unique_ptr<Expr>;
     [[nodiscard]] auto parse_comparison() -> std::unique_ptr<Expr>;
     [[nodiscard]] auto parse_expr() -> std::unique_ptr<Expr>;
     [[nodiscard]] auto parse_arith_term() -> std::unique_ptr<Expr>;
@@ -37,7 +39,9 @@ class Parser {
     void parse_comp_terms(CompExpr &comp);
     [[nodiscard]] auto parse_comp_expr() -> CompExpr;
     [[nodiscard]] auto parse_comp_atom() -> Term;
+    [[nodiscard]] auto continue_octave_suffix(Term term) -> Term;
     [[nodiscard]] auto parse_atomic_join() -> Term;
+    [[nodiscard]] auto continue_atomic_join(Term lhs) -> Term;
     [[nodiscard]] auto continue_pipe_term(Term term) -> Term;
     [[nodiscard]] auto parse_pipe_term() -> Term;
     [[nodiscard]] auto continue_fork_term(Term first) -> Term;

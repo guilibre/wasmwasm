@@ -16,10 +16,12 @@ import '@xyflow/react/dist/style.css';
 import ELK from 'elkjs/lib/elk.bundled.js';
 import ScoreWasm from '../scorewasm/compiler';
 import type { ScoreGraph, GraphNode, ExprNode } from '../audio/conductor';
+import { ScorePianoRoll } from './score_piano_roll';
 import './score_graph_view.scss';
 
 interface Props {
     source: string;
+    bpm: number;
 }
 
 function expr_to_string(expr: ExprNode): string {
@@ -45,6 +47,8 @@ function expr_to_string(expr: ExprNode): string {
                 gt: '>',
                 lte: '<=',
                 gte: '>=',
+                and: '&',
+                or: '|',
             };
             return `${expr_to_string(expr.lhs)} ${symbols[expr.op]} ${expr_to_string(expr.rhs)}`;
         }
@@ -58,10 +62,55 @@ const KIND_LABEL: Record<GraphNode['kind'], string> = {
     passthrough: 'passthrough',
     transform_push: 'push',
     transform_pop: 'pop',
+    branch: 'choose',
 };
 
+function ScoreGraphNoteBody({ node }: { node: GraphNode }) {
+    return (
+        <>
+            {node.instrument && (
+                <div className="score-graph-node__instrument">{node.instrument}</div>
+            )}
+            {node.params && (
+                <div className="score-graph-node__params">
+                    {Object.entries(node.params).map(([name, value]) => (
+                        <div key={name} className="score-graph-node__param">
+                            {name}: {value}
+                        </div>
+                    ))}
+                </div>
+            )}
+        </>
+    );
+}
+
+function summarize_sequence(nodes: GraphNode[]): { instrument?: string; total_dur?: number } {
+    const instruments = new Set(nodes.map((n) => n.instrument).filter((i): i is string => !!i));
+    const durs = nodes.map((n) => n.params?.dur);
+    const total_dur = durs.every((d) => d !== undefined)
+        ? durs.reduce((a, b) => a + (b ?? 0), 0)
+        : undefined;
+    const instrument =
+        instruments.size === 1 ? [...instruments][0] : instruments.size > 1 ? 'vários' : undefined;
+    return { instrument, total_dur };
+}
+
+function ScoreGraphSequenceSummary({ nodes }: { nodes: GraphNode[] }) {
+    const { instrument, total_dur } = summarize_sequence(nodes);
+    return (
+        <>
+            {instrument && <div className="score-graph-node__instrument">{instrument}</div>}
+            <div className="score-graph-node__summary">
+                {nodes.length} notas
+                {total_dur !== undefined && `, dur ${total_dur}`}
+            </div>
+        </>
+    );
+}
+
 function ScoreGraphNode({ data }: NodeProps) {
-    const node = data.node as GraphNode;
+    const nodes = data.nodes as GraphNode[];
+    const node = nodes[0];
     return (
         <div className={`score-graph-node score-graph-node--${node.kind}`}>
             <Handle type="source" position={Position.Top} id="top" />
@@ -72,23 +121,16 @@ function ScoreGraphNode({ data }: NodeProps) {
             <Handle type="target" position={Position.Bottom} id="bottom" />
             <Handle type="source" position={Position.Left} id="left" />
             <Handle type="target" position={Position.Left} id="left" />
-            <div className="score-graph-node__kind">{KIND_LABEL[node.kind]}</div>
-            {node.kind === 'state' && (
-                <>
-                    {node.instrument && (
-                        <div className="score-graph-node__instrument">{node.instrument}</div>
-                    )}
-                    {node.params && (
-                        <div className="score-graph-node__params">
-                            {Object.entries(node.params).map(([name, value]) => (
-                                <div key={name} className="score-graph-node__param">
-                                    {name}: {value}
-                                </div>
-                            ))}
-                        </div>
-                    )}
-                </>
-            )}
+            <div className="score-graph-node__kind">
+                {KIND_LABEL[node.kind]}
+                {nodes.length > 1 && ` ×${nodes.length}`}
+            </div>
+            {node.kind === 'state' &&
+                (nodes.length === 1 ? (
+                    <ScoreGraphNoteBody node={node} />
+                ) : (
+                    <ScoreGraphSequenceSummary nodes={nodes} />
+                ))}
             {node.kind === 'transform_push' && node.transforms && node.transforms.length > 0 && (
                 <div className="score-graph-node__expr">
                     {node.transforms.map((t, i) => (
@@ -103,6 +145,9 @@ function ScoreGraphNode({ data }: NodeProps) {
             )}
             {node.kind === 'join' && node.joinArity !== undefined && (
                 <div className="score-graph-node__arity">arity: {node.joinArity}</div>
+            )}
+            {node.kind === 'branch' && node.cond && (
+                <div className="score-graph-node__expr">{expr_to_string(node.cond)}</div>
             )}
         </div>
     );
@@ -207,20 +252,68 @@ async function layout_nodes(nodes: Node[], edges: Edge[]): Promise<Node[]> {
     });
 }
 
-function graph_to_flow(graph: ScoreGraph): { nodes: Node[]; edges: Edge[] } {
-    const nodes: Node[] = graph.nodes.map((n) => ({
-        id: String(n.id),
+// Consecutive `state` nodes with no transforms (or anything else) between them -
+// i.e. a straight chain A -> B -> C where each step is the only way in and out -
+// are compacted into a single flow node, so a long melody doesn't turn into a
+// wall of identical-looking boxes.
+function compact_flow_graph(graph: ScoreGraph): { nodes: Node[]; edges: Edge[] } {
+    const nodes_by_id = new Map(graph.nodes.map((n) => [n.id, n]));
+    const in_degree = new Map<number, number>();
+    for (const n of graph.nodes)
+        for (const target of n.next) in_degree.set(target, (in_degree.get(target) ?? 0) + 1);
+
+    // chain_prev.get(target) === source means source -> target is a compactable link.
+    const chain_prev = new Map<number, number>();
+    for (const n of graph.nodes) {
+        if (n.kind !== 'state' || n.next.length !== 1) continue;
+        const target = nodes_by_id.get(n.next[0]);
+        if (target && target.kind === 'state' && (in_degree.get(target.id) ?? 0) === 1)
+            chain_prev.set(target.id, n.id);
+    }
+
+    const representative = new Map<number, number>(); // node id -> id of the flow node it belongs to
+    const groups = new Map<number, GraphNode[]>(); // flow node id -> its chain of original nodes
+
+    for (const n of graph.nodes) {
+        if (chain_prev.has(n.id)) continue; // mid-chain node, picked up by its chain's start below
+        const group: GraphNode[] = [n];
+        representative.set(n.id, n.id);
+        let cur = n;
+        for (;;) {
+            if (cur.kind !== 'state' || cur.next.length !== 1) break;
+            const next_id = cur.next[0];
+            if (chain_prev.get(next_id) !== cur.id) break;
+            const next_node = nodes_by_id.get(next_id);
+            if (!next_node) break;
+            group.push(next_node);
+            representative.set(next_id, n.id);
+            cur = next_node;
+        }
+        groups.set(n.id, group);
+    }
+
+    const nodes: Node[] = [...groups.entries()].map(([start_id, group]) => ({
+        id: String(start_id),
         type: 'score_node',
         position: { x: 0, y: 0 },
-        data: { node: n },
+        data: { nodes: group },
     }));
+
     const edges: Edge[] = [];
+    const seen_edges = new Set<string>();
     for (const n of graph.nodes) {
+        const source_rep = representative.get(n.id);
+        if (source_rep === undefined) continue;
         for (const target of n.next) {
+            const target_rep = representative.get(target);
+            if (target_rep === undefined || target_rep === source_rep) continue;
+            const edge_id = `${source_rep}->${target_rep}`;
+            if (seen_edges.has(edge_id)) continue;
+            seen_edges.add(edge_id);
             edges.push({
-                id: `${n.id}->${target}`,
-                source: String(n.id),
-                target: String(target),
+                id: edge_id,
+                source: String(source_rep),
+                target: String(target_rep),
                 type: 'floating',
                 animated: false,
                 markerEnd: { type: MarkerType.ArrowClosed },
@@ -230,21 +323,24 @@ function graph_to_flow(graph: ScoreGraph): { nodes: Node[]; edges: Edge[] } {
     return { nodes, edges };
 }
 
-function ScoreGraphViewInner({ source }: Props) {
+function ScoreGraphViewInner({ source, bpm }: Props) {
     const [nodes, set_nodes, on_nodes_change] = useNodesState<Node>([]);
     const [edges, set_edges] = useState<Edge[]>([]);
     const [error, set_error] = useState<string | null>(null);
     const [measured_once, set_measured_once] = useState(false);
+    const [graph, set_graph] = useState<ScoreGraph | null>(null);
+    const [piano_roll_node_id, set_piano_roll_node_id] = useState<number | null>(null);
     const rf = useReactFlow();
 
     const redraw = useCallback(() => {
         ScoreWasm.compile_score(source)
-            .then(async (graph) => {
-                const { nodes: flow_nodes, edges: flow_edges } = graph_to_flow(graph);
+            .then(async (compiled) => {
+                const { nodes: flow_nodes, edges: flow_edges } = compact_flow_graph(compiled);
                 const positioned = await layout_nodes(flow_nodes, flow_edges);
                 set_measured_once(false);
                 set_nodes(positioned);
                 set_edges(flow_edges);
+                set_graph(compiled);
                 set_error(null);
             })
             .catch((e: unknown) => {
@@ -279,6 +375,7 @@ function ScoreGraphViewInner({ source }: Props) {
                     nodes={nodes}
                     edges={edges}
                     onNodesChange={on_nodes_change}
+                    onNodeDoubleClick={(_event, node) => set_piano_roll_node_id(Number(node.id))}
                     nodeTypes={NODE_TYPES}
                     edgeTypes={EDGE_TYPES}
                     fitView
@@ -286,6 +383,14 @@ function ScoreGraphViewInner({ source }: Props) {
                 >
                     <Controls showZoom={false} showInteractive={false} />
                 </ReactFlow>
+            )}
+            {graph && piano_roll_node_id !== null && (
+                <ScorePianoRoll
+                    graph={graph}
+                    start_node_id={piano_roll_node_id}
+                    bpm={bpm}
+                    on_close={() => set_piano_roll_node_id(null)}
+                />
             )}
         </div>
     );

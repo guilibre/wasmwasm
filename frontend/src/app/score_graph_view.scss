@@ -89,10 +89,10 @@
     }
 
     &__params {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 0.2rem;
-        justify-content: left;
+        display: grid;
+        grid-template-columns: repeat(3, auto);
+        gap: 0.1rem 0.2rem;
+        justify-content: start;
     }
 
     &__param {
@@ -110,6 +110,12 @@
     }
 
     &__arity {
+        font-size: 0.4rem;
+        color: #546e7a;
+        user-select: none;
+    }
+
+    &__summary {
         font-size: 0.4rem;
         color: #546e7a;
         user-select: none;
