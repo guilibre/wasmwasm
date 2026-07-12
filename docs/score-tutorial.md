@@ -11,8 +11,8 @@ It assumes you already have at least one instrument (see
 play C;
 ```
 
-`C` is one of the [built-in note constants](score-language.md#built-in-notes)
-- an atomic value with a `freq` and a `dur`, but no instrument. Nothing will
+`C` is one of the [built-in note constants](score-language.md#built-in-notes),
+an atomic value with a `freq` and a `dur`, but no instrument. Nothing will
 actually sound yet, because no instrument is attached.
 
 ## 2. Attach an instrument
@@ -70,12 +70,12 @@ play melody & bass;
 
 ## 7. Transform pitch dynamically
 
-`transform ... by ...` rewrites a parameter for everything inside it, and
-can reference the parameter's current value:
+`@{field: expr; ...}` rewrites parameters for everything inside it, and each
+field's expression can reference that parameter's current value:
 
 ```SCORE
 melody = (C E G C)@{instrument: "Lead"}!1/2;
-play melody |> transform freq by freq * 2;
+play melody@{freq: freq * 2};
 ```
 
 This plays the same melody an octave up (equivalent to appending `'` to each
@@ -98,9 +98,9 @@ it. Combined with self-reference (step 8), this lets a loop stop instead of
 running forever:
 
 ```SCORE
-verse = (C E G C)@{instrument: "Lead", count: 0}!1/2;
+verse = (C E G C)@{instrument: "Lead"; count: 0}!1/2;
 outro = (C, C,)@{instrument: "Lead"}!2;
-song = verse choose count < 3 (song |> transform count by count + 1) outro;
+song = verse choose count < 3 (song@{count: count + 1}) outro;
 
 play song;
 ```

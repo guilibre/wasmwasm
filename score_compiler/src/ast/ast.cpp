@@ -110,6 +110,10 @@ void print_term(const Term &term, std::string &out) {
         print_comp_expr(*term.branches[1], out);
         return;
     }
+    if (term.kind == Term::Kind::Emit) {
+        out += "emit \"" + term.rhs_name + "\" {block}";
+        return;
+    }
     if (term.kind == Term::Kind::Pipe) {
         print_comp_expr(*term.lhs_expr, out);
         switch (term.pipe_op) {
@@ -120,9 +124,8 @@ void print_term(const Term &term, std::string &out) {
             out += " |> repeat ";
             print_expr(*term.pipe_expr, out);
             break;
-        case Term::PipeOp::Transform:
-            out += " |> transform " + term.pipe_param_name + " by ";
-            print_expr(*term.pipe_expr, out);
+        case Term::PipeOp::Listen:
+            out += " |> listen \"" + term.rhs_name + "\"";
             break;
         }
         return;

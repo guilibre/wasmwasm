@@ -1,5 +1,12 @@
 export type NodeKind =
-    'state' | 'fork' | 'join' | 'passthrough' | 'transform_push' | 'transform_pop' | 'branch';
+    | 'state'
+    | 'fork'
+    | 'join'
+    | 'passthrough'
+    | 'transform_push'
+    | 'transform_pop'
+    | 'branch'
+    | 'signal_emit';
 
 export type BinOp =
     | 'add'
@@ -37,7 +44,9 @@ export interface GraphNode {
     joinArity?: number;
     transforms?: TransformEntry[];
     pushInstrument?: string;
+    listenChannel?: string;
     cond?: ExprNode;
+    signalId?: string;
     next: number[];
 }
 
@@ -83,6 +92,12 @@ export type InstrumentCallbackMap = Record<string, new () => InstrumentCallbackH
 interface ActiveTransformFrame {
     transforms: TransformEntry[];
     pushInstrument?: string;
+    listenChannel?: string;
+}
+
+interface SignalMessage {
+    params: Record<string, number>;
+    instrument?: string;
 }
 
 interface Token {
@@ -176,6 +191,7 @@ export class Conductor {
     private tokens: Token[] = [];
     private join_arrivals: Map<number, number> = new Map();
     private legato_voices: Map<number, { instance_id: number; instrument_id: string }> = new Map();
+    private signals: Map<string, SignalMessage> = new Map();
 
     constructor(
         graph: ScoreGraph,
@@ -333,8 +349,22 @@ export class Conductor {
             if (node.kind === 'transform_push') {
                 token.transform_stack = [
                     ...token.transform_stack,
-                    { transforms: node.transforms ?? [], pushInstrument: node.pushInstrument },
+                    {
+                        transforms: node.transforms ?? [],
+                        pushInstrument: node.pushInstrument,
+                        listenChannel: node.listenChannel,
+                    },
                 ];
+                if (node.next.length === 0) return [];
+                node_id = node.next[0];
+                continue;
+            }
+
+            if (node.kind === 'signal_emit') {
+                this.signals.set(node.signalId!, {
+                    params: node.params ?? {},
+                    instrument: node.instrument,
+                });
                 if (node.next.length === 0) return [];
                 node_id = node.next[0];
                 continue;
@@ -393,11 +423,19 @@ export class Conductor {
         let instrument = node.instrument;
         for (let i = token.transform_stack.length - 1; i >= 0; i--) {
             const frame = token.transform_stack[i];
-            for (const transform of frame.transforms) {
-                const value = eval_expr(transform.expr, this.to_seconds_params(params));
-                params = { ...params };
-                if (value === null) delete params[transform.paramName];
-                else params[transform.paramName] = value;
+            if (frame.listenChannel !== undefined) {
+                const message = this.signals.get(frame.listenChannel);
+                if (message) {
+                    params = { ...params, ...message.params };
+                    if (message.instrument !== undefined) instrument = message.instrument;
+                }
+            } else {
+                for (const transform of frame.transforms) {
+                    const value = eval_expr(transform.expr, this.to_seconds_params(params));
+                    params = { ...params };
+                    if (value === null) delete params[transform.paramName];
+                    else params[transform.paramName] = value;
+                }
             }
             if (frame.pushInstrument !== undefined) instrument = frame.pushInstrument;
         }

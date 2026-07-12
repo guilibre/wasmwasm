@@ -63,6 +63,7 @@ const KIND_LABEL: Record<GraphNode['kind'], string> = {
     transform_push: 'push',
     transform_pop: 'pop',
     branch: 'choose',
+    signal_emit: 'emit',
 };
 
 function ScoreGraphNoteBody({ node }: { node: GraphNode }) {
@@ -143,11 +144,20 @@ function ScoreGraphNode({ data }: NodeProps) {
             {node.kind === 'transform_push' && node.pushInstrument && (
                 <div className="score-graph-node__instrument">{node.pushInstrument}</div>
             )}
+            {node.kind === 'transform_push' && node.listenChannel && (
+                <div className="score-graph-node__expr">listen "{node.listenChannel}"</div>
+            )}
             {node.kind === 'join' && node.joinArity !== undefined && (
                 <div className="score-graph-node__arity">arity: {node.joinArity}</div>
             )}
             {node.kind === 'branch' && node.cond && (
                 <div className="score-graph-node__expr">{expr_to_string(node.cond)}</div>
+            )}
+            {node.kind === 'signal_emit' && (
+                <>
+                    <div className="score-graph-node__expr">"{node.signalId}"</div>
+                    <ScoreGraphNoteBody node={node} />
+                </>
             )}
         </div>
     );
@@ -252,17 +262,12 @@ async function layout_nodes(nodes: Node[], edges: Edge[]): Promise<Node[]> {
     });
 }
 
-// Consecutive `state` nodes with no transforms (or anything else) between them -
-// i.e. a straight chain A -> B -> C where each step is the only way in and out -
-// are compacted into a single flow node, so a long melody doesn't turn into a
-// wall of identical-looking boxes.
 function compact_flow_graph(graph: ScoreGraph): { nodes: Node[]; edges: Edge[] } {
     const nodes_by_id = new Map(graph.nodes.map((n) => [n.id, n]));
     const in_degree = new Map<number, number>();
     for (const n of graph.nodes)
         for (const target of n.next) in_degree.set(target, (in_degree.get(target) ?? 0) + 1);
 
-    // chain_prev.get(target) === source means source -> target is a compactable link.
     const chain_prev = new Map<number, number>();
     for (const n of graph.nodes) {
         if (n.kind !== 'state' || n.next.length !== 1) continue;
@@ -271,11 +276,11 @@ function compact_flow_graph(graph: ScoreGraph): { nodes: Node[]; edges: Edge[] }
             chain_prev.set(target.id, n.id);
     }
 
-    const representative = new Map<number, number>(); // node id -> id of the flow node it belongs to
-    const groups = new Map<number, GraphNode[]>(); // flow node id -> its chain of original nodes
+    const representative = new Map<number, number>();
+    const groups = new Map<number, GraphNode[]>();
 
     for (const n of graph.nodes) {
-        if (chain_prev.has(n.id)) continue; // mid-chain node, picked up by its chain's start below
+        if (chain_prev.has(n.id)) continue;
         const group: GraphNode[] = [n];
         representative.set(n.id, n.id);
         let cur = n;
@@ -329,7 +334,10 @@ function ScoreGraphViewInner({ source, bpm }: Props) {
     const [error, set_error] = useState<string | null>(null);
     const [measured_once, set_measured_once] = useState(false);
     const [graph, set_graph] = useState<ScoreGraph | null>(null);
-    const [piano_roll_node_id, set_piano_roll_node_id] = useState<number | null>(null);
+    const [piano_roll_target, set_piano_roll_target] = useState<{
+        start_id: number;
+        stop_id: number;
+    } | null>(null);
     const rf = useReactFlow();
 
     const redraw = useCallback(() => {
@@ -375,7 +383,13 @@ function ScoreGraphViewInner({ source, bpm }: Props) {
                     nodes={nodes}
                     edges={edges}
                     onNodesChange={on_nodes_change}
-                    onNodeDoubleClick={(_event, node) => set_piano_roll_node_id(Number(node.id))}
+                    onNodeDoubleClick={(_event, node) => {
+                        const chain = node.data.nodes as GraphNode[];
+                        set_piano_roll_target({
+                            start_id: chain[0].id,
+                            stop_id: chain[chain.length - 1].id,
+                        });
+                    }}
                     nodeTypes={NODE_TYPES}
                     edgeTypes={EDGE_TYPES}
                     fitView
@@ -384,12 +398,13 @@ function ScoreGraphViewInner({ source, bpm }: Props) {
                     <Controls showZoom={false} showInteractive={false} />
                 </ReactFlow>
             )}
-            {graph && piano_roll_node_id !== null && (
+            {graph && piano_roll_target && (
                 <ScorePianoRoll
                     graph={graph}
-                    start_node_id={piano_roll_node_id}
+                    start_node_id={piano_roll_target.start_id}
+                    stop_after_node_id={piano_roll_target.stop_id}
                     bpm={bpm}
-                    on_close={() => set_piano_roll_node_id(null)}
+                    on_close={() => set_piano_roll_target(null)}
                 />
             )}
         </div>

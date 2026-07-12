@@ -29,14 +29,14 @@ auto make(TokenKind kind, std::string lexeme, size_t line, size_t column)
 
 auto Token::to_string() const -> std::string {
     static constexpr std::array<const char *, 42> names = {
-        "Ident",     "Number",    "String",    "Equals",      "Colon",
-        "Semicolon", "Plus",      "Minus",     "Star",        "Slash",
-        "Percent",   "LBrace",    "RBrace",    "LParen",      "RParen",
-        "LBracket",  "RBracket",  "Comma",     "Tick",        "Tilde",
-        "Caret",     "At",        "Ampersand", "Pipe",        "Bang",
-        "Question",  "EqEq",      "NotEq",     "Less",        "Greater",
-        "LessEq",    "GreaterEq", "KwPlay",    "KwTransform", "KwBy",
-        "KwNull",    "KwReverse", "KwRepeat",  "KwChoose",    "Or",
+        "Ident",     "Number",    "String",    "Equals",   "Colon",
+        "Semicolon", "Plus",      "Minus",     "Star",     "Slash",
+        "Percent",   "LBrace",    "RBrace",    "LParen",   "RParen",
+        "LBracket",  "RBracket",  "Comma",     "Tick",     "Tilde",
+        "Caret",     "At",        "Ampersand", "Pipe",     "Bang",
+        "Question",  "EqEq",      "NotEq",     "Less",     "Greater",
+        "LessEq",    "GreaterEq", "KwPlay",    "KwNull",   "KwReverse",
+        "KwRepeat",  "KwChoose",  "KwEmit",    "KwListen", "Or",
         "Eof",       "Invalid",
     };
     std::string out = names[static_cast<uint8_t>(kind)];
@@ -95,9 +95,6 @@ auto Tokenizer::scan_identifier() -> Token {
     if (peek_current() == '#') advance();
     const std::string lexeme(source.substr(start, current - start));
     if (lexeme == "play") return make(TokenKind::KwPlay, lexeme, line, column);
-    if (lexeme == "transform")
-        return make(TokenKind::KwTransform, lexeme, line, column);
-    if (lexeme == "by") return make(TokenKind::KwBy, lexeme, line, column);
     if (lexeme == "null") return make(TokenKind::KwNull, lexeme, line, column);
     if (lexeme == "reverse")
         return make(TokenKind::KwReverse, lexeme, line, column);
@@ -105,6 +102,9 @@ auto Tokenizer::scan_identifier() -> Token {
         return make(TokenKind::KwRepeat, lexeme, line, column);
     if (lexeme == "choose")
         return make(TokenKind::KwChoose, lexeme, line, column);
+    if (lexeme == "emit") return make(TokenKind::KwEmit, lexeme, line, column);
+    if (lexeme == "listen")
+        return make(TokenKind::KwListen, lexeme, line, column);
     return make(TokenKind::Ident, lexeme, line, column);
 }
 

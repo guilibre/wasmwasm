@@ -23,7 +23,7 @@ auto is_transparent(const GraphNode &node) -> bool {
     if (node.kind == NodeKind::Fork) return true;
     if (node.kind == NodeKind::Join && node.join_arity == 1) return true;
     if (node.kind == NodeKind::TransformPush && node.transforms.empty() &&
-        !node.push_instrument)
+        !node.push_instrument && !node.listen_channel)
         return true;
     return false;
 }
@@ -417,7 +417,8 @@ auto structural_cse(ExpandedGraph &graph) -> bool {
         if (graph.nodes[id].kind == NodeKind::Join ||
             graph.nodes[id].kind == NodeKind::TransformPush ||
             graph.nodes[id].kind == NodeKind::TransformPop ||
-            graph.nodes[id].kind == NodeKind::Branch)
+            graph.nodes[id].kind == NodeKind::Branch ||
+            graph.nodes[id].kind == NodeKind::SignalEmit)
             part[id] = n + id;
 
     std::unordered_map<size_t, size_t> representative;

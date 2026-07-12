@@ -16,7 +16,8 @@ enum class NodeKind : uint8_t {
     Passthrough,
     TransformPush,
     TransformPop,
-    Branch
+    Branch,
+    SignalEmit
 };
 
 struct TransformEntry {
@@ -34,6 +35,8 @@ struct GraphNode {
     std::vector<TransformEntry> transforms;
     std::optional<std::string> push_instrument;
     const Expr *branch_cond = nullptr;
+    std::optional<std::string> signal_id;
+    std::optional<std::string> listen_channel;
 };
 
 struct ExpandedGraph {

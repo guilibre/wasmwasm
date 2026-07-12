@@ -103,12 +103,19 @@ export class ScoreTracer {
     private readonly graph: ScoreGraph;
     private readonly bpm: number;
     private readonly start_node_id: number;
+    private readonly stop_after_node_id: number | undefined;
     private readonly nodes_by_id: Map<number, GraphNode>;
 
-    constructor(graph: ScoreGraph, bpm: number, start_node_id: number) {
+    constructor(
+        graph: ScoreGraph,
+        bpm: number,
+        start_node_id: number,
+        stop_after_node_id?: number,
+    ) {
         this.graph = graph;
         this.bpm = bpm;
         this.start_node_id = start_node_id;
+        this.stop_after_node_id = stop_after_node_id;
         this.nodes_by_id = new Map(graph.nodes.map((n) => [n.id, n]));
     }
 
@@ -120,6 +127,7 @@ export class ScoreTracer {
         let cyclic = false;
         let truncated = false;
         let hit_cap = false;
+        let reached_stop = false;
 
         const spawn_from_fork = (parent: SimToken, branch_node_id: number): SimToken => ({
             node_id: branch_node_id,
@@ -131,10 +139,6 @@ export class ScoreTracer {
             own_visited: new Set(),
         });
 
-        // Walks one token forward through "instant" (zero-duration) graph nodes
-        // until it settles at a `state` (returned so the caller can schedule its
-        // continuation), a dead end (empty array), or - for the root token only -
-        // a detected cycle boundary.
         const walk = (token: SimToken): SimToken[] => {
             const local_visited = new Set<number>();
             for (;;) {
@@ -184,6 +188,14 @@ export class ScoreTracer {
                     token.params = params;
                     token.node_id = node.id;
                     token.time += dur_seconds;
+
+                    if (
+                        this.stop_after_node_id !== undefined &&
+                        node.id === this.stop_after_node_id
+                    ) {
+                        reached_stop = true;
+                        return [];
+                    }
                     return [token];
                 }
 
@@ -227,7 +239,6 @@ export class ScoreTracer {
                     continue;
                 }
 
-                // join
                 const arrived = (join_arrivals.get(node.id) ?? 0) + 1;
                 const arity = node.joinArity ?? 1;
                 if (arrived < arity) {
@@ -267,7 +278,7 @@ export class ScoreTracer {
             live.push(...walk(token));
         }
 
-        if (!cyclic) {
+        if (!cyclic || reached_stop) {
             return {
                 kind: 'linear',
                 events: events.map(strip_cycle_index),

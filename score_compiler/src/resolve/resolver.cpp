@@ -119,12 +119,14 @@ struct ExpansionContext {
 auto fold_expr(const Expr &expr) -> double {
     if (expr.kind == Expr::Kind::Number) return expr.number;
     if (expr.kind == Expr::Kind::Ident)
-        throw ResolveException("identifier '" + expr.ident_name +
-                                   "' is only allowed in a pipe expression",
-                               expr.line, expr.column);
+        throw ResolveException(
+            "identifier '" + expr.ident_name +
+                "' is only allowed in a '@{...}' field value",
+            expr.line, expr.column);
     if (expr.kind == Expr::Kind::Null)
-        throw ResolveException("'null' is only allowed in a pipe expression",
-                               expr.line, expr.column);
+        throw ResolveException(
+            "'null' is only allowed in a '@{...}' field value", expr.line,
+            expr.column);
     if (expr.kind == Expr::Kind::Ternary)
         return fold_expr(*expr.ternary_cond) != 0
                    ? fold_expr(*expr.ternary_then)
@@ -364,25 +366,40 @@ auto expand_term(const Term &term, ExpansionContext &ctx) -> Piece {
         };
     }
 
+    if (term.kind == Term::Kind::Emit) {
+        const auto id = ctx.alloc(NodeKind::SignalEmit);
+        for (auto &[key, value] : fold_block_params(term.block_lit.params, ctx))
+            ctx.nodes[id].params[key] = value;
+        ctx.nodes[id].instrument = term.block_lit.instrument;
+        ctx.nodes[id].signal_id = term.rhs_name;
+        return Piece{
+            .entry_id = id,
+            .exit_id = id,
+            .members = make_members({id}),
+            .open_passthrough = {},
+        };
+    }
+
     if (term.kind == Term::Kind::AtomicJoin) {
         const auto lhs_piece = expand_comp_expr(*term.lhs_expr, ctx);
 
-        AtomicResult b;
+        const auto push_id = ctx.alloc(NodeKind::TransformPush);
         if (term.rhs_is_block) {
-            b = resolve_atomic_from_block(term.rhs_block, ctx);
+            for (const auto &param : term.rhs_block.params)
+                ctx.nodes[push_id].transforms.push_back(TransformEntry{
+                    .param_name = param.name, .expr = param.value.get()});
+            ctx.nodes[push_id].push_instrument = term.rhs_block.instrument;
         } else {
             std::unordered_set<std::string> visiting_rhs;
-            b = resolve_atomic(term.rhs_name, term.line, term.column, ctx,
-                               visiting_rhs);
+            const auto b = resolve_atomic(term.rhs_name, term.line, term.column,
+                                          ctx, visiting_rhs);
+            for (const auto &[key, value] : b.params) {
+                ctx.owned_exprs.push_back(make_expr(value));
+                ctx.nodes[push_id].transforms.push_back(TransformEntry{
+                    .param_name = key, .expr = ctx.owned_exprs.back().get()});
+            }
+            ctx.nodes[push_id].push_instrument = b.instrument;
         }
-
-        const auto push_id = ctx.alloc(NodeKind::TransformPush);
-        for (auto &[key, value] : b.params) {
-            ctx.owned_exprs.push_back(make_expr(value));
-            ctx.nodes[push_id].transforms.push_back(TransformEntry{
-                .param_name = key, .expr = ctx.owned_exprs.back().get()});
-        }
-        ctx.nodes[push_id].push_instrument = b.instrument;
         ctx.nodes[push_id].next.push_back(lhs_piece.entry_id);
 
         if (lhs_piece.exit_unreachable) {
@@ -509,37 +526,40 @@ auto expand_term(const Term &term, ExpansionContext &ctx) -> Piece {
             };
         }
 
-        const auto push_id = ctx.alloc(NodeKind::TransformPush);
-        ctx.nodes[push_id].transforms.push_back(TransformEntry{
-            .param_name = term.pipe_param_name, .expr = term.pipe_expr.get()});
+        if (term.pipe_op == Term::PipeOp::Listen) {
+            const auto push_id = ctx.alloc(NodeKind::TransformPush);
+            ctx.nodes[push_id].listen_channel = term.rhs_name;
 
-        const auto lhs_piece = expand_comp_expr(*term.lhs_expr, ctx);
-        ctx.nodes[push_id].next.push_back(lhs_piece.entry_id);
+            const auto lhs_piece = expand_comp_expr(*term.lhs_expr, ctx);
+            ctx.nodes[push_id].next.push_back(lhs_piece.entry_id);
 
-        if (lhs_piece.exit_unreachable) {
-            const auto members = make_members({push_id});
+            if (lhs_piece.exit_unreachable) {
+                const auto members = make_members({push_id});
+                merge_members(members, lhs_piece.members);
+                return Piece{
+                    .entry_id = push_id,
+                    .exit_id = lhs_piece.exit_id,
+                    .members = members,
+                    .open_passthrough = lhs_piece.open_passthrough,
+                    .exit_unreachable = true,
+                };
+            }
+
+            const auto pop_id = ctx.alloc(NodeKind::TransformPop);
+            link_after(ctx.nodes, lhs_piece, pop_id);
+            ctx.transform_pop_of_push[push_id] = pop_id;
+
+            const auto members = make_members({push_id, pop_id});
             merge_members(members, lhs_piece.members);
             return Piece{
                 .entry_id = push_id,
-                .exit_id = lhs_piece.exit_id,
+                .exit_id = pop_id,
                 .members = members,
                 .open_passthrough = lhs_piece.open_passthrough,
-                .exit_unreachable = true,
             };
         }
 
-        const auto pop_id = ctx.alloc(NodeKind::TransformPop);
-        link_after(ctx.nodes, lhs_piece, pop_id);
-        ctx.transform_pop_of_push[push_id] = pop_id;
-
-        const auto members = make_members({push_id, pop_id});
-        merge_members(members, lhs_piece.members);
-        return Piece{
-            .entry_id = push_id,
-            .exit_id = pop_id,
-            .members = members,
-            .open_passthrough = lhs_piece.open_passthrough,
-        };
+        throw ResolveException("unknown pipe operator", term.line, term.column);
     }
 
     std::vector<Piece> branches;

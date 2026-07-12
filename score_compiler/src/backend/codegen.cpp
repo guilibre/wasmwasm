@@ -33,6 +33,8 @@ auto node_kind_name(NodeKind kind) -> std::string {
         return "transform_pop";
     case NodeKind::Branch:
         return "branch";
+    case NodeKind::SignalEmit:
+        return "signal_emit";
     }
     return "state";
 }
@@ -96,9 +98,24 @@ void write_node(const GraphNode &node, std::string &out) {
         out += "]";
         if (node.push_instrument)
             out += ",\"pushInstrument\":" + json_string(*node.push_instrument);
+        if (node.listen_channel)
+            out += ",\"listenChannel\":" + json_string(*node.listen_channel);
     }
     if (node.kind == NodeKind::Branch)
         out += ",\"cond\":" + expr_to_json(*node.branch_cond);
+    if (node.kind == NodeKind::SignalEmit) {
+        out += ",\"signalId\":" + json_string(*node.signal_id);
+        out += ",\"params\":{";
+        bool first = true;
+        for (const auto &[name, value] : node.params) {
+            if (!first) out += ",";
+            first = false;
+            out += json_string(name) + ":" + format_number(value);
+        }
+        out += "}";
+        if (node.instrument)
+            out += ",\"instrument\":" + json_string(*node.instrument);
+    }
     out += ",\"next\":[";
     for (size_t i = 0; i < node.next.size(); ++i) {
         if (i != 0) out += ",";

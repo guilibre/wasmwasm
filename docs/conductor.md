@@ -21,15 +21,16 @@ gt lte gte and or`, matching the score language's
 
 A graph node has a `kind`:
 
-| kind             | meaning                                               |
-| ---------------- | ------------------------------------------------------ |
-| `state`          | a single instrument event (`params`, optional `instrument`) |
-| `fork`           | spawns one token per outgoing branch                  |
-| `join`           | waits for `joinArity` incoming tokens before continuing |
-| `passthrough`    | plumbing node (self-reference loops), no-op at runtime |
-| `transform_push` | pushes a parameter transform onto the token's stack   |
-| `transform_pop`  | pops the most recent transform                        |
+| kind             | meaning                                                                                                                                                                        |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `state`          | a single instrument event (`params`, optional `instrument`)                                                                                                                    |
+| `fork`           | spawns one token per outgoing branch                                                                                                                                           |
+| `join`           | waits for `joinArity` incoming tokens before continuing                                                                                                                        |
+| `passthrough`    | plumbing node (self-reference loops), no-op at runtime                                                                                                                         |
+| `transform_push` | pushes a parameter transform onto the token's stack - compiled from [`@{...}`](score-language.md#atomic-join---), or (with `listenChannel` instead of `transforms`) from [`listen`](score-language.md#listen) |
+| `transform_pop`  | pops the most recent transform                                                                                                                                                 |
 | `branch`         | evaluates `cond` (an `ExprNode`) against the token's current params, then follows `next[0]` if true or `next[1]` if false - compiled from [`choose`](score-language.md#choose) |
+| `signal_emit`    | writes `params`/`instrument` to the global `signalId` mailbox, then continues - compiled from [`emit`](score-language.md#emit)                                                 |
 
 `ScoreGraph.entries` lists one node-id list per `play` statement - the
 starting points for tokens when playback begins.
@@ -68,10 +69,14 @@ forever inside that call.
 
 When a token reaches a `state` node (`enter_state`):
 
-1. Its `transform_stack` is applied outermost-in: each active `transform`
-   entry re-evaluates its expression against the current params and
-   overwrites (or, if it evaluates to `null`, deletes) that parameter; the
-   most recently pushed `pushInstrument` wins.
+1. Its `transform_stack` is applied outermost-in: each active frame either
+   re-evaluates its `transform` entries against the current params and
+   overwrites (or, if an entry evaluates to `null`, deletes) that parameter,
+   or - if the frame has a `listenChannel` instead - merges in whatever
+   `params`/`instrument` are currently in `Conductor`'s `signals` map under
+   that channel (see [Signals](#signals) below), with no effect if that
+   channel has never been written to; the most recently pushed
+   `pushInstrument` wins over either.
 2. `dur` (in beats) is converted to seconds using the current BPM
    (`60 * dur / bpm`) and added to the token's `seconds_remaining`.
 3. If an instrument is set, `Conductor` calls `instantiate(id)` on that
@@ -96,6 +101,27 @@ of being retriggered. `instantiate` only runs for the first note of a chain
 `legato: 0` removes it, since the chain ends there. If a chain's instrument
 name were to change mid-chain, the voice isn't reused (a fresh `instantiate`
 runs instead) to avoid handing one instrument's voice to another.
+
+## Signals
+
+`Conductor` keeps a single `signals: Map<string, {params, instrument?}>`,
+global for the whole graph and the whole run - not scoped to a token, a
+`play` statement, or a `repeat`/`reverse` copy. A `signal_emit` node
+(compiled from [`emit`](score-language.md#emit)) writes to it (last write
+wins, whichever token reaches it first in real time); a `transform_push`
+frame with `listenChannel` set (compiled from
+[`listen`](score-language.md#listen)) reads from it in `enter_state`, as
+described above. This is the only channel through which two independent
+tokens - two `play` machines, or two `fork`/`&` branches that never rejoin -
+can affect each other's params at runtime; everything else in the graph is
+local to a single token's lineage.
+
+Because reads happen live against whatever the map currently holds, the
+same score can resolve a `listen` differently across runs (or across small
+edits to unrelated timing) if it changes which voice's `emit` lands first -
+this is expected, not a bug: `emit`/`listen` is explicitly for live,
+order-dependent coupling between voices, unlike the compile-time-resolved
+`@{...}`.
 
 ## Wiring instruments in
 
@@ -184,3 +210,35 @@ or scale definitions change.
   `InstrumentCallbackHandler`/`GlobalCallbackHandler` code.
 - `instrument_tabs.tsx` - switching between and managing multiple instruments
   within a project.
+
+### Graph view and piano roll
+
+`score_graph_view.tsx` renders the compiled `ScoreGraph` as a node diagram
+(ReactFlow/ELK). To keep long melodies readable, consecutive `state` nodes
+with nothing but a straight, single-entry/single-exit link between them
+(no `fork`/`join`/`branch`/`transform_push`/`transform_pop` in the way) are
+compacted into one visual box showing a short summary (instrument, note
+count, total duration) instead of every note.
+
+Double-clicking a node opens a **piano roll** (`score_piano_roll.tsx`) -
+a `<canvas>` view with time on the X axis and pitch (`-log2(freq)`) on the
+Y axis, colored by instrument. It's built by *simulating* playback from that
+node with `ScoreTracer` (`frontend/src/audio/score_timeline.ts`) - a dry-run
+reimplementation of `Conductor`'s `walk_forward`/`enter_state` (no
+`AudioContext`, no instrument instantiation) that records `{start_seconds,
+dur_seconds, freq, instrument, params}` events instead:
+
+- If the double-clicked node was a compacted box, the trace stops right
+  after that box's last node, so the piano roll shows only what's
+  compacted there - not everything that plays afterward.
+- If the graph loops back through a `state` the trace has already seen (a
+  self-referential composition, see
+  [Self-reference](score-language.md#self-reference-loops) and
+  [choose](score-language.md#choose)), the trace instead reports a single
+  **cycle** of events (one lap through the loop, with its `transform_stack`
+  carried over exactly as it would be at runtime, so parameters that evolve
+  across iterations - e.g. a `choose` loop counter - show their real value)
+  rather than looping forever. Rests/silent states (no `instrument`, or no
+  resolvable `freq`) are filtered out before drawing, since they aren't
+  notes. Safety caps (`MAX_EVENTS`, `MAX_CYCLES`, `MAX_TOKEN_STEPS`) bound
+  the simulation so a runaway score can't hang the tab.

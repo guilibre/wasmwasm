@@ -95,8 +95,10 @@ score_compiler/    C++ score compiler
   app/            Emscripten bindings
 frontend/         Vite + React frontend
   src/
-    app/          editor, oscilloscope, spectrogram, score/conductor panels, instrument tabs
-    audio/        Web Audio compiler and the Conductor score-graph interpreter
+    app/          editor, oscilloscope, spectrogram, score/conductor panels, instrument tabs,
+                  score graph view + piano roll
+    audio/        Web Audio compiler, the Conductor score-graph interpreter, and the
+                  dry-run score tracer used by the piano roll
     patch/        visual node-based routing editor
     scorewasm/    compiled score_compiler output
     wasmwasm/     compiled patch_compiler output

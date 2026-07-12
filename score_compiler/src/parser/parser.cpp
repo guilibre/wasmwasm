@@ -60,7 +60,8 @@ auto Parser::starts_term() const -> bool {
     return current.kind == TokenKind::Ident ||
            current.kind == TokenKind::LParen ||
            current.kind == TokenKind::LBrace ||
-           current.kind == TokenKind::KwChoose;
+           current.kind == TokenKind::KwChoose ||
+           current.kind == TokenKind::KwEmit;
 }
 
 auto Parser::parse_factor() -> std::unique_ptr<Expr> {
@@ -249,6 +250,10 @@ auto Parser::parse_comp_atom() -> Term {
         term.pipe_expr = parse_ternary();
         term.branches.push_back(wrap_as_comp_expr(parse_fork_term()));
         term.branches.push_back(wrap_as_comp_expr(parse_fork_term()));
+    } else if (match(TokenKind::KwEmit)) {
+        term.kind = Term::Kind::Emit;
+        term.rhs_name = expect(TokenKind::String, "signal id").lexeme;
+        term.block_lit = parse_block();
     } else {
         const auto &name = expect(TokenKind::Ident, "variable name");
         term.kind = Term::Kind::VarRef;
@@ -272,15 +277,14 @@ auto Parser::continue_octave_suffix(Term term) -> Term {
             return ident;
         };
 
-        const auto make_guarded_pipe = [&](const std::string &param_name,
+        const auto make_guarded_join = [&](const std::string &param_name,
                                            std::unique_ptr<Expr> new_value,
                                            Term inner) -> Term {
-            Term pipe;
-            pipe.kind = Term::Kind::Pipe;
-            pipe.pipe_op = Term::PipeOp::Transform;
-            pipe.line = inner.line;
-            pipe.column = inner.column;
-            pipe.pipe_param_name = param_name;
+            Term join;
+            join.kind = Term::Kind::AtomicJoin;
+            join.line = inner.line;
+            join.column = inner.column;
+            join.rhs_is_block = true;
 
             auto guarded = std::make_unique<Expr>();
             guarded->kind = Expr::Kind::Ternary;
@@ -289,19 +293,23 @@ auto Parser::continue_octave_suffix(Term term) -> Term {
             guarded->ternary_else = std::make_unique<Expr>();
             guarded->ternary_else->kind = Expr::Kind::Null;
 
-            pipe.pipe_expr = std::move(guarded);
-            pipe.lhs_expr = wrap_as_comp_expr(std::move(inner));
-            return pipe;
+            Param param;
+            param.name = param_name;
+            param.value = std::move(guarded);
+            join.rhs_block.params.push_back(std::move(param));
+
+            join.lhs_expr = wrap_as_comp_expr(std::move(inner));
+            return join;
         };
 
         auto freq_value = make_binary(BinOp::Mul, make_ident("freq"),
                                       make_number(is_up ? 2.0 : 0.5));
         term =
-            make_guarded_pipe("freq", std::move(freq_value), std::move(term));
+            make_guarded_join("freq", std::move(freq_value), std::move(term));
 
         auto octave_value = make_binary(is_up ? BinOp::Add : BinOp::Sub,
                                         make_ident("octave"), make_number(1.0));
-        term = make_guarded_pipe("octave", std::move(octave_value),
+        term = make_guarded_join("octave", std::move(octave_value),
                                  std::move(term));
     }
 
@@ -348,20 +356,15 @@ auto Parser::parse_pipe_suffix(std::unique_ptr<CompExpr> lhs) -> Term {
         return pipe;
     }
 
-    if (match(TokenKind::KwRepeat)) {
-        pipe.pipe_op = Term::PipeOp::Repeat;
-        pipe.pipe_expr = parse_ternary();
+    if (match(TokenKind::KwListen)) {
+        pipe.pipe_op = Term::PipeOp::Listen;
+        pipe.rhs_name = expect(TokenKind::String, "signal id").lexeme;
         return pipe;
     }
 
-    expect(TokenKind::KwTransform, "'transform'");
-    const auto &param = expect(TokenKind::Ident, "parameter name");
-    expect(TokenKind::KwBy, "'by'");
-    auto expr = parse_ternary();
-
-    pipe.pipe_op = Term::PipeOp::Transform;
-    pipe.pipe_param_name = param.lexeme;
-    pipe.pipe_expr = std::move(expr);
+    expect(TokenKind::KwRepeat, "'reverse', 'listen', or 'repeat'");
+    pipe.pipe_op = Term::PipeOp::Repeat;
+    pipe.pipe_expr = parse_ternary();
     return pipe;
 }
 
@@ -371,15 +374,18 @@ auto Parser::parse_bang_suffix(std::unique_ptr<CompExpr> lhs) -> Term {
     advance();
     auto expr = parse_ternary();
 
-    Term pipe;
-    pipe.kind = Term::Kind::Pipe;
-    pipe.pipe_op = Term::PipeOp::Transform;
-    pipe.line = line;
-    pipe.column = column;
-    pipe.lhs_expr = std::move(lhs);
-    pipe.pipe_param_name = "dur";
-    pipe.pipe_expr = std::move(expr);
-    return pipe;
+    Term join;
+    join.kind = Term::Kind::AtomicJoin;
+    join.line = line;
+    join.column = column;
+    join.lhs_expr = std::move(lhs);
+    join.rhs_is_block = true;
+
+    Param param;
+    param.name = "dur";
+    param.value = std::move(expr);
+    join.rhs_block.params.push_back(std::move(param));
+    return join;
 }
 
 auto Parser::continue_pipe_term(Term term) -> Term {
