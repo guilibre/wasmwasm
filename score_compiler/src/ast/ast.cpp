@@ -7,8 +7,16 @@ void print_expr(const Expr &expr, std::string &out) {
         out += std::to_string(expr.number);
         return;
     }
+    if (expr.kind == Expr::Kind::String) {
+        out += "\"" + expr.string_value + "\"";
+        return;
+    }
     if (expr.kind == Expr::Kind::Null) {
         out += "null";
+        return;
+    }
+    if (expr.kind == Expr::Kind::Skip) {
+        out += "skip";
         return;
     }
     if (expr.kind == Expr::Kind::Ident) {

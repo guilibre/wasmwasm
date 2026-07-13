@@ -44,6 +44,7 @@ enum class TokenKind : uint8_t {
     KwChoose,
     KwEmit,
     KwListen,
+    KwConst,
     Or,
     Eof,
     Invalid,

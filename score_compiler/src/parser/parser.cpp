@@ -9,6 +9,16 @@ auto make_number(double value) -> std::unique_ptr<Expr> {
     auto expr = std::make_unique<Expr>();
     expr->kind = Expr::Kind::Number;
     expr->number = value;
+    expr->number_rational =
+        Rational::from_decimal_literal(std::to_string(value));
+    return expr;
+}
+
+auto make_number_literal(const std::string &lexeme) -> std::unique_ptr<Expr> {
+    auto expr = std::make_unique<Expr>();
+    expr->kind = Expr::Kind::Number;
+    expr->number_rational = Rational::from_decimal_literal(lexeme);
+    expr->number = expr->number_rational.to_double();
     return expr;
 }
 
@@ -87,6 +97,16 @@ auto Parser::parse_factor() -> std::unique_ptr<Expr> {
         expr->kind = Expr::Kind::Null;
         return expr;
     }
+    if (current.kind == TokenKind::String) {
+        const auto tok = current;
+        advance();
+        auto expr = std::make_unique<Expr>();
+        expr->kind = Expr::Kind::String;
+        expr->string_value = tok.lexeme;
+        expr->line = tok.line;
+        expr->column = tok.column;
+        return expr;
+    }
     if (current.kind == TokenKind::Ident) {
         const auto tok = current;
         advance();
@@ -100,7 +120,7 @@ auto Parser::parse_factor() -> std::unique_ptr<Expr> {
         return expr;
     }
     const auto &tok = expect(TokenKind::Number, "number");
-    return make_number(std::stod(tok.lexeme));
+    return make_number_literal(tok.lexeme);
 }
 
 auto Parser::parse_comparison() -> std::unique_ptr<Expr> {
@@ -214,20 +234,14 @@ auto Parser::parse_block() -> Block {
     block.column = current.column;
     expect(TokenKind::LBrace, "'{'");
     while (current.kind != TokenKind::RBrace) {
+        const auto is_const = match(TokenKind::KwConst);
         const auto &name = expect(TokenKind::Ident, "parameter name");
         expect(TokenKind::Colon, "':'");
-        if (name.lexeme == "instrument") {
-            if (block.instrument.has_value())
-                throw ParseException("duplicate 'instrument' field", name.line,
-                                     name.column);
-            const auto &value = expect(TokenKind::String, "string literal");
-            block.instrument = value.lexeme;
-        } else {
-            Param param;
-            param.name = name.lexeme;
-            param.value = parse_ternary();
-            block.params.push_back(std::move(param));
-        }
+        Param param;
+        param.name = name.lexeme;
+        param.value = parse_ternary();
+        param.is_const = is_const;
+        block.params.push_back(std::move(param));
         end_statement();
     }
     expect(TokenKind::RBrace, "'}'");

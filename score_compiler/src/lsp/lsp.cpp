@@ -9,8 +9,7 @@
 namespace {
 
 auto is_keyword_ident(const std::string &lexeme) -> bool {
-    static const std::unordered_set<std::string> keywords = {"instrument",
-                                                             "true", "false"};
+    static const std::unordered_set<std::string> keywords = {"true", "false"};
     return keywords.contains(lexeme);
 }
 
@@ -50,6 +49,7 @@ auto lsp_tokens(const std::string &src) -> std::string {
         case TokenKind::KwEmit:
         case TokenKind::KwListen:
         case TokenKind::KwNull:
+        case TokenKind::KwConst:
             emit(tok.line, tok.column, len, "keyword");
             break;
         case TokenKind::Ident:
@@ -139,8 +139,7 @@ auto lsp_completions(const std::string &src, size_t /*line*/, size_t /*col*/)
     emit("null", "", "keyword");
     emit("true", "", "keyword");
     emit("false", "", "keyword");
-    emit("instrument", "String", "keyword");
-    emit("dur", "Float", "variable");
+    emit("const", "", "keyword");
 
     const Tokenizer tokenizer(src);
     Parser parser(tokenizer);

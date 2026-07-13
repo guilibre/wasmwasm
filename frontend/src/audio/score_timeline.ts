@@ -1,12 +1,13 @@
 import type { ExprNode, GraphNode, ScoreGraph, TransformEntry } from './conductor';
-import { eval_expr, eval_presence } from './conductor';
+import { eval_expr, eval_presence, SKIP } from './conductor';
+import { Rational, to_seconds, wire_to_number, type WireNumber } from './rational';
 
 export interface TracedNote {
     start_seconds: number;
     dur_seconds: number;
     freq: number;
     instrument?: string;
-    params: Record<string, number>;
+    params: Record<string, number | string>;
 }
 
 export interface CycleResult {
@@ -29,13 +30,12 @@ const MAX_TOKEN_STEPS = 20000;
 
 interface ActiveTransformFrame {
     transforms: TransformEntry[];
-    pushInstrument?: string;
 }
 
 interface SimToken {
     node_id: number;
-    time: number;
-    params: Record<string, number>;
+    time: Rational;
+    params: Record<string, number | string>;
     transform_stack: ActiveTransformFrame[];
     is_root: boolean;
     cycle_index: number;
@@ -56,36 +56,53 @@ function strip_cycle_index(e: TaggedEvent): TracedNote {
     };
 }
 
-function to_seconds(dur: number, bpm: number): number {
-    return (60 * dur) / bpm;
+function to_seconds_view(
+    params: Record<string, WireNumber | string>,
+    bpm: number,
+): Record<string, number | string> {
+    const result: Record<string, number | string> = {};
+    for (const [name, value] of Object.entries(params))
+        result[name] = typeof value === 'string' ? value : wire_to_number(value);
+    if (typeof result.dur === 'number')
+        result.dur = to_seconds(Rational.from_wire(result.dur), bpm);
+    return result;
 }
 
 function resolve_state(
     node: GraphNode,
     transform_stack: ActiveTransformFrame[],
     bpm: number,
-): { params: Record<string, number>; instrument?: string } {
-    let params = node.params ?? {};
-    let instrument = node.instrument;
+): {
+    params: Record<string, number | string>;
+    dur_beats: Rational;
+    instrument?: string;
+} {
+    let params: Record<string, WireNumber | string> = node.params ?? {};
     for (let i = transform_stack.length - 1; i >= 0; i--) {
         const frame = transform_stack[i];
         for (const t of frame.transforms) {
-            const seconds_view =
-                params.dur === undefined ? params : { ...params, dur: to_seconds(params.dur, bpm) };
-            const value = eval_expr(t.expr, seconds_view);
+            const value = eval_expr(t.expr, to_seconds_view(params, bpm));
+            if (value === SKIP) continue;
             params = { ...params };
             if (value === null) delete params[t.paramName];
             else params[t.paramName] = value;
         }
-        if (frame.pushInstrument !== undefined) instrument = frame.pushInstrument;
     }
-    if (params.dur !== undefined) params = { ...params, dur: to_seconds(params.dur, bpm) };
-    return { params, instrument };
+    const dur_beats =
+        typeof params.dur === 'number' || (params.dur && typeof params.dur === 'object')
+            ? Rational.from_wire(params.dur)
+            : Rational.ZERO;
+    const instrument = typeof params.instrument === 'string' ? params.instrument : undefined;
+    return { params: to_seconds_view(params, bpm), dur_beats, instrument };
 }
 
-function resolve_freq(params: Record<string, number>, graph: ScoreGraph): number {
-    if (params.freq !== undefined) return params.freq;
-    if (params.degree === undefined || params.octave === undefined || params.scale === undefined)
+function resolve_freq(params: Record<string, number | string>, graph: ScoreGraph): number {
+    if (typeof params.freq === 'number') return params.freq;
+    if (
+        typeof params.degree !== 'number' ||
+        typeof params.octave !== 'number' ||
+        typeof params.scale !== 'number'
+    )
         return 0;
     const scale = graph.scales[params.scale];
     if (!scale || scale.values.length === 0) return 0;
@@ -139,19 +156,20 @@ export class ScoreTracer {
             own_visited: new Set(),
         });
 
-        const walk = (token: SimToken): SimToken[] => {
-            const local_visited = new Set<number>();
+        const walk = (token: SimToken, local_visited: Set<number>): SimToken[] => {
             for (;;) {
                 if (events.length >= MAX_EVENTS) {
                     truncated = true;
                     hit_cap = true;
                     return [];
                 }
-                if (local_visited.has(token.node_id)) return [];
-                local_visited.add(token.node_id);
-
                 const node = this.nodes_by_id.get(token.node_id);
                 if (!node) return [];
+
+                if (node.kind !== 'join') {
+                    if (local_visited.has(token.node_id)) return [];
+                    local_visited.add(token.node_id);
+                }
 
                 if (node.kind === 'state') {
                     if (token.is_root) {
@@ -171,14 +189,14 @@ export class ScoreTracer {
                         token.own_visited.add(node.id);
                     }
 
-                    const { params, instrument } = resolve_state(
+                    const { params, dur_beats, instrument } = resolve_state(
                         node,
                         token.transform_stack,
                         this.bpm,
                     );
-                    const dur_seconds = params.dur ?? 0;
+                    const dur_seconds = to_seconds(dur_beats, this.bpm);
                     events.push({
-                        start_seconds: token.time,
+                        start_seconds: to_seconds(token.time, this.bpm),
                         dur_seconds,
                         freq: resolve_freq(params, this.graph),
                         instrument,
@@ -187,7 +205,7 @@ export class ScoreTracer {
                     });
                     token.params = params;
                     token.node_id = node.id;
-                    token.time += dur_seconds;
+                    token.time = token.time.add(dur_beats);
 
                     if (
                         this.stop_after_node_id !== undefined &&
@@ -208,14 +226,16 @@ export class ScoreTracer {
                 if (node.kind === 'fork') {
                     const resolved: SimToken[] = [];
                     for (const branch_id of node.next)
-                        resolved.push(...walk(spawn_from_fork(token, branch_id)));
+                        resolved.push(
+                            ...walk(spawn_from_fork(token, branch_id), new Set(local_visited)),
+                        );
                     return resolved;
                 }
 
                 if (node.kind === 'transform_push') {
                     token.transform_stack = [
                         ...token.transform_stack,
-                        { transforms: node.transforms ?? [], pushInstrument: node.pushInstrument },
+                        { transforms: node.transforms ?? [] },
                     ];
                     if (node.next.length === 0) return [];
                     token.node_id = node.next[0];
@@ -251,16 +271,20 @@ export class ScoreTracer {
             }
         };
 
-        const live: SimToken[] = walk({
-            node_id: this.start_node_id,
-            time: 0,
-            params: {},
-            transform_stack: [],
-            is_root: true,
-            cycle_index: 0,
-            own_visited: new Set(),
-        });
+        const live: SimToken[] = walk(
+            {
+                node_id: this.start_node_id,
+                time: Rational.ZERO,
+                params: {},
+                transform_stack: [],
+                is_root: true,
+                cycle_index: 0,
+                own_visited: new Set(),
+            },
+            new Set<number>(),
+        );
 
+        const local_visited = new Set<number>();
         let steps = 0;
         while (live.length > 0) {
             if (++steps > MAX_TOKEN_STEPS) {
@@ -268,14 +292,15 @@ export class ScoreTracer {
                 break;
             }
             let min_i = 0;
-            for (let i = 1; i < live.length; i++) if (live[i].time < live[min_i].time) min_i = i;
+            for (let i = 1; i < live.length; i++)
+                if (live[i].time.lessThan(live[min_i].time)) min_i = i;
             const token = live[min_i];
             live.splice(min_i, 1);
 
             const node = this.nodes_by_id.get(token.node_id);
             if (!node || node.next.length === 0) continue;
             token.node_id = node.next[0];
-            live.push(...walk(token));
+            live.push(...walk(token, local_visited));
         }
 
         if (!cyclic || reached_stop) {

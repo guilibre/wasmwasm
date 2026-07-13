@@ -1,6 +1,7 @@
 #include "resolver.hpp"
 
 #include "ast/ast.hpp"
+#include "ast/binop_eval.hpp"
 #include "optimize.hpp"
 
 #include <algorithm>
@@ -12,6 +13,7 @@
 #include <optional>
 #include <unordered_map>
 #include <unordered_set>
+#include <variant>
 
 namespace {
 
@@ -42,6 +44,7 @@ struct Piece {
     MemberSet members;
     std::vector<std::shared_ptr<PassthroughInfo>> open_passthrough;
     bool exit_unreachable = false;
+    std::shared_ptr<std::unordered_set<std::string>> const_names;
 };
 
 auto link_after(std::vector<GraphNode> &nodes, const Piece &piece,
@@ -103,6 +106,7 @@ struct ExpansionContext {
     std::vector<std::unique_ptr<Expr>> owned_exprs;
     size_t next_legato_id = 0;
     std::unordered_map<size_t, size_t> legato_id_parent;
+    std::vector<std::vector<std::string>> open_const_names;
 
     auto alloc(NodeKind kind) -> size_t {
         if (nodes.size() >= kMaxNodes)
@@ -116,64 +120,75 @@ struct ExpansionContext {
     }
 };
 
-auto fold_expr(const Expr &expr) -> double {
-    if (expr.kind == Expr::Kind::Number) return expr.number;
+auto fold_expr_value(const Expr &expr) -> ExprValue {
+    if (expr.kind == Expr::Kind::Number) return expr.number_rational;
+    if (expr.kind == Expr::Kind::String) return expr.string_value;
     if (expr.kind == Expr::Kind::Ident)
         throw ResolveException(
             "identifier '" + expr.ident_name +
                 "' is only allowed in a '@{...}' field value",
             expr.line, expr.column);
-    if (expr.kind == Expr::Kind::Null)
-        throw ResolveException(
-            "'null' is only allowed in a '@{...}' field value", expr.line,
-            expr.column);
+    if (expr.kind == Expr::Kind::Null) return std::string{};
+    if (expr.kind == Expr::Kind::Skip)
+        throw ResolveException("'skip' is not a valid field value", expr.line,
+                               expr.column);
     if (expr.kind == Expr::Kind::Ternary)
-        return fold_expr(*expr.ternary_cond) != 0
-                   ? fold_expr(*expr.ternary_then)
-                   : fold_expr(*expr.ternary_else);
-    const auto lhs = fold_expr(*expr.lhs);
-    const auto rhs = fold_expr(*expr.rhs);
-    switch (expr.op) {
-    case BinOp::Add:
-        return lhs + rhs;
-    case BinOp::Sub:
-        return lhs - rhs;
-    case BinOp::Mul:
-        return lhs * rhs;
-    case BinOp::Div:
-        if (rhs == 0)
+        return to_double(fold_expr_value(*expr.ternary_cond)) != 0
+                   ? fold_expr_value(*expr.ternary_then)
+                   : fold_expr_value(*expr.ternary_else);
+    const auto lhs = fold_expr_value(*expr.lhs);
+    const auto rhs = fold_expr_value(*expr.rhs);
+    if (std::holds_alternative<std::string>(lhs) ||
+        std::holds_alternative<std::string>(rhs)) {
+        if (!std::holds_alternative<std::string>(lhs) ||
+            !std::holds_alternative<std::string>(rhs))
+            throw ResolveException(
+                "cannot mix a string and a number in an expression", expr.line,
+                expr.column);
+        if (expr.op != BinOp::Add && expr.op != BinOp::Eq &&
+            expr.op != BinOp::NotEq)
+            throw ResolveException("invalid string operation", expr.line,
+                                   expr.column);
+    } else if (expr.op == BinOp::Div || expr.op == BinOp::Mod) {
+        const auto rhs_is_zero = std::holds_alternative<Rational>(rhs)
+                                     ? std::get<Rational>(rhs).num == 0
+                                     : to_double(rhs) == 0;
+        if (rhs_is_zero)
             throw ResolveException("division by zero", expr.line, expr.column);
-        return lhs / rhs;
-    case BinOp::Mod:
-        if (rhs == 0)
-            throw ResolveException("division by zero", expr.line, expr.column);
-        return std::fmod(lhs, rhs);
-    case BinOp::Pow:
-        return std::pow(lhs, rhs);
-    case BinOp::Eq:
-        return lhs == rhs ? 1.0 : 0.0;
-    case BinOp::NotEq:
-        return lhs != rhs ? 1.0 : 0.0;
-    case BinOp::Lt:
-        return lhs < rhs ? 1.0 : 0.0;
-    case BinOp::Gt:
-        return lhs > rhs ? 1.0 : 0.0;
-    case BinOp::LtEq:
-        return lhs <= rhs ? 1.0 : 0.0;
-    case BinOp::GtEq:
-        return lhs >= rhs ? 1.0 : 0.0;
-    case BinOp::And:
-        return (lhs != 0 && rhs != 0) ? 1.0 : 0.0;
-    case BinOp::Or:
-        return (lhs != 0 || rhs != 0) ? 1.0 : 0.0;
     }
-    throw ResolveException("unknown operator", expr.line, expr.column);
+    const auto result = apply_binary_op(expr.op, lhs, rhs);
+    if (!result)
+        throw ResolveException("invalid operation", expr.line, expr.column);
+    return *result;
+}
+
+auto fold_expr(const Expr &expr) -> double {
+    const auto value = fold_expr_value(expr);
+    if (std::holds_alternative<std::string>(value))
+        throw ResolveException(
+            "a string value cannot be used in a numeric expression", expr.line,
+            expr.column);
+    return to_double(value);
+}
+
+auto check_const_collision(ExpansionContext &ctx, const std::string &name,
+                           size_t line, size_t column) -> void {
+    for (const auto &frame : ctx.open_const_names)
+        for (const auto &existing : frame)
+            if (existing == name)
+                throw ResolveException(
+                    "'" + name +
+                        "' is already declared const in an enclosing scope",
+                    line, column);
 }
 
 auto fold_block_params(const std::vector<Param> &params, ExpansionContext &ctx)
-    -> std::map<std::string, double> {
-    std::map<std::string, double> result;
+    -> std::map<std::string, ExprValue> {
+    std::map<std::string, ExprValue> result;
     for (const auto &param : params) {
+        if (param.is_const)
+            check_const_collision(ctx, param.name, param.value->line,
+                                  param.value->column);
         if (param.name == "scale") {
             if (param.value->kind == Expr::Kind::Number) {
                 result[param.name] = param.value->number;
@@ -190,7 +205,7 @@ auto fold_block_params(const std::vector<Param> &params, ExpansionContext &ctx)
             }
             continue;
         }
-        result[param.name] = fold_expr(*param.value);
+        result[param.name] = fold_expr_value(*param.value);
     }
     return result;
 }
@@ -220,6 +235,7 @@ auto expand_var_ref(const std::string &name, size_t line, size_t column,
             .members = frame.passthrough->members,
             .open_passthrough = {frame.passthrough},
             .exit_unreachable = true,
+            .const_names = {},
         };
     }
 
@@ -233,12 +249,16 @@ auto expand_var_ref(const std::string &name, size_t line, size_t column,
         const auto id = ctx.alloc(NodeKind::State);
         for (auto &[key, value] : fold_block_params(decl.block.params, ctx))
             ctx.nodes[id].params[key] = value;
-        ctx.nodes[id].instrument = decl.block.instrument;
+        auto leaf_const_names =
+            std::make_shared<std::unordered_set<std::string>>();
+        for (const auto &param : decl.block.params)
+            if (param.is_const) leaf_const_names->insert(param.name);
         return Piece{
             .entry_id = id,
             .exit_id = id,
             .members = make_members({id}),
             .open_passthrough = {},
+            .const_names = leaf_const_names,
         };
     }
 
@@ -267,6 +287,7 @@ auto expand_var_ref(const std::string &name, size_t line, size_t column,
         .members = frame.passthrough->members,
         .open_passthrough = std::move(propagated),
         .exit_unreachable = closes_own_cycle ? true : body.exit_unreachable,
+        .const_names = body.const_names,
     };
 }
 
@@ -274,19 +295,79 @@ auto make_expr(double value) -> std::unique_ptr<Expr> {
     auto expr = std::make_unique<Expr>();
     expr->kind = Expr::Kind::Number;
     expr->number = value;
+    expr->number_rational =
+        Rational::from_decimal_literal(std::to_string(value));
     return expr;
 }
 
+auto make_expr(const ExprValue &value) -> std::unique_ptr<Expr> {
+    auto expr = std::make_unique<Expr>();
+    if (std::holds_alternative<std::string>(value)) {
+        expr->kind = Expr::Kind::String;
+        expr->string_value = std::get<std::string>(value);
+    } else {
+        expr->kind = Expr::Kind::Number;
+        if (std::holds_alternative<Rational>(value)) {
+            expr->number_rational = std::get<Rational>(value);
+            expr->number = expr->number_rational.to_double();
+        } else {
+            expr->number = std::get<double>(value);
+            expr->number_rational =
+                Rational::from_decimal_literal(std::to_string(expr->number));
+        }
+    }
+    return expr;
+}
+
+auto make_ident_expr(const std::string &name) -> std::unique_ptr<Expr> {
+    auto expr = std::make_unique<Expr>();
+    expr->kind = Expr::Kind::Ident;
+    expr->ident_name = name;
+    return expr;
+}
+
+auto clone_expr(const Expr &expr) -> std::unique_ptr<Expr> {
+    auto clone = std::make_unique<Expr>();
+    clone->kind = expr.kind;
+    clone->number = expr.number;
+    clone->number_rational = expr.number_rational;
+    clone->string_value = expr.string_value;
+    clone->op = expr.op;
+    clone->ident_name = expr.ident_name;
+    clone->line = expr.line;
+    clone->column = expr.column;
+    if (expr.lhs) clone->lhs = clone_expr(*expr.lhs);
+    if (expr.rhs) clone->rhs = clone_expr(*expr.rhs);
+    if (expr.ternary_cond) clone->ternary_cond = clone_expr(*expr.ternary_cond);
+    if (expr.ternary_then) clone->ternary_then = clone_expr(*expr.ternary_then);
+    if (expr.ternary_else) clone->ternary_else = clone_expr(*expr.ternary_else);
+    for (const auto &elem : expr.elements)
+        clone->elements.push_back(clone_expr(*elem));
+    return clone;
+}
+
+auto guard_against_const(const std::string &param_name, const Expr &new_value,
+                         std::vector<std::unique_ptr<Expr>> &owned_exprs)
+    -> const Expr * {
+    auto guarded = std::make_unique<Expr>();
+    guarded->kind = Expr::Kind::Ternary;
+    guarded->ternary_cond = make_ident_expr(param_name);
+    guarded->ternary_then = std::make_unique<Expr>();
+    guarded->ternary_then->kind = Expr::Kind::Skip;
+    guarded->ternary_else = clone_expr(new_value);
+    const auto *result = guarded.get();
+    owned_exprs.push_back(std::move(guarded));
+    return result;
+}
+
 struct AtomicResult {
-    std::map<std::string, double> params;
-    std::optional<std::string> instrument;
+    std::map<std::string, ExprValue> params;
 };
 
 auto resolve_atomic_from_block(const Block &block, ExpansionContext &ctx)
     -> AtomicResult {
     AtomicResult result;
     result.params = fold_block_params(block.params, ctx);
-    result.instrument = block.instrument;
     return result;
 }
 
@@ -318,7 +399,6 @@ auto resolve_atomic_decl(const VarDecl &decl, size_t line, size_t column,
                                    visiting_rhs);
             }
             for (auto &[key, value] : b.params) a.params[key] = value;
-            if (b.instrument.has_value()) a.instrument = b.instrument;
             return a;
         }
     }
@@ -357,12 +437,16 @@ auto expand_term(const Term &term, ExpansionContext &ctx) -> Piece {
         const auto id = ctx.alloc(NodeKind::State);
         for (auto &[key, value] : fold_block_params(term.block_lit.params, ctx))
             ctx.nodes[id].params[key] = value;
-        ctx.nodes[id].instrument = term.block_lit.instrument;
+        auto leaf_const_names =
+            std::make_shared<std::unordered_set<std::string>>();
+        for (const auto &param : term.block_lit.params)
+            if (param.is_const) leaf_const_names->insert(param.name);
         return Piece{
             .entry_id = id,
             .exit_id = id,
             .members = make_members({id}),
             .open_passthrough = {},
+            .const_names = leaf_const_names,
         };
     }
 
@@ -370,35 +454,84 @@ auto expand_term(const Term &term, ExpansionContext &ctx) -> Piece {
         const auto id = ctx.alloc(NodeKind::SignalEmit);
         for (auto &[key, value] : fold_block_params(term.block_lit.params, ctx))
             ctx.nodes[id].params[key] = value;
-        ctx.nodes[id].instrument = term.block_lit.instrument;
         ctx.nodes[id].signal_id = term.rhs_name;
+        auto leaf_const_names =
+            std::make_shared<std::unordered_set<std::string>>();
+        for (const auto &param : term.block_lit.params)
+            if (param.is_const) leaf_const_names->insert(param.name);
         return Piece{
             .entry_id = id,
             .exit_id = id,
             .members = make_members({id}),
             .open_passthrough = {},
+            .const_names = leaf_const_names,
         };
     }
 
     if (term.kind == Term::Kind::AtomicJoin) {
+        std::vector<std::string> const_names;
+        if (term.rhs_is_block) {
+            for (const auto &param : term.rhs_block.params)
+                if (param.is_const) {
+                    check_const_collision(ctx, param.name, param.value->line,
+                                          param.value->column);
+                    const_names.push_back(param.name);
+                }
+        }
+        ctx.open_const_names.push_back(const_names);
+
         const auto lhs_piece = expand_comp_expr(*term.lhs_expr, ctx);
+
+        ctx.open_const_names.pop_back();
+
+        auto inherited_const_names =
+            std::make_shared<std::unordered_set<std::string>>();
+        if (lhs_piece.const_names)
+            *inherited_const_names = *lhs_piece.const_names;
+
+        if (!const_names.empty()) {
+            std::map<std::string, ExprValue> const_values;
+            for (const auto &param : term.rhs_block.params)
+                if (param.is_const)
+                    const_values[param.name] = fold_expr_value(*param.value);
+            for (const auto member_id : *lhs_piece.members) {
+                auto &node = ctx.nodes[member_id];
+                if (node.kind != NodeKind::State &&
+                    node.kind != NodeKind::SignalEmit)
+                    continue;
+                for (const auto &[key, value] : const_values)
+                    if (!node.params.contains(key)) node.params[key] = value;
+            }
+            for (const auto &name : const_names)
+                inherited_const_names->insert(name);
+        }
 
         const auto push_id = ctx.alloc(NodeKind::TransformPush);
         if (term.rhs_is_block) {
-            for (const auto &param : term.rhs_block.params)
-                ctx.nodes[push_id].transforms.push_back(TransformEntry{
-                    .param_name = param.name, .expr = param.value.get()});
-            ctx.nodes[push_id].push_instrument = term.rhs_block.instrument;
+            for (const auto &param : term.rhs_block.params) {
+                if (param.is_const) continue;
+                const auto *expr =
+                    inherited_const_names->contains(param.name)
+                        ? guard_against_const(param.name, *param.value,
+                                              ctx.owned_exprs)
+                        : param.value.get();
+                ctx.nodes[push_id].transforms.push_back(
+                    TransformEntry{.param_name = param.name, .expr = expr});
+            }
         } else {
             std::unordered_set<std::string> visiting_rhs;
             const auto b = resolve_atomic(term.rhs_name, term.line, term.column,
                                           ctx, visiting_rhs);
             for (const auto &[key, value] : b.params) {
                 ctx.owned_exprs.push_back(make_expr(value));
-                ctx.nodes[push_id].transforms.push_back(TransformEntry{
-                    .param_name = key, .expr = ctx.owned_exprs.back().get()});
+                const auto *value_expr = ctx.owned_exprs.back().get();
+                const auto *expr =
+                    inherited_const_names->contains(key)
+                        ? guard_against_const(key, *value_expr, ctx.owned_exprs)
+                        : value_expr;
+                ctx.nodes[push_id].transforms.push_back(
+                    TransformEntry{.param_name = key, .expr = expr});
             }
-            ctx.nodes[push_id].push_instrument = b.instrument;
         }
         ctx.nodes[push_id].next.push_back(lhs_piece.entry_id);
 
@@ -411,6 +544,7 @@ auto expand_term(const Term &term, ExpansionContext &ctx) -> Piece {
                 .members = members,
                 .open_passthrough = lhs_piece.open_passthrough,
                 .exit_unreachable = true,
+                .const_names = inherited_const_names,
             };
         }
 
@@ -425,6 +559,7 @@ auto expand_term(const Term &term, ExpansionContext &ctx) -> Piece {
             .exit_id = pop_id,
             .members = members,
             .open_passthrough = lhs_piece.open_passthrough,
+            .const_names = inherited_const_names,
         };
     }
 
@@ -445,12 +580,17 @@ auto expand_term(const Term &term, ExpansionContext &ctx) -> Piece {
 
         const auto members = make_members({branch_id, join_id});
         std::vector<std::shared_ptr<PassthroughInfo>> propagated;
+        auto combined_const_names =
+            std::make_shared<std::unordered_set<std::string>>();
         for (const auto &branch : {a_piece, b_piece}) {
             if (!branch.exit_unreachable)
                 ctx.nodes[branch.exit_id].next.push_back(join_id);
             merge_members(members, branch.members);
             for (const auto &p : branch.open_passthrough)
                 propagated.push_back(p);
+            if (branch.const_names)
+                combined_const_names->insert(branch.const_names->begin(),
+                                             branch.const_names->end());
         }
 
         return Piece{
@@ -459,6 +599,7 @@ auto expand_term(const Term &term, ExpansionContext &ctx) -> Piece {
             .members = members,
             .open_passthrough = std::move(propagated),
             .exit_unreachable = infinite_branches == 2,
+            .const_names = combined_const_names,
         };
     }
 
@@ -498,6 +639,7 @@ auto expand_term(const Term &term, ExpansionContext &ctx) -> Piece {
                 .exit_id = exit_anchor,
                 .members = body.members,
                 .open_passthrough = {},
+                .const_names = body.const_names,
             };
         }
 
@@ -523,6 +665,7 @@ auto expand_term(const Term &term, ExpansionContext &ctx) -> Piece {
                 .exit_id = exit_anchor,
                 .members = make_members({entry_anchor, exit_anchor}),
                 .open_passthrough = {},
+                .const_names = body.const_names,
             };
         }
 
@@ -542,6 +685,7 @@ auto expand_term(const Term &term, ExpansionContext &ctx) -> Piece {
                     .members = members,
                     .open_passthrough = lhs_piece.open_passthrough,
                     .exit_unreachable = true,
+                    .const_names = lhs_piece.const_names,
                 };
             }
 
@@ -556,6 +700,7 @@ auto expand_term(const Term &term, ExpansionContext &ctx) -> Piece {
                 .exit_id = pop_id,
                 .members = members,
                 .open_passthrough = lhs_piece.open_passthrough,
+                .const_names = lhs_piece.const_names,
             };
         }
 
@@ -577,12 +722,17 @@ auto expand_term(const Term &term, ExpansionContext &ctx) -> Piece {
     ctx.nodes[join_id].join_arity = branches.size() - infinite_branches;
     const auto members = make_members({fork_id, join_id});
     std::vector<std::shared_ptr<PassthroughInfo>> propagated;
+    auto combined_const_names =
+        std::make_shared<std::unordered_set<std::string>>();
     for (const auto &branch : branches) {
         ctx.nodes[fork_id].next.push_back(branch.entry_id);
         if (!branch.exit_unreachable)
             ctx.nodes[branch.exit_id].next.push_back(join_id);
         merge_members(members, branch.members);
         for (const auto &p : branch.open_passthrough) propagated.push_back(p);
+        if (branch.const_names)
+            combined_const_names->insert(branch.const_names->begin(),
+                                         branch.const_names->end());
     }
     return Piece{
         .entry_id = fork_id,
@@ -590,6 +740,7 @@ auto expand_term(const Term &term, ExpansionContext &ctx) -> Piece {
         .members = members,
         .open_passthrough = std::move(propagated),
         .exit_unreachable = infinite_branches == branches.size(),
+        .const_names = combined_const_names,
     };
 }
 
@@ -600,8 +751,27 @@ auto find_boundary_state(ExpansionContext &ctx, size_t entry_id, size_t exit_id)
     while (true) {
         if (ctx.nodes[id].kind == NodeKind::State) last_state = id;
         if (id == exit_id) break;
-        if (ctx.nodes[id].next.size() != 1) return std::nullopt;
-        id = ctx.nodes[id].next[0];
+        const auto &node = ctx.nodes[id];
+        if (node.kind == NodeKind::Fork) {
+            size_t depth = 1;
+            auto probe = node.next[0];
+            while (depth > 0) {
+                if (ctx.nodes[probe].kind == NodeKind::State)
+                    last_state = probe;
+                if (ctx.nodes[probe].kind == NodeKind::Fork) {
+                    ++depth;
+                } else if (ctx.nodes[probe].kind == NodeKind::Join) {
+                    --depth;
+                    if (depth == 0) break;
+                }
+                if (ctx.nodes[probe].next.size() != 1) return std::nullopt;
+                probe = ctx.nodes[probe].next[0];
+            }
+            id = probe;
+            continue;
+        }
+        if (node.next.size() != 1) return std::nullopt;
+        id = node.next[0];
     }
     return last_state;
 }
@@ -637,7 +807,7 @@ auto stamp_legato_id(ExpansionContext &ctx, size_t state_id, size_t chain_id)
     auto &params = ctx.nodes[state_id].params;
     const auto it = params.find("legato_id");
     if (it != params.end()) {
-        const auto existing = static_cast<size_t>(it->second);
+        const auto existing = static_cast<size_t>(std::get<double>(it->second));
         if (existing != chain_id)
             legato_union(ctx.legato_id_parent, existing, chain_id);
     }
@@ -648,7 +818,7 @@ auto canonicalize_legato_ids(ExpansionContext &ctx) -> void {
     for (auto &node : ctx.nodes) {
         const auto it = node.params.find("legato_id");
         if (it == node.params.end()) continue;
-        const auto id = static_cast<size_t>(it->second);
+        const auto id = static_cast<size_t>(std::get<double>(it->second));
         it->second = static_cast<double>(legato_find(ctx.legato_id_parent, id));
     }
 }
@@ -701,6 +871,9 @@ auto expand_comp_expr(const CompExpr &comp, ExpansionContext &ctx) -> Piece {
 
     const auto members = make_members();
     merge_members(members, first.members);
+    auto combined_const_names =
+        std::make_shared<std::unordered_set<std::string>>();
+    if (first.const_names) *combined_const_names = *first.const_names;
     auto prev = first;
     for (size_t i = 1; i < comp.terms.size(); ++i) {
         const auto next = expand_term(comp.terms[i], ctx);
@@ -710,6 +883,9 @@ auto expand_comp_expr(const CompExpr &comp, ExpansionContext &ctx) -> Piece {
                      comp.terms[i - 1].legato_after, comp.terms[i].legato_after,
                      legato_chain_id);
         merge_members(members, next.members);
+        if (next.const_names)
+            combined_const_names->insert(next.const_names->begin(),
+                                         next.const_names->end());
         if (prev.exit_unreachable) continue;
         link_after(ctx.nodes, prev, next.entry_id);
         prev = Piece{
@@ -718,6 +894,7 @@ auto expand_comp_expr(const CompExpr &comp, ExpansionContext &ctx) -> Piece {
             .members = nullptr,
             .open_passthrough = next.open_passthrough,
             .exit_unreachable = next.exit_unreachable,
+            .const_names = {},
         };
     }
     return Piece{
@@ -726,6 +903,7 @@ auto expand_comp_expr(const CompExpr &comp, ExpansionContext &ctx) -> Piece {
         .members = members,
         .open_passthrough = prev.open_passthrough,
         .exit_unreachable = prev.exit_unreachable,
+        .const_names = combined_const_names,
     };
 }
 
@@ -764,9 +942,6 @@ auto make_predefined_decls(size_t chromatic_scale_index)
                 Param{.name = "degree", .value = make_expr(chromatic_degree)});
             decl.block.params.push_back(
                 Param{.name = "octave", .value = make_expr(0)});
-            auto chromatic_expr = std::make_unique<Expr>();
-            chromatic_expr->kind = Expr::Kind::Ident;
-            chromatic_expr->ident_name = "chromatic";
             decl.block.params.push_back(Param{
                 .name = "scale", .value = make_expr(chromatic_scale_index)});
             decls.push_back(std::move(decl));
@@ -910,8 +1085,8 @@ auto remap_legato_ids(ExpansionContext &ctx,
     for (const auto &[original, clone_id] : clone_of) {
         const auto it = ctx.nodes[clone_id].params.find("legato_id");
         if (it == ctx.nodes[clone_id].params.end()) continue;
-        const auto [fresh_it, inserted] =
-            fresh_id.try_emplace(it->second, ctx.next_legato_id);
+        const auto [fresh_it, inserted] = fresh_id.try_emplace(
+            std::get<double>(it->second), ctx.next_legato_id);
         if (inserted) ++ctx.next_legato_id;
         it->second = static_cast<double>(fresh_it->second);
     }
@@ -921,13 +1096,15 @@ auto resolve_pending_reverse_clones(ExpansionContext &ctx) -> void {
     std::unordered_map<size_t, size_t> resolved_bridges;
 
     for (const auto &pr : ctx.pending_reverse_clones) {
-        const auto all_members =
-            std::make_shared<std::unordered_set<size_t>>(*pr.members);
-        for (auto original : *pr.members) {
+        const auto body_members =
+            collect_body_members(ctx, pr.body_entry_id, pr.body_exit_id);
+        const auto all_members = std::make_shared<std::unordered_set<size_t>>(
+            body_members.begin(), body_members.end());
+        for (auto original : body_members) {
             const auto bridge_it = resolved_bridges.find(original);
             if (bridge_it == resolved_bridges.end()) continue;
             const auto inner_exit = bridge_it->second;
-            if (!pr.members->contains(inner_exit)) continue;
+            if (!all_members->contains(inner_exit)) continue;
             auto cur = original;
             while (cur != inner_exit && !ctx.nodes[cur].next.empty()) {
                 const auto nxt = ctx.nodes[cur].next[0];
@@ -954,8 +1131,30 @@ auto resolve_pending_reverse_clones(ExpansionContext &ctx) -> void {
         for (const auto original : *all_members) get_clone(original);
         remap_legato_ids(ctx, clone_of);
         for (const auto original : *all_members) {
+            const auto &node = ctx.nodes[original];
+            const auto clone_id = clone_of[original];
+            if (node.kind == NodeKind::Fork) {
+                ctx.nodes[clone_id].kind = NodeKind::Join;
+                ctx.nodes[clone_id].join_arity = node.next.size();
+            } else if (node.kind == NodeKind::Join) {
+                ctx.nodes[clone_id].kind = NodeKind::Fork;
+                ctx.nodes[clone_id].join_arity = 0;
+            }
+            const auto legato_it = node.params.find("legato");
+            if (legato_it != node.params.end() &&
+                std::holds_alternative<double>(legato_it->second)) {
+                ctx.nodes[clone_id].params["legato"] =
+                    std::get<double>(legato_it->second) != 0.0 ? 0.0 : 1.0;
+            }
+        }
+        for (const auto original : *all_members) {
             const auto clone_id = clone_of[original];
             for (auto succ : ctx.nodes[original].next) {
+                if (succ == pr.entry_anchor) {
+                    ctx.nodes[clone_id].next.push_back(
+                        clone_of[pr.body_entry_id]);
+                    continue;
+                }
                 if (!clone_of.contains(succ)) continue;
                 auto flip = true;
                 if (pr.ring_members) {
@@ -981,12 +1180,9 @@ auto resolve_pending_reverse_clones(ExpansionContext &ctx) -> void {
 
             ctx.nodes[pop_clone].kind = NodeKind::TransformPush;
             ctx.nodes[pop_clone].transforms = ctx.nodes[original].transforms;
-            ctx.nodes[pop_clone].push_instrument =
-                ctx.nodes[original].push_instrument;
 
             ctx.nodes[push_clone].kind = NodeKind::TransformPop;
             ctx.nodes[push_clone].transforms.clear();
-            ctx.nodes[push_clone].push_instrument = std::nullopt;
 
             ctx.transform_pop_of_push[pop_clone] = push_clone;
         }
@@ -1000,7 +1196,6 @@ auto resolve_pending_reverse_clones(ExpansionContext &ctx) -> void {
             ctx.nodes[clone_of[pr.body_entry_id]].next.push_back(
                 pr.exit_anchor);
         }
-
         resolved_bridges[pr.entry_anchor] = pr.exit_anchor;
     }
 }
@@ -1117,8 +1312,8 @@ auto expand_program(const Program &program) -> ExpandedGraph {
     resolve_passthroughs(ctx);
     resolve_pending_legato_boundaries(ctx);
     canonicalize_legato_ids(ctx);
-    resolve_pending_reverse_clones(ctx);
     resolve_pending_repeat_clones(ctx);
+    resolve_pending_reverse_clones(ctx);
     graph.nodes = std::move(ctx.nodes);
     graph.owned_exprs = std::move(ctx.owned_exprs);
     graph.transform_pop_of_push = std::move(ctx.transform_pop_of_push);

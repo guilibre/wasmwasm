@@ -1,11 +1,15 @@
 #include "optimize.hpp"
 
+#include "ast/binop_eval.hpp"
+
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
 #include <functional>
+#include <optional>
 #include <string>
 #include <unordered_map>
+#include <variant>
 #include <vector>
 
 namespace {
@@ -23,7 +27,7 @@ auto is_transparent(const GraphNode &node) -> bool {
     if (node.kind == NodeKind::Fork) return true;
     if (node.kind == NodeKind::Join && node.join_arity == 1) return true;
     if (node.kind == NodeKind::TransformPush && node.transforms.empty() &&
-        !node.push_instrument && !node.listen_channel)
+        !node.listen_channel)
         return true;
     return false;
 }
@@ -69,117 +73,129 @@ auto merge_empty_transform_frames(ExpandedGraph &graph) -> bool {
     return changed;
 }
 
-auto fold_constant_expr(const Expr &expr) -> std::optional<double> {
+auto fold_deterministic_and(double lhs, double rhs) -> std::optional<double> {
+    const auto lhs_clip = std::clamp(lhs, 0.0, 1.0);
+    const auto rhs_clip = std::clamp(rhs, 0.0, 1.0);
+    const auto result = lhs_clip * rhs_clip;
+    if (result == 0.0) return 0.0;
+    if (result == 1.0) return 1.0;
+    return std::nullopt;
+}
+
+auto fold_deterministic_or(double lhs, double rhs) -> std::optional<double> {
+    const auto lhs_clip = std::clamp(lhs, 0.0, 1.0);
+    const auto rhs_clip = std::clamp(rhs, 0.0, 1.0);
+    const auto result = lhs_clip + rhs_clip - (lhs_clip * rhs_clip);
+    if (result == 0.0) return 0.0;
+    if (result == 1.0) return 1.0;
+    return std::nullopt;
+}
+
+struct NullExpr {
+    auto operator==(const NullExpr &) const -> bool = default;
+};
+
+struct SkipExpr {
+    auto operator==(const SkipExpr &) const -> bool = default;
+};
+
+using FoldValue = std::variant<ExprValue, NullExpr, SkipExpr>;
+using FoldResult = std::optional<FoldValue>;
+
+auto fold_binary_values(BinOp op, const ExprValue &lhs, const ExprValue &rhs)
+    -> std::optional<ExprValue> {
+    if (op == BinOp::And) {
+        const auto result =
+            fold_deterministic_and(to_double(lhs), to_double(rhs));
+        if (!result) return std::nullopt;
+        return *result;
+    }
+    if (op == BinOp::Or) {
+        const auto result =
+            fold_deterministic_or(to_double(lhs), to_double(rhs));
+        if (!result) return std::nullopt;
+        return *result;
+    }
+    return apply_binary_op(op, lhs, rhs);
+}
+
+auto fold_result_as_double(const FoldResult &result) -> std::optional<double> {
+    if (!result || !std::holds_alternative<ExprValue>(*result))
+        return std::nullopt;
+    const auto &value = std::get<ExprValue>(*result);
+    if (std::holds_alternative<std::string>(value)) return std::nullopt;
+    return to_double(value);
+}
+
+auto fold_constant_expr(const Expr &expr) -> FoldResult {
     switch (expr.kind) {
     case Expr::Kind::Number:
-        return expr.number;
+        return FoldValue{std::in_place_type<ExprValue>, expr.number_rational};
+    case Expr::Kind::String:
+        return FoldValue{std::in_place_type<ExprValue>, expr.string_value};
+    case Expr::Kind::Null:
+        return FoldValue{NullExpr{}};
+    case Expr::Kind::Skip:
+        return FoldValue{SkipExpr{}};
     case Expr::Kind::Binary: {
         const auto lhs = fold_constant_expr(*expr.lhs);
         const auto rhs = fold_constant_expr(*expr.rhs);
-        if (!lhs || !rhs) return std::nullopt;
-        switch (expr.op) {
-        case BinOp::Add:
-            return *lhs + *rhs;
-        case BinOp::Sub:
-            return *lhs - *rhs;
-        case BinOp::Mul:
-            return *lhs * *rhs;
-        case BinOp::Div:
-            if (*rhs == 0) return std::nullopt;
-            return *lhs / *rhs;
-        case BinOp::Mod:
-            if (*rhs == 0) return std::nullopt;
-            return std::fmod(*lhs, *rhs);
-        case BinOp::Pow:
-            return std::pow(*lhs, *rhs);
-        case BinOp::Eq:
-            return *lhs == *rhs ? 1.0 : 0.0;
-        case BinOp::NotEq:
-            return *lhs != *rhs ? 1.0 : 0.0;
-        case BinOp::Lt:
-            return *lhs < *rhs ? 1.0 : 0.0;
-        case BinOp::Gt:
-            return *lhs > *rhs ? 1.0 : 0.0;
-        case BinOp::LtEq:
-            return *lhs <= *rhs ? 1.0 : 0.0;
-        case BinOp::GtEq:
-            return *lhs >= *rhs ? 1.0 : 0.0;
-        case BinOp::And:
-            return (*lhs != 0 && *rhs != 0) ? 1.0 : 0.0;
-        case BinOp::Or:
-            return (*lhs != 0 || *rhs != 0) ? 1.0 : 0.0;
-        }
-        return std::nullopt;
+        if (!lhs || !rhs || !std::holds_alternative<ExprValue>(*lhs) ||
+            !std::holds_alternative<ExprValue>(*rhs))
+            return std::nullopt;
+        const auto result = fold_binary_values(
+            expr.op, std::get<ExprValue>(*lhs), std::get<ExprValue>(*rhs));
+        if (!result) return std::nullopt;
+        return FoldValue{std::in_place_type<ExprValue>, *result};
     }
     case Expr::Kind::Ternary: {
-        const auto cond = fold_constant_expr(*expr.ternary_cond);
+        const auto cond =
+            fold_result_as_double(fold_constant_expr(*expr.ternary_cond));
         if (!cond) return std::nullopt;
         return fold_constant_expr(*cond != 0 ? *expr.ternary_then
                                              : *expr.ternary_else);
     }
     case Expr::Kind::Ident:
     case Expr::Kind::Array:
-    case Expr::Kind::Null:
         return std::nullopt;
     }
     return std::nullopt;
 }
 
 auto fold_expr_with_params(const Expr &expr,
-                           const std::map<std::string, double> &params)
-    -> std::optional<double> {
+                           const std::map<std::string, ExprValue> &params)
+    -> FoldResult {
     switch (expr.kind) {
     case Expr::Kind::Number:
-        return expr.number;
+        return FoldValue{std::in_place_type<ExprValue>, expr.number_rational};
+    case Expr::Kind::String:
+        return FoldValue{std::in_place_type<ExprValue>, expr.string_value};
+    case Expr::Kind::Null:
+        return FoldValue{NullExpr{}};
+    case Expr::Kind::Skip:
+        return FoldValue{SkipExpr{}};
     case Expr::Kind::Ident: {
         const auto it = params.find(expr.ident_name);
         if (it == params.end()) return std::nullopt;
-        return it->second;
+        return FoldValue{std::in_place_type<ExprValue>, it->second};
     }
     case Expr::Kind::Binary: {
         const auto lhs = fold_expr_with_params(*expr.lhs, params);
         const auto rhs = fold_expr_with_params(*expr.rhs, params);
-        if (!lhs || !rhs) return std::nullopt;
-        switch (expr.op) {
-        case BinOp::Add:
-            return *lhs + *rhs;
-        case BinOp::Sub:
-            return *lhs - *rhs;
-        case BinOp::Mul:
-            return *lhs * *rhs;
-        case BinOp::Div:
-            if (*rhs == 0) return std::nullopt;
-            return *lhs / *rhs;
-        case BinOp::Mod:
-            if (*rhs == 0) return std::nullopt;
-            return std::fmod(*lhs, *rhs);
-        case BinOp::Pow:
-            return std::pow(*lhs, *rhs);
-        case BinOp::Eq:
-            return *lhs == *rhs ? 1.0 : 0.0;
-        case BinOp::NotEq:
-            return *lhs != *rhs ? 1.0 : 0.0;
-        case BinOp::Lt:
-            return *lhs < *rhs ? 1.0 : 0.0;
-        case BinOp::Gt:
-            return *lhs > *rhs ? 1.0 : 0.0;
-        case BinOp::LtEq:
-            return *lhs <= *rhs ? 1.0 : 0.0;
-        case BinOp::GtEq:
-            return *lhs >= *rhs ? 1.0 : 0.0;
-        case BinOp::And:
-            return (*lhs != 0 && *rhs != 0) ? 1.0 : 0.0;
-        case BinOp::Or:
-            return (*lhs != 0 || *rhs != 0) ? 1.0 : 0.0;
-        }
-        return std::nullopt;
+        if (!lhs || !rhs || !std::holds_alternative<ExprValue>(*lhs) ||
+            !std::holds_alternative<ExprValue>(*rhs))
+            return std::nullopt;
+        const auto result = fold_binary_values(
+            expr.op, std::get<ExprValue>(*lhs), std::get<ExprValue>(*rhs));
+        if (!result) return std::nullopt;
+        return FoldValue{std::in_place_type<ExprValue>, *result};
     }
     case Expr::Kind::Ternary: {
         const auto cond = [&]() -> std::optional<bool> {
             if (expr.ternary_cond->kind == Expr::Kind::Ident)
                 return params.contains(expr.ternary_cond->ident_name);
-            const auto cond_value =
-                fold_expr_with_params(*expr.ternary_cond, params);
+            const auto cond_value = fold_result_as_double(
+                fold_expr_with_params(*expr.ternary_cond, params));
             if (!cond_value) return std::nullopt;
             return *cond_value != 0;
         }();
@@ -188,7 +204,6 @@ auto fold_expr_with_params(const Expr &expr,
             *cond ? *expr.ternary_then : *expr.ternary_else, params);
     }
     case Expr::Kind::Array:
-    case Expr::Kind::Null:
         return std::nullopt;
     }
     return std::nullopt;
@@ -200,9 +215,8 @@ struct TransformScope {
     bool has_cycle = false;
 };
 
-auto shadows(const GraphNode &node, const std::vector<std::string> &param_names,
-             bool folding_instrument) -> bool {
-    if (folding_instrument && node.push_instrument) return true;
+auto shadows(const GraphNode &node, const std::vector<std::string> &param_names)
+    -> bool {
     return std::ranges::any_of(node.transforms, [&](const auto &entry) -> bool {
         return std::ranges::find(param_names, entry.param_name) !=
                param_names.end();
@@ -210,8 +224,8 @@ auto shadows(const GraphNode &node, const std::vector<std::string> &param_names,
 }
 
 auto find_scope(const ExpandedGraph &graph, size_t push_id,
-                const std::vector<std::string> &param_names,
-                bool folding_instrument) -> std::optional<TransformScope> {
+                const std::vector<std::string> &param_names)
+    -> std::optional<TransformScope> {
     std::optional<size_t> own_pop_id;
     if (const auto it = graph.transform_pop_of_push.find(push_id);
         it != graph.transform_pop_of_push.end())
@@ -232,7 +246,7 @@ auto find_scope(const ExpandedGraph &graph, size_t push_id,
                 return;
             }
         } else if (node.kind == NodeKind::TransformPush) {
-            if (shadows(node, param_names, folding_instrument)) {
+            if (shadows(node, param_names)) {
                 aborted = true;
                 return;
             }
@@ -273,22 +287,25 @@ auto fold_transforms_into_state(ExpandedGraph &graph) -> bool {
     for (size_t push_id = 0; push_id < graph.nodes.size(); ++push_id) {
         auto &push_node = graph.nodes[push_id];
         if (push_node.kind != NodeKind::TransformPush) continue;
-        if (push_node.transforms.empty() && !push_node.push_instrument)
-            continue;
+        if (push_node.transforms.empty()) continue;
 
         std::vector<std::string> param_names;
         param_names.reserve(push_node.transforms.size());
         for (const auto &entry : push_node.transforms)
             param_names.push_back(entry.param_name);
-        const auto scope = find_scope(graph, push_id, param_names,
-                                      push_node.push_instrument.has_value());
+        const auto scope = find_scope(graph, push_id, param_names);
         if (!scope) continue;
 
         std::vector<TransformEntry> remaining;
         for (const auto &entry : push_node.transforms) {
-            if (const auto value = fold_constant_expr(*entry.expr)) {
-                for (auto state_id : scope->states)
-                    graph.nodes[state_id].params[entry.param_name] = *value;
+            if (const auto result = fold_constant_expr(*entry.expr)) {
+                for (auto state_id : scope->states) {
+                    if (std::holds_alternative<ExprValue>(*result))
+                        graph.nodes[state_id].params[entry.param_name] =
+                            std::get<ExprValue>(*result);
+                    else if (std::holds_alternative<NullExpr>(*result))
+                        graph.nodes[state_id].params.erase(entry.param_name);
+                }
                 changed = true;
                 continue;
             }
@@ -298,35 +315,33 @@ auto fold_transforms_into_state(ExpandedGraph &graph) -> bool {
                 continue;
             }
 
-            std::vector<std::pair<size_t, double>> per_state_values;
+            std::vector<std::pair<size_t, FoldValue>> per_state_values;
             per_state_values.reserve(scope->states.size());
             auto foldable_per_state = true;
             for (auto state_id : scope->states) {
-                const auto value = fold_expr_with_params(
+                const auto result = fold_expr_with_params(
                     *entry.expr, graph.nodes[state_id].params);
-                if (!value) {
+                if (!result) {
                     foldable_per_state = false;
                     break;
                 }
-                per_state_values.emplace_back(state_id, *value);
+                per_state_values.emplace_back(state_id, *result);
             }
             if (!foldable_per_state) {
                 remaining.push_back(entry);
                 continue;
             }
-            for (const auto &[state_id, value] : per_state_values)
-                graph.nodes[state_id].params[entry.param_name] = value;
-            changed = true;
-        }
-
-        if (push_node.push_instrument) {
-            for (auto state_id : scope->states)
-                graph.nodes[state_id].instrument = push_node.push_instrument;
+            for (const auto &[state_id, result] : per_state_values) {
+                if (std::holds_alternative<ExprValue>(result))
+                    graph.nodes[state_id].params[entry.param_name] =
+                        std::get<ExprValue>(result);
+                else if (std::holds_alternative<NullExpr>(result))
+                    graph.nodes[state_id].params.erase(entry.param_name);
+            }
             changed = true;
         }
 
         push_node.transforms = std::move(remaining);
-        push_node.push_instrument.reset();
         if (push_node.transforms.empty())
             for (auto pop_id : scope->pops)
                 graph.nodes[pop_id].kind = NodeKind::Passthrough;
@@ -336,11 +351,9 @@ auto fold_transforms_into_state(ExpandedGraph &graph) -> bool {
 
 struct NodeSignature {
     NodeKind kind;
-    std::map<std::string, double> params;
-    std::optional<std::string> instrument;
+    std::map<std::string, ExprValue> params;
     size_t join_arity;
-    std::optional<std::string> push_instrument;
-    std::vector<std::pair<std::string, double>> transforms;
+    std::vector<std::pair<std::string, ExprValue>> transforms;
 
     auto operator==(const NodeSignature &) const -> bool = default;
 };
@@ -349,17 +362,17 @@ auto make_signature(const GraphNode &node) -> NodeSignature {
     NodeSignature sig{
         .kind = node.kind,
         .params = node.params,
-        .instrument = node.instrument,
         .join_arity = node.join_arity,
-        .push_instrument = node.push_instrument,
         .transforms = {},
     };
-    for (const auto &t : node.transforms)
-        sig.transforms.emplace_back(t.param_name,
-                                    (t.expr != nullptr) &&
-                                            t.expr->kind == Expr::Kind::Number
-                                        ? t.expr->number
-                                        : std::nan(""));
+    for (const auto &t : node.transforms) {
+        if (t.expr != nullptr && t.expr->kind == Expr::Kind::Number)
+            sig.transforms.emplace_back(t.param_name, t.expr->number_rational);
+        else if (t.expr != nullptr && t.expr->kind == Expr::Kind::String)
+            sig.transforms.emplace_back(t.param_name, t.expr->string_value);
+        else
+            sig.transforms.emplace_back(t.param_name, std::nan(""));
+    }
     return sig;
 }
 

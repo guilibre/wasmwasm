@@ -155,6 +155,32 @@ In both forms, the right-hand side's fields win where both sides (or the
 current value and the new one) define the same field. `@` chains, so
 `expr@{a: 1}@{b: 2}` applies both.
 
+### `const` fields
+
+```SCORE
+melody@{const rel: 0.1}
+{const rel: 0.1, vol: 0.5}
+```
+
+Prefixing a field with `const` inside any `{...}` block (a bare block
+literal/declaration or the right-hand side of `@`) locks that field: no
+enclosing `@{...}` transform, however deeply nested, can ever override it.
+This is different from ordinary `@` chaining, where the right-hand (more
+outer) side normally wins - `const` inverts that for the fields it marks.
+
+```SCORE
+note@{const rel: 0.1}@{rel: 0.9}   # rel stays 0.1 - the const wins
+```
+
+`const` also applies to `instrument`:
+
+```SCORE
+solo@{const instrument: "Lead"}@{instrument: "Bass"}   # stays "Lead"
+```
+
+Declaring the same field `const` at two different enclosing scopes for the
+same note is a compile-time error.
+
 ### `!` (duration shorthand)
 
 ```SCORE

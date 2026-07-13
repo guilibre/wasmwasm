@@ -1,0 +1,19 @@
+param lag = 0.1
+lag <= 0 ? lag = 1/SAMPLE_RATE
+
+static prev = -1
+static curr = -1
+static next = -1
+static t = 0
+
+IN[0] != next ? (
+  t = 0
+  curr < 0 ? curr = IN[0]
+  prev = curr
+  next = IN[0]
+)
+t2 = t*t
+curr = prev + t2*t2*(IN[0] - prev)
+t = min 1 (t + 1/(lag*SAMPLE_RATE))
+
+OUT[0] <- curr

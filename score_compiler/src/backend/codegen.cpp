@@ -5,6 +5,7 @@
 #include <cmath>
 #include <sstream>
 #include <stdexcept>
+#include <variant>
 
 namespace {
 
@@ -15,6 +16,12 @@ auto format_number(double value) -> std::string {
     out.precision(15);
     out << value;
     return out.str();
+}
+
+auto format_rational(const Rational &value) -> std::string {
+    if (value.is_integer()) return std::to_string(value.num);
+    return "{\"num\":" + std::to_string(value.num) +
+           ",\"den\":" + std::to_string(value.den) + "}";
 }
 
 auto node_kind_name(NodeKind kind) -> std::string {
@@ -42,10 +49,15 @@ auto node_kind_name(NodeKind kind) -> std::string {
 auto expr_to_json(const Expr &expr) -> std::string {
     switch (expr.kind) {
     case Expr::Kind::Number:
-        return R"({"kind":"number","value":)" + format_number(expr.number) +
+        return R"({"kind":"number","value":)" +
+               format_rational(expr.number_rational) + "}";
+    case Expr::Kind::String:
+        return R"({"kind":"string","value":)" + json_string(expr.string_value) +
                "}";
     case Expr::Kind::Null:
         return R"({"kind":"null"})";
+    case Expr::Kind::Skip:
+        return R"({"kind":"skip"})";
     case Expr::Kind::Ident:
         return R"({"kind":"ident","name":)" + json_string(expr.ident_name) +
                "}";
@@ -70,6 +82,14 @@ auto expr_to_json(const Expr &expr) -> std::string {
     throw std::runtime_error("unknown expression kind");
 }
 
+auto param_value_to_json(const ExprValue &value) -> std::string {
+    if (std::holds_alternative<std::string>(value))
+        return json_string(std::get<std::string>(value));
+    if (std::holds_alternative<Rational>(value))
+        return format_rational(std::get<Rational>(value));
+    return format_number(std::get<double>(value));
+}
+
 void write_node(const GraphNode &node, std::string &out) {
     out += "{\"id\":" + std::to_string(node.id);
     out += ",\"kind\":" + json_string(node_kind_name(node.kind));
@@ -79,11 +99,9 @@ void write_node(const GraphNode &node, std::string &out) {
         for (const auto &[name, value] : node.params) {
             if (!first) out += ",";
             first = false;
-            out += json_string(name) + ":" + format_number(value);
+            out += json_string(name) + ":" + param_value_to_json(value);
         }
         out += "}";
-        if (node.instrument)
-            out += ",\"instrument\":" + json_string(*node.instrument);
     }
     if (node.kind == NodeKind::Join)
         out += ",\"joinArity\":" + std::to_string(node.join_arity);
@@ -96,8 +114,6 @@ void write_node(const GraphNode &node, std::string &out) {
                    R"(,"expr":)" + expr_to_json(*entry.expr) + "}";
         }
         out += "]";
-        if (node.push_instrument)
-            out += ",\"pushInstrument\":" + json_string(*node.push_instrument);
         if (node.listen_channel)
             out += ",\"listenChannel\":" + json_string(*node.listen_channel);
     }
@@ -110,11 +126,9 @@ void write_node(const GraphNode &node, std::string &out) {
         for (const auto &[name, value] : node.params) {
             if (!first) out += ",";
             first = false;
-            out += json_string(name) + ":" + format_number(value);
+            out += json_string(name) + ":" + param_value_to_json(value);
         }
         out += "}";
-        if (node.instrument)
-            out += ",\"instrument\":" + json_string(*node.instrument);
     }
     out += ",\"next\":[";
     for (size_t i = 0; i < node.next.size(); ++i) {

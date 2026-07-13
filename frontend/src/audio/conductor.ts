@@ -24,12 +24,18 @@ export type BinOp =
     | 'and'
     | 'or';
 
+import { Rational, to_seconds, wire_to_number, type WireNumber } from './rational';
+
 export type ExprNode =
-    | { kind: 'number'; value: number }
+    | { kind: 'number'; value: WireNumber }
+    | { kind: 'string'; value: string }
     | { kind: 'null' }
+    | { kind: 'skip' }
     | { kind: 'ident'; name: string }
     | { kind: 'ternary'; cond: ExprNode; then: ExprNode; else: ExprNode }
     | { kind: 'binary'; op: BinOp; lhs: ExprNode; rhs: ExprNode };
+
+export const SKIP: unique symbol = Symbol('skip');
 
 export interface TransformEntry {
     paramName: string;
@@ -39,11 +45,9 @@ export interface TransformEntry {
 export interface GraphNode {
     id: number;
     kind: NodeKind;
-    params?: Record<string, number>;
-    instrument?: string;
+    params?: Record<string, WireNumber | string>;
     joinArity?: number;
     transforms?: TransformEntry[];
-    pushInstrument?: string;
     listenChannel?: string;
     cond?: ExprNode;
     signalId?: string;
@@ -76,53 +80,67 @@ export type InstrumentExportsMap = Record<string, InstrumentExports>;
 
 export interface TokenParams {
     instrument_id: string | null;
-    params: Record<string, number>;
+    params: Record<string, number | string>;
 }
 
 export interface InstrumentCallbackHandler {
-    call(p: Record<string, number>, ap: TokenParams[]): Record<string, number>;
+    call(p: Record<string, number | string>, ap: TokenParams[]): Record<string, number>;
 }
 
 export interface GlobalCallbackHandler {
-    call(ap: TokenParams[]): Record<string, number>;
+    call(ap: TokenParams[]): Record<string, number | string>;
 }
 
 export type InstrumentCallbackMap = Record<string, new () => InstrumentCallbackHandler>;
 
 interface ActiveTransformFrame {
     transforms: TransformEntry[];
-    pushInstrument?: string;
     listenChannel?: string;
 }
 
 interface SignalMessage {
-    params: Record<string, number>;
-    instrument?: string;
+    params: Record<string, WireNumber | string>;
 }
 
 interface Token {
     node_id: number;
     seconds_remaining: number;
+    seconds_remaining_error: number;
     instance_id: number;
     instrument_id: string | null;
-    params: Record<string, number>;
+    params: Record<string, number | string>;
+    dur_beats: Rational;
     transform_stack: ActiveTransformFrame[];
+}
+
+function kahan_subtract(value: number, amount: number, error: number): [number, number] {
+    const y = amount + error;
+    const t = value - y;
+    const new_error = t - value + y;
+    return [t, new_error];
 }
 
 const max_steps_per_tick = 64;
 
-export function eval_presence(expr: ExprNode, params: Record<string, number>): boolean {
+export function eval_presence(expr: ExprNode, params: Record<string, number | string>): boolean {
     if (expr.kind !== 'ident')
         throw new Error('conductor: bare identifier expected as presence-test condition');
     return Object.prototype.hasOwnProperty.call(params, expr.name);
 }
 
-export function eval_expr(expr: ExprNode, params: Record<string, number>): number | null {
+export function eval_expr(
+    expr: ExprNode,
+    params: Record<string, number | string>,
+): number | string | null | typeof SKIP {
     switch (expr.kind) {
         case 'number':
+            return wire_to_number(expr.value);
+        case 'string':
             return expr.value;
         case 'null':
             return null;
+        case 'skip':
+            return SKIP;
         case 'ident': {
             const value = params[expr.name];
             if (value === undefined)
@@ -139,40 +157,70 @@ export function eval_expr(expr: ExprNode, params: Record<string, number>): numbe
         case 'binary': {
             const lhs = eval_expr(expr.lhs, params);
             const rhs = eval_expr(expr.rhs, params);
+            if (lhs === SKIP || rhs === SKIP)
+                throw new Error("conductor: 'skip' cannot be used as an operand");
             if (lhs === null || rhs === null)
                 throw new Error("conductor: 'null' cannot be used as an operand");
-            switch (expr.op) {
-                case 'add':
-                    return lhs + rhs;
-                case 'sub':
-                    return lhs - rhs;
-                case 'mul':
-                    return lhs * rhs;
-                case 'div':
-                    if (rhs === 0) throw new Error('conductor: division by zero');
-                    return lhs / rhs;
-                case 'mod':
-                    if (rhs === 0) throw new Error('conductor: division by zero');
-                    return lhs % rhs;
-                case 'pow':
-                    return Math.pow(lhs, rhs);
-                case 'eq':
-                    return lhs === rhs ? 1 : 0;
-                case 'neq':
-                    return lhs !== rhs ? 1 : 0;
-                case 'lt':
-                    return lhs < rhs ? 1 : 0;
-                case 'gt':
-                    return lhs > rhs ? 1 : 0;
-                case 'lte':
-                    return lhs <= rhs ? 1 : 0;
-                case 'gte':
-                    return lhs >= rhs ? 1 : 0;
-                case 'and':
-                    return lhs !== 0 && rhs !== 0 ? 1 : 0;
-                case 'or':
-                    return lhs !== 0 || rhs !== 0 ? 1 : 0;
-            }
+            if (typeof lhs === 'number' && typeof rhs === 'number')
+                switch (expr.op) {
+                    case 'add':
+                        return lhs + rhs;
+                    case 'sub':
+                        return lhs - rhs;
+                    case 'mul':
+                        return lhs * rhs;
+                    case 'div':
+                        if (rhs === 0) throw new Error('conductor: division by zero');
+                        return lhs / rhs;
+                    case 'mod':
+                        if (rhs === 0) throw new Error('conductor: division by zero');
+                        return lhs % rhs;
+                    case 'pow':
+                        return Math.pow(lhs, rhs);
+                    case 'eq':
+                        return lhs === rhs ? 1 : 0;
+                    case 'neq':
+                        return lhs !== rhs ? 1 : 0;
+                    case 'lt':
+                        return lhs < rhs ? 1 : 0;
+                    case 'gt':
+                        return lhs > rhs ? 1 : 0;
+                    case 'lte':
+                        return lhs <= rhs ? 1 : 0;
+                    case 'gte':
+                        return lhs >= rhs ? 1 : 0;
+                    case 'and': {
+                        const lhs_clip = Math.max(0, Math.min(1, lhs));
+                        const rhs_clip = Math.max(0, Math.min(1, rhs));
+                        const result = lhs_clip * rhs_clip;
+                        if (result === 0) return 0;
+                        if (result === 1) return 1;
+                        return Math.random() < result ? 1 : 0;
+                    }
+                    case 'or': {
+                        const lhs_clip = Math.max(0, Math.min(1, lhs));
+                        const rhs_clip = Math.max(0, Math.min(1, rhs));
+                        const result = lhs_clip + rhs_clip - lhs_clip * rhs_clip;
+                        if (result === 0) return 0;
+                        if (result === 1) return 1;
+                        return Math.random() < result ? 1 : 0;
+                    }
+                    default:
+                        throw new Error('invalid number operation');
+                }
+            if (typeof lhs === 'string' && typeof rhs === 'string')
+                switch (expr.op) {
+                    case 'add':
+                        return lhs + rhs;
+                    case 'eq':
+                        return lhs === rhs ? 1 : 0;
+                    case 'neq':
+                        return lhs !== rhs ? 1 : 0;
+                    default:
+                        throw new Error('invalid string operation');
+                }
+
+            throw new Error(`conductor: lhs has type ${typeof lhs} but rhs has type ${typeof rhs}`);
         }
     }
 }
@@ -190,7 +238,8 @@ export class Conductor {
     private next_instance_id = 0;
     private tokens: Token[] = [];
     private join_arrivals: Map<number, number> = new Map();
-    private legato_voices: Map<number, { instance_id: number; instrument_id: string }> = new Map();
+    private legato_voices: Map<number | string, { instance_id: number; instrument_id: string }> =
+        new Map();
     private signals: Map<string, SignalMessage> = new Map();
 
     constructor(
@@ -223,9 +272,11 @@ export class Conductor {
                 initial.push({
                     node_id,
                     seconds_remaining: 0,
+                    seconds_remaining_error: 0,
                     instance_id: -1,
                     instrument_id: null,
                     params: {},
+                    dur_beats: Rational.ZERO,
                     transform_stack: [],
                 });
             }
@@ -242,7 +293,13 @@ export class Conductor {
         const tokens = this.tokens;
         let first_due = -1;
         for (let i = 0; i < tokens.length; i++) {
-            tokens[i].seconds_remaining -= seconds_this_tick;
+            const [next, next_error] = kahan_subtract(
+                tokens[i].seconds_remaining,
+                seconds_this_tick,
+                tokens[i].seconds_remaining_error,
+            );
+            tokens[i].seconds_remaining = next;
+            tokens[i].seconds_remaining_error = next_error;
             if (first_due === -1 && tokens[i].seconds_remaining <= 0) first_due = i;
         }
         if (first_due === -1) return;
@@ -336,9 +393,11 @@ export class Conductor {
                     const child: Token = {
                         node_id: branch_id,
                         seconds_remaining: 0,
+                        seconds_remaining_error: 0,
                         instance_id: -1,
                         instrument_id: null,
                         params: {},
+                        dur_beats: Rational.ZERO,
                         transform_stack: [...token.transform_stack],
                     };
                     children.push(...this.walk_forward(child));
@@ -351,7 +410,6 @@ export class Conductor {
                     ...token.transform_stack,
                     {
                         transforms: node.transforms ?? [],
-                        pushInstrument: node.pushInstrument,
                         listenChannel: node.listenChannel,
                     },
                 ];
@@ -363,7 +421,6 @@ export class Conductor {
             if (node.kind === 'signal_emit') {
                 this.signals.set(node.signalId!, {
                     params: node.params ?? {},
-                    instrument: node.instrument,
                 });
                 if (node.next.length === 0) return [];
                 node_id = node.next[0];
@@ -413,35 +470,42 @@ export class Conductor {
         }
     }
 
-    private to_seconds_params(params: Record<string, number>): Record<string, number> {
-        if (params.dur === undefined) return params;
-        return { ...params, dur: (60 * params.dur) / this.bpm };
+    private seconds_view(
+        params: Record<string, WireNumber | string>,
+    ): Record<string, number | string> {
+        const result: Record<string, number | string> = {};
+        for (const [name, value] of Object.entries(params))
+            result[name] = typeof value === 'string' ? value : wire_to_number(value);
+        if (typeof result.dur === 'number') result.dur = (60 * result.dur) / this.bpm;
+        return result;
     }
 
     private enter_state(token: Token, node: GraphNode): void {
         let params = node.params ?? {};
-        let instrument = node.instrument;
         for (let i = token.transform_stack.length - 1; i >= 0; i--) {
             const frame = token.transform_stack[i];
             if (frame.listenChannel !== undefined) {
                 const message = this.signals.get(frame.listenChannel);
-                if (message) {
-                    params = { ...params, ...message.params };
-                    if (message.instrument !== undefined) instrument = message.instrument;
-                }
+                if (message) params = { ...params, ...message.params };
             } else {
                 for (const transform of frame.transforms) {
-                    const value = eval_expr(transform.expr, this.to_seconds_params(params));
+                    const value = eval_expr(transform.expr, this.seconds_view(params));
+                    if (value === SKIP) continue;
                     params = { ...params };
                     if (value === null) delete params[transform.paramName];
                     else params[transform.paramName] = value;
                 }
             }
-            if (frame.pushInstrument !== undefined) instrument = frame.pushInstrument;
         }
-        token.params = this.to_seconds_params(params);
-        token.seconds_remaining += token.params.dur ?? 0;
+        token.dur_beats =
+            typeof params.dur === 'number' || (params.dur && typeof params.dur === 'object')
+                ? Rational.from_wire(params.dur)
+                : Rational.ZERO;
+        token.params = this.seconds_view(params);
+        token.seconds_remaining += to_seconds(token.dur_beats, this.bpm);
 
+        const instrument =
+            typeof token.params.instrument === 'string' ? token.params.instrument : null;
         if (instrument) {
             const exports = this.exports[instrument];
             if (!exports) throw new Error(`conductor: unknown instrument '${instrument}'`);

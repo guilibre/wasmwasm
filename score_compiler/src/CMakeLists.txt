@@ -1,6 +1,8 @@
 add_library(${PROJECT_NAME}_lib STATIC
     compile.cpp
     ast/ast.cpp
+    ast/rational.cpp
+    ast/binop_eval.cpp
     backend/codegen.cpp
     lsp/lsp.cpp
     parser/parser.cpp

@@ -81,6 +81,14 @@ play melody@{freq: freq * 2};
 This plays the same melody an octave up (equivalent to appending `'` to each
 note, but expressed as an explicit transform).
 
+Prefixing a field with `const` locks it against any transform wrapped around
+it later:
+
+```SCORE
+solo = (C E G)@{const rel: 0.1};
+play solo@{rel: 0.9};   # rel stays 0.1 - the const wins
+```
+
 ## 8. Loop it
 
 A composition that refers to itself keeps playing forever:

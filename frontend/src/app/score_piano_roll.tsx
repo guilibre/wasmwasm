@@ -35,9 +35,7 @@ function draw(canvas: HTMLCanvasElement, all_events: TracedNote[]): void {
     ctx.fillStyle = '#1a1d2e';
     ctx.fillRect(0, 0, width, height);
 
-    const events = all_events.filter(
-        (e): e is TracedNote & { instrument: string } => !!e.instrument && e.freq > 0,
-    );
+    const events = all_events.filter((e) => e.freq > 0);
     if (events.length === 0) return;
 
     const padding = 8;
@@ -54,7 +52,7 @@ function draw(canvas: HTMLCanvasElement, all_events: TracedNote[]): void {
         const w = Math.max(2, (e.dur_seconds / max_time) * (width - padding * 2));
         const pitch = -Math.log2(e.freq);
         const y = padding + ((pitch - min_pitch) / pitch_range) * (height - padding * 2 - row_h);
-        ctx.fillStyle = color_for_instrument(e.instrument, palette);
+        ctx.fillStyle = color_for_instrument(e.instrument ?? 'unknown', palette);
         ctx.fillRect(x, y, w, row_h);
     }
 }
@@ -71,7 +69,6 @@ export function ScorePianoRoll({ graph, start_node_id, stop_after_node_id, bpm, 
         () => (result.kind === 'linear' ? result.events : result.get_cycle(0).events),
         [result],
     );
-    const truncated = result.kind === 'linear' ? result.truncated : result.hit_cap;
 
     useEffect(() => {
         const canvas = canvas_ref.current;
@@ -81,11 +78,6 @@ export function ScorePianoRoll({ graph, start_node_id, stop_after_node_id, bpm, 
     return (
         <div className="score-piano-roll">
             <div className="score-piano-roll__header">
-                {truncated && (
-                    <span className="score-piano-roll__warning">
-                        truncado (limite de simulação atingido)
-                    </span>
-                )}
                 <button className="score-piano-roll__close" onClick={on_close} title="Fechar">
                     ×
                 </button>

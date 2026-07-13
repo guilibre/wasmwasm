@@ -2,9 +2,13 @@
 
 #include <cstdint>
 #include <memory>
-#include <optional>
 #include <string>
+#include <variant>
 #include <vector>
+
+#include "rational.hpp"
+
+using ExprValue = std::variant<Rational, double, std::string>;
 
 enum class BinOp : uint8_t {
     Add,
@@ -26,13 +30,17 @@ enum class BinOp : uint8_t {
 struct Expr {
     enum class Kind : uint8_t {
         Number,
+        String,
         Binary,
         Array,
         Ident,
         Ternary,
-        Null
+        Null,
+        Skip
     } kind = Kind::Number;
     double number = 0;
+    Rational number_rational;
+    std::string string_value;
     BinOp op = BinOp::Add;
     std::unique_ptr<Expr> lhs;
     std::unique_ptr<Expr> rhs;
@@ -48,11 +56,11 @@ struct Expr {
 struct Param {
     std::string name;
     std::unique_ptr<Expr> value;
+    bool is_const = false;
 };
 
 struct Block {
     std::vector<Param> params;
-    std::optional<std::string> instrument;
     size_t line = 0;
     size_t column = 0;
 };

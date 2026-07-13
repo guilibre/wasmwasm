@@ -16,6 +16,7 @@ import '@xyflow/react/dist/style.css';
 import ELK from 'elkjs/lib/elk.bundled.js';
 import ScoreWasm from '../scorewasm/compiler';
 import type { ScoreGraph, GraphNode, ExprNode } from '../audio/conductor';
+import { wire_to_number } from '../audio/rational';
 import { ScorePianoRoll } from './score_piano_roll';
 import './score_graph_view.scss';
 
@@ -27,9 +28,13 @@ interface Props {
 function expr_to_string(expr: ExprNode): string {
     switch (expr.kind) {
         case 'number':
-            return String(expr.value);
+            return String(typeof expr.value === 'object' ? wire_to_number(expr.value) : expr.value);
+        case 'string':
+            return `"${expr.value}"`;
         case 'null':
             return 'null';
+        case 'skip':
+            return 'skip';
         case 'ident':
             return expr.name;
         case 'ternary':
@@ -69,14 +74,18 @@ const KIND_LABEL: Record<GraphNode['kind'], string> = {
 function ScoreGraphNoteBody({ node }: { node: GraphNode }) {
     return (
         <>
-            {node.instrument && (
-                <div className="score-graph-node__instrument">{node.instrument}</div>
+            {node.params?.instrument && (
+                <div className="score-graph-node__instrument">
+                    {typeof node.params.instrument === 'object'
+                        ? wire_to_number(node.params.instrument)
+                        : node.params.instrument}
+                </div>
             )}
             {node.params && (
                 <div className="score-graph-node__params">
                     {Object.entries(node.params).map(([name, value]) => (
                         <div key={name} className="score-graph-node__param">
-                            {name}: {value}
+                            {name}: {typeof value === 'object' ? wire_to_number(value) : value}
                         </div>
                     ))}
                 </div>
@@ -85,15 +94,42 @@ function ScoreGraphNoteBody({ node }: { node: GraphNode }) {
     );
 }
 
-function summarize_sequence(nodes: GraphNode[]): { instrument?: string; total_dur?: number } {
-    const instruments = new Set(nodes.map((n) => n.instrument).filter((i): i is string => !!i));
-    const durs = nodes.map((n) => n.params?.dur);
-    const total_dur = durs.every((d) => d !== undefined)
-        ? durs.reduce((a, b) => a + (b ?? 0), 0)
-        : undefined;
+function longest_path_dur(nodes: GraphNode[]): number {
+    const in_group = new Set(nodes.map((n) => n.id));
+    const by_id = new Map(nodes.map((n) => [n.id, n]));
+    const memo = new Map<number, number>();
+    const in_progress = new Set<number>();
+    const visit = (id: number): number => {
+        if (memo.has(id)) return memo.get(id)!;
+        if (in_progress.has(id)) return 0;
+        in_progress.add(id);
+        const node = by_id.get(id)!;
+        const dur = node.params?.dur;
+        const own_dur = dur === undefined || typeof dur === 'string' ? 0 : wire_to_number(dur);
+        let best = 0;
+        for (const next_id of node.next) {
+            if (!in_group.has(next_id)) continue;
+            const child = visit(next_id);
+            if (child > best) best = child;
+        }
+        const result = own_dur + best;
+        in_progress.delete(id);
+        memo.set(id, result);
+        return result;
+    };
+    const roots = nodes.filter(
+        (n) => !nodes.some((other) => other.next.includes(n.id) && in_group.has(other.id)),
+    );
+    return Math.max(0, ...(roots.length > 0 ? roots : nodes).map((n) => visit(n.id)));
+}
+
+function summarize_sequence(nodes: GraphNode[]): { instrument?: string; total_dur: number } {
+    const instruments = new Set(
+        nodes.map((n) => n.params?.instrument).filter((i): i is string => !!i),
+    );
     const instrument =
-        instruments.size === 1 ? [...instruments][0] : instruments.size > 1 ? 'vários' : undefined;
-    return { instrument, total_dur };
+        instruments.size === 1 ? [...instruments][0] : instruments.size > 1 ? 'many' : undefined;
+    return { instrument, total_dur: longest_path_dur(nodes) };
 }
 
 function ScoreGraphSequenceSummary({ nodes }: { nodes: GraphNode[] }) {
@@ -102,8 +138,7 @@ function ScoreGraphSequenceSummary({ nodes }: { nodes: GraphNode[] }) {
         <>
             {instrument && <div className="score-graph-node__instrument">{instrument}</div>}
             <div className="score-graph-node__summary">
-                {nodes.length} notas
-                {total_dur !== undefined && `, dur ${total_dur}`}
+                {nodes.length} notas, dur {total_dur}
             </div>
         </>
     );
@@ -126,7 +161,7 @@ function ScoreGraphNode({ data }: NodeProps) {
                 {KIND_LABEL[node.kind]}
                 {nodes.length > 1 && ` ×${nodes.length}`}
             </div>
-            {node.kind === 'state' &&
+            {(node.kind === 'state' || node.kind === 'fork') &&
                 (nodes.length === 1 ? (
                     <ScoreGraphNoteBody node={node} />
                 ) : (
@@ -140,9 +175,6 @@ function ScoreGraphNode({ data }: NodeProps) {
                         </div>
                     ))}
                 </div>
-            )}
-            {node.kind === 'transform_push' && node.pushInstrument && (
-                <div className="score-graph-node__instrument">{node.pushInstrument}</div>
             )}
             {node.kind === 'transform_push' && node.listenChannel && (
                 <div className="score-graph-node__expr">listen "{node.listenChannel}"</div>
@@ -268,41 +300,120 @@ function compact_flow_graph(graph: ScoreGraph): { nodes: Node[]; edges: Edge[] }
     for (const n of graph.nodes)
         for (const target of n.next) in_degree.set(target, (in_degree.get(target) ?? 0) + 1);
 
-    const chain_prev = new Map<number, number>();
+    const has_real_transform = (node: GraphNode): boolean =>
+        node.kind !== 'state' &&
+        node.kind !== 'join' &&
+        node.kind !== 'fork' &&
+        (node.transforms?.length ?? 0) > 0;
+
+    const fork_has_real_transform = new Map<number, boolean>();
+    const fork_contains_real_transform = (fork_id: number): boolean => {
+        const cached = fork_has_real_transform.get(fork_id);
+        if (cached !== undefined) return cached;
+        const fork = nodes_by_id.get(fork_id);
+        fork_has_real_transform.set(fork_id, false);
+        if (!fork) return false;
+        const visited = new Set<number>();
+        const stack = [...fork.next];
+        let found = false;
+        while (stack.length > 0) {
+            const id = stack.pop()!;
+            if (visited.has(id)) continue;
+            visited.add(id);
+            const node = nodes_by_id.get(id);
+            if (!node || node.kind === 'join') continue;
+            if (has_real_transform(node)) {
+                found = true;
+                break;
+            }
+            stack.push(...node.next);
+        }
+        fork_has_real_transform.set(fork_id, found);
+        return found;
+    };
+
+    const is_groupable = (node: GraphNode): boolean => {
+        if (node.kind === 'state' || node.kind === 'join') return true;
+        if (node.kind === 'fork') return !fork_contains_real_transform(node.id);
+        return false;
+    };
+
+    const chain_prev = new Map<number, number[]>();
     for (const n of graph.nodes) {
-        if (n.kind !== 'state' || n.next.length !== 1) continue;
+        if (!is_groupable(n)) continue;
+        for (const next_id of n.next) {
+            const target = nodes_by_id.get(next_id);
+            if (!target || !is_groupable(target)) continue;
+            const preds = chain_prev.get(next_id) ?? [];
+            preds.push(n.id);
+            chain_prev.set(next_id, preds);
+        }
+    }
+
+    const chainable = new Set<number>();
+    for (const [target_id, preds] of chain_prev.entries())
+        if (preds.length === (in_degree.get(target_id) ?? 0)) chainable.add(target_id);
+
+    const node_group = new Map<number, number>();
+    const groups = new Map<number, GraphNode[]>();
+
+    const union = (a: number, b: number): void => {
+        const root_a = node_group.get(a);
+        const root_b = node_group.get(b);
+        if (root_a === undefined || root_b === undefined || root_a === root_b) return;
+        const group_a = groups.get(root_a)!;
+        const group_b = groups.get(root_b)!;
+        for (const node of group_b) node_group.set(node.id, root_a);
+        groups.set(root_a, [...group_a, ...group_b]);
+        groups.delete(root_b);
+    };
+
+    for (const n of graph.nodes) {
+        node_group.set(n.id, n.id);
+        groups.set(n.id, [n]);
+    }
+    for (const target_id of chainable) {
+        for (const pred_id of chain_prev.get(target_id) ?? []) union(pred_id, target_id);
+    }
+    for (const n of graph.nodes) {
+        if (n.kind !== 'join' || n.next.length !== 1) continue;
         const target = nodes_by_id.get(n.next[0]);
-        if (target && target.kind === 'state' && (in_degree.get(target.id) ?? 0) === 1)
-            chain_prev.set(target.id, n.id);
+        if (!target || target.kind !== 'state') continue;
+        if ((in_degree.get(target.id) ?? 0) === 1) union(n.id, target.id);
     }
 
     const representative = new Map<number, number>();
-    const groups = new Map<number, GraphNode[]>();
+    for (const [root, group] of groups.entries())
+        for (const node of group) representative.set(node.id, root);
 
-    for (const n of graph.nodes) {
-        if (chain_prev.has(n.id)) continue;
-        const group: GraphNode[] = [n];
-        representative.set(n.id, n.id);
-        let cur = n;
-        for (;;) {
-            if (cur.kind !== 'state' || cur.next.length !== 1) break;
-            const next_id = cur.next[0];
-            if (chain_prev.get(next_id) !== cur.id) break;
-            const next_node = nodes_by_id.get(next_id);
-            if (!next_node) break;
-            group.push(next_node);
-            representative.set(next_id, n.id);
-            cur = next_node;
+    const predecessors = new Map<number, number[]>();
+    for (const n of graph.nodes)
+        for (const target of n.next) {
+            const preds = predecessors.get(target) ?? [];
+            preds.push(n.id);
+            predecessors.set(target, preds);
         }
-        groups.set(n.id, group);
-    }
 
-    const nodes: Node[] = [...groups.entries()].map(([start_id, group]) => ({
-        id: String(start_id),
-        type: 'score_node',
-        position: { x: 0, y: 0 },
-        data: { nodes: group },
-    }));
+    const nodes: Node[] = [...groups.entries()].map(([start_id, group]) => {
+        const group_ids = new Set(group.map((n) => n.id));
+        const is_playable = (n: GraphNode): boolean => n.kind === 'state' || n.kind === 'fork';
+        const playable = group.filter(is_playable);
+        let entry_ids = playable
+            .filter((n) => !(predecessors.get(n.id) ?? []).some((p) => group_ids.has(p)))
+            .map((n) => n.id);
+        let exit_ids = playable
+            .filter((n) => !n.next.some((next_id) => group_ids.has(next_id)))
+            .map((n) => n.id);
+        if (entry_ids.length === 0 && playable.length > 0) entry_ids = [playable[0].id];
+        if (exit_ids.length === 0 && playable.length > 0)
+            exit_ids = [playable[playable.length - 1].id];
+        return {
+            id: String(start_id),
+            type: 'score_node',
+            position: { x: 0, y: 0 },
+            data: { nodes: group, entry_ids, exit_ids },
+        };
+    });
 
     const edges: Edge[] = [];
     const seen_edges = new Set<string>();
@@ -384,10 +495,12 @@ function ScoreGraphViewInner({ source, bpm }: Props) {
                     edges={edges}
                     onNodesChange={on_nodes_change}
                     onNodeDoubleClick={(_event, node) => {
-                        const chain = node.data.nodes as GraphNode[];
+                        const entry_ids = node.data.entry_ids as number[];
+                        const exit_ids = node.data.exit_ids as number[];
+                        if (entry_ids.length === 0 || exit_ids.length === 0) return;
                         set_piano_roll_target({
-                            start_id: chain[0].id,
-                            stop_id: chain[chain.length - 1].id,
+                            start_id: entry_ids[0],
+                            stop_id: exit_ids[exit_ids.length - 1],
                         });
                     }}
                     nodeTypes={NODE_TYPES}

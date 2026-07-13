@@ -28,12 +28,10 @@ struct TransformEntry {
 struct GraphNode {
     size_t id = 0;
     NodeKind kind = NodeKind::State;
-    std::map<std::string, double> params;
-    std::optional<std::string> instrument;
+    std::map<std::string, ExprValue> params;
     size_t join_arity = 0;
     std::vector<size_t> next;
     std::vector<TransformEntry> transforms;
-    std::optional<std::string> push_instrument;
     const Expr *branch_cond = nullptr;
     std::optional<std::string> signal_id;
     std::optional<std::string> listen_channel;
