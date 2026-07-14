@@ -5,6 +5,8 @@ import { Rational, to_seconds, wire_to_number, type WireNumber } from './rationa
 export interface TracedNote {
     start_seconds: number;
     dur_seconds: number;
+    start_beats: Rational;
+    dur_beats: Rational;
     freq: number;
     instrument?: string;
     params: Record<string, number | string>;
@@ -50,6 +52,8 @@ function strip_cycle_index(e: TaggedEvent): TracedNote {
     return {
         start_seconds: e.start_seconds,
         dur_seconds: e.dur_seconds,
+        start_beats: e.start_beats,
+        dur_beats: e.dur_beats,
         freq: e.freq,
         instrument: e.instrument,
         params: e.params,
@@ -198,6 +202,8 @@ export class ScoreTracer {
                     events.push({
                         start_seconds: to_seconds(token.time, this.bpm),
                         dur_seconds,
+                        start_beats: token.time,
+                        dur_beats,
                         freq: resolve_freq(params, this.graph),
                         instrument,
                         params,

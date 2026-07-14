@@ -36,10 +36,42 @@
         }
     }
 
-    &__canvas {
+    &__vzoom {
+        background: transparent;
+        border: 1px solid #37474f;
+        color: #cdd6f4;
+        font-size: 0.6rem;
+        width: 1.1rem;
+        height: 1.1rem;
+        line-height: 1;
+        cursor: pointer;
+
+        &:hover {
+            border-color: #89ddff;
+            color: #89ddff;
+        }
+    }
+
+    &__body {
+        display: flex;
         flex: 1;
         min-height: 0;
-        width: 100%;
+    }
+
+    &__keys {
+        flex: none;
+        display: block;
+        position: sticky;
+        left: 0;
+    }
+
+    &__grid-scroll {
+        flex: 1;
+        min-width: 0;
+        overflow: auto;
+    }
+
+    &__canvas {
         display: block;
     }
 }
