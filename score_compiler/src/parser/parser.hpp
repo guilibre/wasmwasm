@@ -38,14 +38,17 @@ class Parser {
     void consume_legato_tilde(Term &term);
     void parse_comp_terms(CompExpr &comp);
     [[nodiscard]] auto parse_comp_expr() -> CompExpr;
-    [[nodiscard]] auto parse_comp_atom() -> Term;
+    [[nodiscard]] auto parse_comp_atom() -> std::vector<Term>;
     [[nodiscard]] auto continue_octave_suffix(Term term) -> Term;
-    [[nodiscard]] auto parse_atomic_join() -> Term;
+    [[nodiscard]] auto parse_atomic_join() -> std::vector<Term>;
     [[nodiscard]] auto continue_atomic_join(Term lhs) -> Term;
-    [[nodiscard]] auto continue_pipe_term(Term term) -> Term;
+    [[nodiscard]] auto continue_atomic_join_comp(std::unique_ptr<CompExpr> lhs)
+        -> Term;
+    [[nodiscard]] auto continue_pipe_term(std::vector<Term> terms)
+        -> std::vector<Term>;
     [[nodiscard]] auto parse_pipe_term() -> Term;
     [[nodiscard]] auto continue_fork_term(Term first) -> Term;
-    [[nodiscard]] auto parse_fork_term() -> Term;
+    [[nodiscard]] auto parse_fork_term() -> std::vector<Term>;
     [[nodiscard]] auto parse_pipe_suffix(std::unique_ptr<CompExpr> lhs) -> Term;
     [[nodiscard]] auto parse_bang_suffix(std::unique_ptr<CompExpr> lhs) -> Term;
     [[nodiscard]] auto parse_var_decl() -> VarDecl;

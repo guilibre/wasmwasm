@@ -210,30 +210,37 @@ C E G C'                                # ...then C one octave up (freq * 2)
 
 ### Legato - `~`
 
-`~` between two terms in a sequence marks legato: the left term gets
-`legato: true` and `legato_id: <n>` params, tying it to the term that
-follows. The last term in a `~` chain gets `legato: false` instead (but
-keeps the same `legato_id`):
+`~` between two terms in a sequence inserts a dedicated `legato` node into
+the compiled graph, between the last real note of the term on the left and
+the first note of the term on the right - it's not a param on either note.
+A `~` chain shares one `legato` node per tie, all carrying the same id:
 
 ```SCORE
-a ~ b ~ c   # a, b, c all share one legato_id; a and b get legato: true, c gets legato: false
+a ~ b ~ c   # a -> legato(id=X) -> b -> legato(id=X) -> c
 ```
 
-`legato_id` is unique per `~` chain (a fresh id every time a chain starts),
+The id is unique per `~` chain (a fresh id every time a chain starts),
 letting the runtime tell separate legato groups apart - e.g. `a~b c~d` uses
-two different ids. `repeat` and `reverse` also assign a fresh `legato_id` to
-each copy they produce, so a `~` chain inside a repeated/reversed
-composition still gets a distinct id per repetition. The note affected is
-always the last real note of the
-term on the left of `~` - for a multi-note group this is its last note, not
-its first (`(C E) ~ D` only marks `E`). `~` cannot connect a term that forks
-(`&`), since a fork has no single "last note". Terms not adjacent to `~` get
-no `legato`/`legato_id` params at all.
+two different ids. `repeat` assigns a fresh id to each copy it produces, so
+a `~` chain inside a repeated composition still gets a distinct id per
+repetition. `reverse` doesn't clone anything (it's resolved at playback
+time - see below): a `legato` node is a plain link in the graph, so walking
+it backward has the same effect as walking it forward, with no special
+handling needed.
+
+The runtime decides, at playback time, whether a note reuses the previous
+voice: it does if the graph node it just left carried a `legato` id, or if
+the next node it's about to reach is a `legato` node (transparently
+skipping over any intervening passthrough/transform nodes to check). The
+note affected by `~` is always the last real note of the term on its left -
+for a multi-note group this is its last note, not its first (`(C E) ~ D`
+only ties `E` to `D`). `~` cannot connect a term that forks (`&`), since a
+fork has no single "last note".
 
 `~` can also tie into a self-referential loop (see below): `body ~ name`,
-where `name` is the composition's own name, marks `body`'s last note as
-tying into the loop's first note the next time it plays - the loop restarts
-without retriggering:
+where `name` is the composition's own name, inserts a `legato` node right
+before the loop closes, tying `body`'s last note into the loop's first note
+the next time it plays - the loop restarts without retriggering:
 
 ```SCORE
 melody = C D E ~ melody   # E ties into C every time the loop repeats
@@ -317,7 +324,12 @@ Pipe operators wrap a whole sub-expression and apply while inside it.
 expr |> reverse
 ```
 
-Reverses the playback order of `expr`.
+Reverses the playback order of `expr`. Unlike the other pipe operators,
+`reverse` isn't resolved at compile time: the compiler emits a single marker
+node pointing at `expr`'s (untouched) body, and the runtime conductor walks
+that body backward at playback time - flipping fork/join and
+transform-push/pop roles and `legato`'s polarity as it goes. `expr` may not
+itself be an unbounded self-referential loop.
 
 ### `repeat`
 

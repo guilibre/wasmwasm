@@ -28,8 +28,6 @@ export default class ScoreWasm {
 
     static async compile_score(source: string): Promise<ScoreGraph> {
         const mod = await this.getOrInitModule();
-        const result = JSON.parse(mod.compile_score(source)) as ScoreGraph;
-        console.log(JSON.stringify(result));
-        return result;
+        return JSON.parse(mod.compile_score(source)) as ScoreGraph;
     }
 }

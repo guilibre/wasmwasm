@@ -15,8 +15,13 @@
 namespace {
 
 auto for_each_edge(ExpandedGraph &graph, const auto &visit_edge) -> void {
-    for (auto &node : graph.nodes)
+    for (auto &node : graph.nodes) {
         for (auto &succ : node.next) visit_edge(succ);
+        if (node.kind == NodeKind::Reverse) {
+            visit_edge(node.reverse_body_entry_id);
+            visit_edge(node.reverse_body_exit_id);
+        }
+    }
     for (auto &machine : graph.entries)
         for (auto &id : machine) visit_edge(id);
 }
@@ -431,7 +436,9 @@ auto structural_cse(ExpandedGraph &graph) -> bool {
             graph.nodes[id].kind == NodeKind::TransformPush ||
             graph.nodes[id].kind == NodeKind::TransformPop ||
             graph.nodes[id].kind == NodeKind::Branch ||
-            graph.nodes[id].kind == NodeKind::SignalEmit)
+            graph.nodes[id].kind == NodeKind::SignalEmit ||
+            graph.nodes[id].kind == NodeKind::Reverse ||
+            graph.nodes[id].kind == NodeKind::Legato)
             part[id] = n + id;
 
     std::unordered_map<size_t, size_t> representative;
@@ -473,6 +480,11 @@ auto renumber_topological(ExpandedGraph &graph) -> void {
                 visited[succ] = true;
                 queue.push_back(succ);
             }
+        if (graph.nodes[id].kind == NodeKind::Reverse &&
+            !visited[graph.nodes[id].reverse_body_entry_id]) {
+            visited[graph.nodes[id].reverse_body_entry_id] = true;
+            queue.push_back(graph.nodes[id].reverse_body_entry_id);
+        }
     }
     for (size_t id = 0; id < graph.nodes.size(); ++id)
         if (!visited[id]) order.push_back(id);
@@ -485,8 +497,13 @@ auto renumber_topological(ExpandedGraph &graph) -> void {
         reordered[i] = std::move(graph.nodes[order[i]]);
         reordered[i].id = i;
     }
-    for (auto &node : reordered)
+    for (auto &node : reordered) {
         for (auto &succ : node.next) succ = new_id[succ];
+        if (node.kind == NodeKind::Reverse) {
+            node.reverse_body_entry_id = new_id[node.reverse_body_entry_id];
+            node.reverse_body_exit_id = new_id[node.reverse_body_exit_id];
+        }
+    }
     for (auto &machine : graph.entries)
         for (auto &id : machine) id = new_id[id];
 

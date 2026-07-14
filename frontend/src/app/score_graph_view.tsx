@@ -69,6 +69,8 @@ const KIND_LABEL: Record<GraphNode['kind'], string> = {
     transform_pop: 'pop',
     branch: 'choose',
     signal_emit: 'emit',
+    reverse: 'reverse',
+    legato: 'legato',
 };
 
 function ScoreGraphNoteBody({ node }: { node: GraphNode }) {

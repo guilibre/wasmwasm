@@ -61,23 +61,6 @@ auto link_after(std::vector<GraphNode> &nodes, const Piece &piece,
     }
 }
 
-struct PendingLegatoBoundary {
-    size_t passthrough_id;
-    bool has_after;
-    size_t chain_id;
-    size_t line;
-    size_t column;
-};
-
-struct PendingReverseClone {
-    MemberSet members;
-    size_t body_entry_id;
-    size_t body_exit_id;
-    MemberSet ring_members;
-    size_t entry_anchor;
-    size_t exit_anchor;
-};
-
 struct PendingRepeatClone {
     MemberSet members;
     size_t body_entry_id;
@@ -99,13 +82,10 @@ struct ExpansionContext {
     std::vector<ProgressFrame> progress_stack;
     std::vector<GraphNode> nodes;
     std::vector<std::shared_ptr<PassthroughInfo>> passthroughs;
-    std::vector<PendingReverseClone> pending_reverse_clones;
     std::vector<PendingRepeatClone> pending_repeat_clones;
-    std::vector<PendingLegatoBoundary> pending_legato_boundaries;
     std::unordered_map<size_t, size_t> transform_pop_of_push;
     std::vector<std::unique_ptr<Expr>> owned_exprs;
     size_t next_legato_id = 0;
-    std::unordered_map<size_t, size_t> legato_id_parent;
     std::vector<std::vector<std::string>> open_const_names;
 
     auto alloc(NodeKind kind) -> size_t {
@@ -119,57 +99,6 @@ struct ExpansionContext {
         return id;
     }
 };
-
-auto fold_expr_value(const Expr &expr) -> ExprValue {
-    if (expr.kind == Expr::Kind::Number) return expr.number_rational;
-    if (expr.kind == Expr::Kind::String) return expr.string_value;
-    if (expr.kind == Expr::Kind::Ident)
-        throw ResolveException(
-            "identifier '" + expr.ident_name +
-                "' is only allowed in a '@{...}' field value",
-            expr.line, expr.column);
-    if (expr.kind == Expr::Kind::Null) return std::string{};
-    if (expr.kind == Expr::Kind::Skip)
-        throw ResolveException("'skip' is not a valid field value", expr.line,
-                               expr.column);
-    if (expr.kind == Expr::Kind::Ternary)
-        return to_double(fold_expr_value(*expr.ternary_cond)) != 0
-                   ? fold_expr_value(*expr.ternary_then)
-                   : fold_expr_value(*expr.ternary_else);
-    const auto lhs = fold_expr_value(*expr.lhs);
-    const auto rhs = fold_expr_value(*expr.rhs);
-    if (std::holds_alternative<std::string>(lhs) ||
-        std::holds_alternative<std::string>(rhs)) {
-        if (!std::holds_alternative<std::string>(lhs) ||
-            !std::holds_alternative<std::string>(rhs))
-            throw ResolveException(
-                "cannot mix a string and a number in an expression", expr.line,
-                expr.column);
-        if (expr.op != BinOp::Add && expr.op != BinOp::Eq &&
-            expr.op != BinOp::NotEq)
-            throw ResolveException("invalid string operation", expr.line,
-                                   expr.column);
-    } else if (expr.op == BinOp::Div || expr.op == BinOp::Mod) {
-        const auto rhs_is_zero = std::holds_alternative<Rational>(rhs)
-                                     ? std::get<Rational>(rhs).num == 0
-                                     : to_double(rhs) == 0;
-        if (rhs_is_zero)
-            throw ResolveException("division by zero", expr.line, expr.column);
-    }
-    const auto result = apply_binary_op(expr.op, lhs, rhs);
-    if (!result)
-        throw ResolveException("invalid operation", expr.line, expr.column);
-    return *result;
-}
-
-auto fold_expr(const Expr &expr) -> double {
-    const auto value = fold_expr_value(expr);
-    if (std::holds_alternative<std::string>(value))
-        throw ResolveException(
-            "a string value cannot be used in a numeric expression", expr.line,
-            expr.column);
-    return to_double(value);
-}
 
 auto check_const_collision(ExpansionContext &ctx, const std::string &name,
                            size_t line, size_t column) -> void {
@@ -644,27 +573,25 @@ auto expand_term(const Term &term, ExpansionContext &ctx) -> Piece {
         }
 
         if (term.pipe_op == Term::PipeOp::Reverse) {
-            const auto entry_anchor = ctx.alloc(NodeKind::Passthrough);
-            const auto exit_anchor = ctx.alloc(NodeKind::Passthrough);
-
             const auto body = expand_comp_expr(*term.lhs_expr, ctx);
+            if (body.exit_unreachable)
+                throw ResolveException(
+                    "'reverse' cannot wrap a composition that already "
+                    "repeats infinitely",
+                    term.line, term.column);
 
-            ctx.pending_reverse_clones.push_back(PendingReverseClone{
-                .members = body.members,
-                .body_entry_id = body.entry_id,
-                .body_exit_id = body.exit_id,
-                .ring_members = body.open_passthrough.empty()
-                                    ? nullptr
-                                    : body.open_passthrough.front()->members,
-                .entry_anchor = entry_anchor,
-                .exit_anchor = exit_anchor,
-            });
+            const auto reverse_id = ctx.alloc(NodeKind::Reverse);
+            ctx.nodes[reverse_id].reverse_body_entry_id = body.entry_id;
+            ctx.nodes[reverse_id].reverse_body_exit_id = body.exit_id;
+
+            const auto members = make_members({reverse_id});
+            merge_members(members, body.members);
 
             return Piece{
-                .entry_id = entry_anchor,
-                .exit_id = exit_anchor,
-                .members = make_members({entry_anchor, exit_anchor}),
-                .open_passthrough = {},
+                .entry_id = reverse_id,
+                .exit_id = reverse_id,
+                .members = members,
+                .open_passthrough = body.open_passthrough,
                 .const_names = body.const_names,
             };
         }
@@ -776,86 +703,22 @@ auto find_boundary_state(ExpansionContext &ctx, size_t entry_id, size_t exit_id)
     return last_state;
 }
 
-auto find_first_state(ExpansionContext &ctx, size_t start_id)
-    -> std::optional<size_t> {
-    auto id = start_id;
-    while (ctx.nodes[id].kind != NodeKind::State) {
-        if (ctx.nodes[id].next.size() != 1) return std::nullopt;
-        id = ctx.nodes[id].next[0];
-    }
-    return id;
-}
-
-auto legato_find(std::unordered_map<size_t, size_t> &parent, size_t x)
-    -> size_t {
-    const auto it = parent.find(x);
-    if (it == parent.end() || it->second == x) return x;
-    const auto root = legato_find(parent, it->second);
-    it->second = root;
-    return root;
-}
-
-auto legato_union(std::unordered_map<size_t, size_t> &parent, size_t a,
-                  size_t b) -> void {
-    const auto ra = legato_find(parent, a);
-    const auto rb = legato_find(parent, b);
-    if (ra != rb) parent[ra] = rb;
-}
-
-auto stamp_legato_id(ExpansionContext &ctx, size_t state_id, size_t chain_id)
-    -> void {
-    auto &params = ctx.nodes[state_id].params;
-    const auto it = params.find("legato_id");
-    if (it != params.end()) {
-        const auto existing = static_cast<size_t>(std::get<double>(it->second));
-        if (existing != chain_id)
-            legato_union(ctx.legato_id_parent, existing, chain_id);
-    }
-    params["legato_id"] = static_cast<double>(chain_id);
-}
-
-auto canonicalize_legato_ids(ExpansionContext &ctx) -> void {
-    for (auto &node : ctx.nodes) {
-        const auto it = node.params.find("legato_id");
-        if (it == node.params.end()) continue;
-        const auto id = static_cast<size_t>(std::get<double>(it->second));
-        it->second = static_cast<double>(legato_find(ctx.legato_id_parent, id));
-    }
-}
-
-auto apply_legato(ExpansionContext &ctx, const Piece &piece, const Term &term,
-                  bool in_chain, bool incoming, bool has_after,
-                  std::optional<size_t> &chain_id) -> void {
-    if (!in_chain) {
-        chain_id.reset();
+auto link_legato_after(ExpansionContext &ctx, const Piece &piece,
+                       const Term &term, size_t next_id) -> void {
+    if (!term.legato_after) {
+        link_after(ctx.nodes, piece, next_id);
         return;
     }
-    if (!chain_id) chain_id = ctx.next_legato_id++;
 
-    if (incoming) {
-        const auto entry_state = find_first_state(ctx, piece.entry_id);
-        if (entry_state) stamp_legato_id(ctx, *entry_state, *chain_id);
-    }
-
-    const auto state_id =
-        find_boundary_state(ctx, piece.entry_id, piece.exit_id);
-    if (state_id) {
-        stamp_legato_id(ctx, *state_id, *chain_id);
-        ctx.nodes[*state_id].params["legato"] = has_after ? 1.0 : 0.0;
-    } else if (piece.exit_unreachable) {
-        ctx.pending_legato_boundaries.push_back(PendingLegatoBoundary{
-            .passthrough_id = piece.entry_id,
-            .has_after = has_after,
-            .chain_id = *chain_id,
-            .line = term.line,
-            .column = term.column,
-        });
-    } else {
+    if (!find_boundary_state(ctx, piece.entry_id, piece.exit_id) &&
+        !piece.exit_unreachable)
         throw ResolveException("'~' cannot connect a term that forks (&)",
                                term.line, term.column);
-    }
 
-    if (!has_after) chain_id.reset();
+    const auto legato_id = ctx.alloc(NodeKind::Legato);
+    ctx.nodes[legato_id].legato_id = ctx.next_legato_id++;
+    ctx.nodes[legato_id].next.push_back(next_id);
+    link_after(ctx.nodes, piece, legato_id);
 }
 
 auto expand_comp_expr(const CompExpr &comp, ExpansionContext &ctx) -> Piece {
@@ -863,11 +726,6 @@ auto expand_comp_expr(const CompExpr &comp, ExpansionContext &ctx) -> Piece {
 
     auto first = expand_term(comp.terms.front(), ctx);
     if (comp.terms.size() == 1) return first;
-
-    std::optional<size_t> legato_chain_id;
-    apply_legato(ctx, first, comp.terms.front(),
-                 comp.terms.front().legato_after, false,
-                 comp.terms.front().legato_after, legato_chain_id);
 
     const auto members = make_members();
     merge_members(members, first.members);
@@ -877,17 +735,12 @@ auto expand_comp_expr(const CompExpr &comp, ExpansionContext &ctx) -> Piece {
     auto prev = first;
     for (size_t i = 1; i < comp.terms.size(); ++i) {
         const auto next = expand_term(comp.terms[i], ctx);
-        apply_legato(ctx, next, comp.terms[i],
-                     comp.terms[i - 1].legato_after ||
-                         comp.terms[i].legato_after,
-                     comp.terms[i - 1].legato_after, comp.terms[i].legato_after,
-                     legato_chain_id);
         merge_members(members, next.members);
         if (next.const_names)
             combined_const_names->insert(next.const_names->begin(),
                                          next.const_names->end());
         if (prev.exit_unreachable) continue;
-        link_after(ctx.nodes, prev, next.entry_id);
+        link_legato_after(ctx, prev, comp.terms[i - 1], next.entry_id);
         prev = Piece{
             .entry_id = prev.entry_id,
             .exit_id = next.exit_id,
@@ -1003,23 +856,6 @@ auto resolve_passthroughs(ExpansionContext &ctx) -> void {
     }
 }
 
-auto resolve_pending_legato_boundaries(ExpansionContext &ctx) -> void {
-    for (const auto &pending : ctx.pending_legato_boundaries) {
-        if (ctx.nodes[pending.passthrough_id].next.empty())
-            throw ResolveException("'~' cannot connect to a loop that never "
-                                   "plays a note",
-                                   pending.line, pending.column);
-        const auto target = ctx.nodes[pending.passthrough_id].next[0];
-        const auto state_id = find_first_state(ctx, target);
-        if (!state_id)
-            throw ResolveException("'~' cannot connect a term that forks (&)",
-                                   pending.line, pending.column);
-        ctx.nodes[*state_id].params["legato"] = pending.has_after ? 1.0 : 0.0;
-        ctx.nodes[*state_id].params["legato_id"] =
-            static_cast<double>(pending.chain_id);
-    }
-}
-
 } // namespace
 
 auto prune_unreachable(ExpandedGraph &graph) -> void {
@@ -1034,6 +870,9 @@ auto prune_unreachable(ExpandedGraph &graph) -> void {
         reachable[id] = true;
         for (auto succ : graph.nodes[id].next)
             if (!reachable[succ]) stack.push_back(succ);
+        if (graph.nodes[id].kind == NodeKind::Reverse &&
+            !reachable[graph.nodes[id].reverse_body_entry_id])
+            stack.push_back(graph.nodes[id].reverse_body_entry_id);
     }
 
     std::unordered_map<size_t, size_t> new_id;
@@ -1046,6 +885,10 @@ auto prune_unreachable(ExpandedGraph &graph) -> void {
     for (auto &node : kept) {
         node.id = new_id[node.id];
         for (auto &succ : node.next) succ = new_id[succ];
+        if (node.kind == NodeKind::Reverse) {
+            node.reverse_body_entry_id = new_id[node.reverse_body_entry_id];
+            node.reverse_body_exit_id = new_id[node.reverse_body_exit_id];
+        }
     }
     for (auto &machine : graph.entries)
         for (auto &id : machine) id = new_id[id];
@@ -1081,122 +924,13 @@ auto collect_body_members(const ExpansionContext &ctx, size_t entry_id,
 auto remap_legato_ids(ExpansionContext &ctx,
                       const std::unordered_map<size_t, size_t> &clone_of)
     -> void {
-    std::unordered_map<double, size_t> fresh_id;
+    std::unordered_map<size_t, size_t> fresh_id;
     for (const auto &[original, clone_id] : clone_of) {
-        const auto it = ctx.nodes[clone_id].params.find("legato_id");
-        if (it == ctx.nodes[clone_id].params.end()) continue;
+        if (ctx.nodes[clone_id].kind != NodeKind::Legato) continue;
         const auto [fresh_it, inserted] = fresh_id.try_emplace(
-            std::get<double>(it->second), ctx.next_legato_id);
+            ctx.nodes[clone_id].legato_id, ctx.next_legato_id);
         if (inserted) ++ctx.next_legato_id;
-        it->second = static_cast<double>(fresh_it->second);
-    }
-}
-
-auto resolve_pending_reverse_clones(ExpansionContext &ctx) -> void {
-    std::unordered_map<size_t, size_t> resolved_bridges;
-
-    for (const auto &pr : ctx.pending_reverse_clones) {
-        const auto body_members =
-            collect_body_members(ctx, pr.body_entry_id, pr.body_exit_id);
-        const auto all_members = std::make_shared<std::unordered_set<size_t>>(
-            body_members.begin(), body_members.end());
-        for (auto original : body_members) {
-            const auto bridge_it = resolved_bridges.find(original);
-            if (bridge_it == resolved_bridges.end()) continue;
-            const auto inner_exit = bridge_it->second;
-            if (!all_members->contains(inner_exit)) continue;
-            auto cur = original;
-            while (cur != inner_exit && !ctx.nodes[cur].next.empty()) {
-                const auto nxt = ctx.nodes[cur].next[0];
-                if (nxt == inner_exit) break;
-                if (!all_members->insert(nxt).second) break;
-                if (pr.ring_members) pr.ring_members->insert(nxt);
-                cur = nxt;
-            }
-        }
-
-        std::unordered_map<size_t, size_t> clone_of;
-        auto get_clone = [&](size_t original) -> size_t {
-            const auto it = clone_of.find(original);
-            if (it != clone_of.end()) return it->second;
-            const auto clone_id = ctx.nodes.size();
-            auto clone = ctx.nodes[original];
-            clone.id = clone_id;
-            clone.next.clear();
-            ctx.nodes.push_back(std::move(clone));
-            clone_of[original] = clone_id;
-            return clone_id;
-        };
-
-        for (const auto original : *all_members) get_clone(original);
-        remap_legato_ids(ctx, clone_of);
-        for (const auto original : *all_members) {
-            const auto &node = ctx.nodes[original];
-            const auto clone_id = clone_of[original];
-            if (node.kind == NodeKind::Fork) {
-                ctx.nodes[clone_id].kind = NodeKind::Join;
-                ctx.nodes[clone_id].join_arity = node.next.size();
-            } else if (node.kind == NodeKind::Join) {
-                ctx.nodes[clone_id].kind = NodeKind::Fork;
-                ctx.nodes[clone_id].join_arity = 0;
-            }
-            const auto legato_it = node.params.find("legato");
-            if (legato_it != node.params.end() &&
-                std::holds_alternative<double>(legato_it->second)) {
-                ctx.nodes[clone_id].params["legato"] =
-                    std::get<double>(legato_it->second) != 0.0 ? 0.0 : 1.0;
-            }
-        }
-        for (const auto original : *all_members) {
-            const auto clone_id = clone_of[original];
-            for (auto succ : ctx.nodes[original].next) {
-                if (succ == pr.entry_anchor) {
-                    ctx.nodes[clone_id].next.push_back(
-                        clone_of[pr.body_entry_id]);
-                    continue;
-                }
-                if (!clone_of.contains(succ)) continue;
-                auto flip = true;
-                if (pr.ring_members) {
-                    flip = pr.ring_members->contains(original) &&
-                           pr.ring_members->contains(succ);
-                }
-                if (flip)
-                    ctx.nodes[clone_of[succ]].next.push_back(clone_id);
-                else
-                    ctx.nodes[clone_id].next.push_back(clone_of[succ]);
-            }
-        }
-
-        for (auto original : *all_members) {
-            if (ctx.nodes[original].kind != NodeKind::TransformPush) continue;
-            const auto pop_it = ctx.transform_pop_of_push.find(original);
-            if (pop_it == ctx.transform_pop_of_push.end()) continue;
-            const auto original_pop = pop_it->second;
-            if (!all_members->contains(original_pop)) continue;
-
-            const auto push_clone = clone_of[original];
-            const auto pop_clone = clone_of[original_pop];
-
-            ctx.nodes[pop_clone].kind = NodeKind::TransformPush;
-            ctx.nodes[pop_clone].transforms = ctx.nodes[original].transforms;
-
-            ctx.nodes[push_clone].kind = NodeKind::TransformPop;
-            ctx.nodes[push_clone].transforms.clear();
-
-            ctx.transform_pop_of_push[pop_clone] = push_clone;
-        }
-
-        if (pr.ring_members) {
-            ctx.nodes[pr.entry_anchor].next.push_back(
-                clone_of[pr.body_entry_id]);
-        } else {
-            ctx.nodes[pr.entry_anchor].next.push_back(
-                clone_of[pr.body_exit_id]);
-            ctx.nodes[clone_of[pr.body_entry_id]].next.push_back(
-                pr.exit_anchor);
-        }
-        resolved_bridges[pr.entry_anchor] = pr.exit_anchor;
+        ctx.nodes[clone_id].legato_id = fresh_it->second;
     }
 }
 
@@ -1248,9 +982,7 @@ auto resolve_pending_repeat_clones(ExpansionContext &ctx) -> void {
     }
 }
 
-} // namespace
-
-auto expand_program(const Program &program) -> ExpandedGraph {
+auto expand_program_impl(const Program &program) -> ExpandedGraph {
     ExpansionContext ctx;
 
     ExpandedGraph graph;
@@ -1310,13 +1042,20 @@ auto expand_program(const Program &program) -> ExpandedGraph {
         }
     }
     resolve_passthroughs(ctx);
-    resolve_pending_legato_boundaries(ctx);
-    canonicalize_legato_ids(ctx);
     resolve_pending_repeat_clones(ctx);
-    resolve_pending_reverse_clones(ctx);
     graph.nodes = std::move(ctx.nodes);
     graph.owned_exprs = std::move(ctx.owned_exprs);
     graph.transform_pop_of_push = std::move(ctx.transform_pop_of_push);
     optimize_graph(graph);
     return graph;
+}
+
+} // namespace
+
+auto expand_program(const Program &program) -> ExpandedGraph {
+    try {
+        return expand_program_impl(program);
+    } catch (const FoldException &e) {
+        throw ResolveException(e.what(), e.line, e.col);
+    }
 }

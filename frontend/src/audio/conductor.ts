@@ -6,7 +6,9 @@ export type NodeKind =
     | 'transform_push'
     | 'transform_pop'
     | 'branch'
-    | 'signal_emit';
+    | 'signal_emit'
+    | 'reverse'
+    | 'legato';
 
 export type BinOp =
     | 'add'
@@ -51,6 +53,9 @@ export interface GraphNode {
     listenChannel?: string;
     cond?: ExprNode;
     signalId?: string;
+    reverseBodyEntryId?: number;
+    reverseBodyExitId?: number;
+    legatoId?: number;
     next: number[];
 }
 
@@ -64,6 +69,7 @@ export interface ScoreGraph {
     scales: ScoreScale[];
     nodes: GraphNode[];
     entries: number[][];
+    transformPopOfPush: Record<number, number>;
 }
 
 export interface InstrumentExports {
@@ -98,12 +104,19 @@ interface ActiveTransformFrame {
     listenChannel?: string;
 }
 
+type Direction = 'forward' | 'backward';
+
+function flip(direction: Direction): Direction {
+    return direction === 'forward' ? 'backward' : 'forward';
+}
+
 interface SignalMessage {
     params: Record<string, WireNumber | string>;
 }
 
 interface Token {
     node_id: number;
+    direction: Direction;
     seconds_remaining: number;
     seconds_remaining_error: number;
     instance_id: number;
@@ -111,6 +124,7 @@ interface Token {
     params: Record<string, number | string>;
     dur_beats: Rational;
     transform_stack: ActiveTransformFrame[];
+    pending_legato_id?: number;
 }
 
 function kahan_subtract(value: number, amount: number, error: number): [number, number] {
@@ -227,6 +241,8 @@ export function eval_expr(
 
 export class Conductor {
     private readonly nodes_by_id: Map<number, GraphNode>;
+    private readonly prev_of: Map<number, number[]>;
+    private readonly transform_push_of_pop: Map<number, number>;
     private readonly param_index: ParamIndex;
     private readonly exports: InstrumentExportsMap;
     private readonly global_exports: GlobalExports | null;
@@ -253,6 +269,20 @@ export class Conductor {
         global_callback: (new () => GlobalCallbackHandler) | null = null,
     ) {
         this.nodes_by_id = new Map(graph.nodes.map((n) => [n.id, n]));
+        this.prev_of = new Map();
+        for (const node of graph.nodes) {
+            for (const succ of node.next) {
+                const preds = this.prev_of.get(succ);
+                if (preds) preds.push(node.id);
+                else this.prev_of.set(succ, [node.id]);
+            }
+        }
+        this.transform_push_of_pop = new Map(
+            Object.entries(graph.transformPopOfPush).map(([push_id, pop_id]) => [
+                pop_id,
+                Number(push_id),
+            ]),
+        );
         this.param_index = param_index;
         this.exports = exports;
         this.global_exports = global_exports;
@@ -271,6 +301,7 @@ export class Conductor {
             for (const node_id of machine) {
                 initial.push({
                     node_id,
+                    direction: 'forward',
                     seconds_remaining: 0,
                     seconds_remaining_error: 0,
                     instance_id: -1,
@@ -351,8 +382,10 @@ export class Conductor {
     private advance_past_current_node(token: Token): boolean {
         const node = this.nodes_by_id.get(token.node_id);
         if (!node) throw new Error(`conductor: unknown node id ${token.node_id}`);
-        if (node.next.length === 0) return false;
-        token.node_id = node.next[0];
+        const succs =
+            token.direction === 'backward' ? (this.prev_of.get(node.id) ?? []) : node.next;
+        if (succs.length === 0) return false;
+        token.node_id = succs[0];
         return true;
     }
 
@@ -362,8 +395,39 @@ export class Conductor {
         token.instrument_id = null;
     }
 
+    private succs_of(node: GraphNode, direction: Direction): number[] {
+        return direction === 'backward' ? (this.prev_of.get(node.id) ?? []) : node.next;
+    }
+
+    private effective_kind(node: GraphNode, direction: Direction): NodeKind {
+        if (direction === 'forward') return node.kind;
+        if (node.kind === 'fork') return 'join';
+        if (node.kind === 'join') return 'fork';
+        if (node.kind === 'transform_push') return 'transform_pop';
+        if (node.kind === 'transform_pop') return 'transform_push';
+        return node.kind;
+    }
+
+    private peek_next_legato_id(start_id: number, direction: Direction): number | undefined {
+        let node_id = start_id;
+        const visited = new Set<number>();
+        for (;;) {
+            if (visited.has(node_id)) return undefined;
+            visited.add(node_id);
+            const node = this.nodes_by_id.get(node_id);
+            if (!node) return undefined;
+            const kind = this.effective_kind(node, direction);
+            if (kind === 'legato') return node.legatoId;
+            if (kind === 'state' || kind === 'fork' || kind === 'branch') return undefined;
+            const succs = this.succs_of(node, direction);
+            if (succs.length !== 1) return undefined;
+            node_id = succs[0];
+        }
+    }
+
     private walk_forward(token: Token): Token[] {
         let node_id = token.node_id;
+        let direction = token.direction;
         const visited = new Set<number>();
         for (;;) {
             if (visited.has(node_id))
@@ -374,24 +438,41 @@ export class Conductor {
 
             const node = this.nodes_by_id.get(node_id);
             if (!node) throw new Error(`conductor: unknown node id ${node_id}`);
+            const succs = this.succs_of(node, direction);
+            const kind = this.effective_kind(node, direction);
 
-            if (node.kind === 'state') {
+            if (kind === 'state') {
                 token.node_id = node.id;
+                token.direction = direction;
                 this.enter_state(token, node);
                 return [token];
             }
 
-            if (node.kind === 'passthrough') {
-                if (node.next.length === 0) return [];
-                node_id = node.next[0];
+            if (node.kind === 'reverse') {
+                node_id = node.reverseBodyExitId!;
+                direction = flip(direction);
                 continue;
             }
 
-            if (node.kind === 'fork') {
+            if (kind === 'passthrough') {
+                if (succs.length === 0) return [];
+                node_id = succs[0];
+                continue;
+            }
+
+            if (kind === 'legato') {
+                token.pending_legato_id = node.legatoId;
+                if (succs.length === 0) return [];
+                node_id = succs[0];
+                continue;
+            }
+
+            if (kind === 'fork') {
                 const children: Token[] = [];
-                for (const branch_id of node.next) {
+                for (const branch_id of succs) {
                     const child: Token = {
                         node_id: branch_id,
+                        direction,
                         seconds_remaining: 0,
                         seconds_remaining_error: 0,
                         instance_id: -1,
@@ -405,54 +486,61 @@ export class Conductor {
                 return children;
             }
 
-            if (node.kind === 'transform_push') {
+            if (kind === 'transform_push') {
+                const push_node =
+                    direction === 'backward'
+                        ? this.nodes_by_id.get(this.transform_push_of_pop.get(node.id)!)!
+                        : node;
                 token.transform_stack = [
                     ...token.transform_stack,
                     {
-                        transforms: node.transforms ?? [],
-                        listenChannel: node.listenChannel,
+                        transforms: push_node.transforms ?? [],
+                        listenChannel: push_node.listenChannel,
                     },
                 ];
-                if (node.next.length === 0) return [];
-                node_id = node.next[0];
+                if (succs.length === 0) return [];
+                node_id = succs[0];
                 continue;
             }
 
-            if (node.kind === 'signal_emit') {
+            if (kind === 'signal_emit') {
                 this.signals.set(node.signalId!, {
                     params: node.params ?? {},
                 });
-                if (node.next.length === 0) return [];
-                node_id = node.next[0];
+                if (succs.length === 0) return [];
+                node_id = succs[0];
                 continue;
             }
 
-            if (node.kind === 'transform_pop') {
+            if (kind === 'transform_pop') {
                 token.transform_stack = token.transform_stack.slice(0, -1);
-                if (node.next.length === 0) return [];
-                node_id = node.next[0];
+                if (succs.length === 0) return [];
+                node_id = succs[0];
                 continue;
             }
 
-            if (node.kind === 'branch') {
+            if (kind === 'branch') {
                 const cond = node.cond!;
                 const truthy =
                     cond.kind === 'ident'
                         ? eval_presence(cond, token.params)
                         : (eval_expr(cond, token.params) ?? 0) !== 0;
-                node_id = node.next[truthy ? 0 : 1];
+                node_id = succs[truthy ? 0 : 1];
                 continue;
             }
 
             const arrived = (this.join_arrivals.get(node.id) ?? 0) + 1;
-            const arity = node.joinArity ?? 1;
+            const arity =
+                direction === 'backward' && node.kind === 'fork'
+                    ? node.next.length
+                    : (node.joinArity ?? 1);
             if (arrived < arity) {
                 this.join_arrivals.set(node.id, arrived);
                 return [];
             }
             this.join_arrivals.set(node.id, 0);
-            if (node.next.length === 0) return [];
-            node_id = node.next[0];
+            if (succs.length === 0) return [];
+            node_id = succs[0];
         }
     }
 
@@ -482,6 +570,8 @@ export class Conductor {
 
     private enter_state(token: Token, node: GraphNode): void {
         let params = node.params ?? {};
+        const legato_id = token.pending_legato_id;
+        token.pending_legato_id = undefined;
         for (let i = token.transform_stack.length - 1; i >= 0; i--) {
             const frame = token.transform_stack[i];
             if (frame.listenChannel !== undefined) {
@@ -510,7 +600,6 @@ export class Conductor {
             const exports = this.exports[instrument];
             if (!exports) throw new Error(`conductor: unknown instrument '${instrument}'`);
 
-            const legato_id = token.params.legato_id;
             const existing_voice =
                 legato_id !== undefined ? this.legato_voices.get(legato_id) : undefined;
             const reuse_voice =
@@ -533,6 +622,22 @@ export class Conductor {
             token.instance_id = id;
             token.instrument_id = instrument;
 
+            const succs = this.succs_of(node, token.direction);
+            const next_legato_id =
+                succs.length === 1
+                    ? this.peek_next_legato_id(succs[0], token.direction)
+                    : undefined;
+
+            if (next_legato_id !== undefined) {
+                this.legato_voices.set(next_legato_id, {
+                    instance_id: id,
+                    instrument_id: instrument,
+                });
+                token.params['legato'] = 1;
+            } else if (legato_id !== undefined) {
+                this.legato_voices.delete(legato_id);
+            }
+
             const index_table = this.param_index[instrument] ?? {};
             const handler = this.instrument_callback_handlers[instrument];
             const params = handler ? handler.call(token.params, this.tokens) : token.params;
@@ -545,17 +650,6 @@ export class Conductor {
                     );
                 }
                 exports.set_param(id, index, value);
-            }
-
-            if (legato_id !== undefined) {
-                if (token.params.legato === 1) {
-                    this.legato_voices.set(legato_id, {
-                        instance_id: id,
-                        instrument_id: instrument,
-                    });
-                } else {
-                    this.legato_voices.delete(legato_id);
-                }
             }
         }
 

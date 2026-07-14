@@ -1,5 +1,7 @@
 #include "lsp.hpp"
 
+#include "ast/binop_eval.hpp"
+#include "ast/simplify.hpp"
 #include "backend/json_writer.hpp"
 #include "parser/parser.hpp"
 #include "parser/tokenizer.hpp"
@@ -94,7 +96,7 @@ auto lsp_diagnostics(const std::string &src) -> std::string {
     const Tokenizer tokenizer(src);
     Parser parser(tokenizer);
     try {
-        const auto program = parser.parse();
+        const auto program = simplify_program(parser.parse());
         const auto graph = expand_program(program);
         (void)graph;
     } catch (const ParseException &e) {
@@ -102,6 +104,12 @@ auto lsp_diagnostics(const std::string &src) -> std::string {
                std::to_string(e.line - 1) + R"(,"col":)" +
                std::to_string(e.col - 1) + R"(,"severity":"error"}])";
     } catch (const ResolveException &e) {
+        const auto line = e.line > 0 ? e.line - 1 : 0;
+        const auto col = e.col > 0 ? e.col - 1 : 0;
+        return R"([{"msg":)" + json_string(e.what()) + R"(,"line":)" +
+               std::to_string(line) + R"(,"col":)" + std::to_string(col) +
+               R"(,"severity":"error"}])";
+    } catch (const FoldException &e) {
         const auto line = e.line > 0 ? e.line - 1 : 0;
         const auto col = e.col > 0 ? e.col - 1 : 0;
         return R"([{"msg":)" + json_string(e.what()) + R"(,"line":)" +

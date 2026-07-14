@@ -42,6 +42,10 @@ auto node_kind_name(NodeKind kind) -> std::string {
         return "branch";
     case NodeKind::SignalEmit:
         return "signal_emit";
+    case NodeKind::Reverse:
+        return "reverse";
+    case NodeKind::Legato:
+        return "legato";
     }
     return "state";
 }
@@ -119,6 +123,14 @@ void write_node(const GraphNode &node, std::string &out) {
     }
     if (node.kind == NodeKind::Branch)
         out += ",\"cond\":" + expr_to_json(*node.branch_cond);
+    if (node.kind == NodeKind::Reverse) {
+        out += ",\"reverseBodyEntryId\":" +
+               std::to_string(node.reverse_body_entry_id);
+        out += ",\"reverseBodyExitId\":" +
+               std::to_string(node.reverse_body_exit_id);
+    }
+    if (node.kind == NodeKind::Legato)
+        out += ",\"legatoId\":" + std::to_string(node.legato_id);
     if (node.kind == NodeKind::SignalEmit) {
         out += ",\"signalId\":" + json_string(*node.signal_id);
         out += ",\"params\":{";
@@ -167,6 +179,16 @@ auto graph_to_json(const ExpandedGraph &graph) -> std::string {
         }
         out += "]";
     }
-    out += "]}";
+    out += "],\"transformPopOfPush\":{";
+    {
+        bool first = true;
+        for (const auto &[push_id, pop_id] : graph.transform_pop_of_push) {
+            if (!first) out += ",";
+            first = false;
+            out +=
+                "\"" + std::to_string(push_id) + "\":" + std::to_string(pop_id);
+        }
+    }
+    out += "}}";
     return out;
 }

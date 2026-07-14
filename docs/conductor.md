@@ -31,6 +31,14 @@ A graph node has a `kind`:
 | `transform_pop`  | pops the most recent transform                                                                                                                                                 |
 | `branch`         | evaluates `cond` (an `ExprNode`) against the token's current params, then follows `next[0]` if true or `next[1]` if false - compiled from [`choose`](score-language.md#choose) |
 | `signal_emit`    | writes `params`/`instrument` to the global `signalId` mailbox, then continues - compiled from [`emit`](score-language.md#emit)                                                 |
+| `reverse`        | walks the subgraph rooted at `reverseBodyEntryId`/`reverseBodyExitId` backward - compiled from [`reverse`](score-language.md#reverse)                                          |
+| `legato`         | marks the token so the next `state` it reaches reuses/sustains a voice, carrying `legatoId` - compiled from [`~`](score-language.md#legato---)                                |
+
+`repeat` is resolved entirely at compile time (by cloning the graph in
+`score_compiler`), so it never appears as a distinct `kind` here - by the
+time the JSON graph reaches `Conductor`, its effect is already baked into
+ordinary `next` edges. `reverse` is the only pipe operator resolved at
+playback time - see [Reverse](#reverse) below.
 
 `ScoreGraph.entries` lists one node-id list per `play` statement - the
 starting points for tokens when playback begins.
@@ -84,29 +92,72 @@ When a token reaches a `state` node (`enter_state`):
    output), then `set_param` for each resolved parameter that the
    instrument exposes (via a per-instrument `param_index`).
 
+## Reverse
+
+`reverse` (`expr |> reverse`) is not resolved at compile time like the other
+pipe operators - `score_compiler` emits a single `reverse` node that points
+at `expr`'s untouched body (`reverseBodyEntryId`/`reverseBodyExitId`), and
+`Conductor` walks that body backward while inside it, using a `prev`
+adjacency map it builds once (lazily, from every node's `next`) at
+construction time. While walking backward:
+
+- `fork` and `join` swap roles (a `fork` encountered backward behaves like a
+  `join`, and vice versa), since a fork's outgoing branches become converging
+  paths when walked in reverse.
+- `transform_push` and `transform_pop` swap roles the same way, using
+  `transformPopOfPush` (also serialized into the graph) to find the paired
+  node's `transforms`/`listenChannel` when a `transform_pop` needs to act as
+  a push.
+- `state`, `passthrough`, `signal_emit`, `legato`, and `branch` behave the
+  same, just following `prev` edges instead of `next` - a `legato` node
+  needs no special-casing here, since marking "the next node reached"
+  works identically regardless of which direction that next node is
+  reached from.
+
+A token records its current `direction` (`'forward'` or `'backward'`) so
+that later, when it advances past a `state` node whose duration has
+elapsed, it continues stepping the right way even outside of `walk_forward`.
+Nesting a `reverse` inside another `reverse` flips the direction again, back
+to forward.
+
 ## Legato
 
-A `state` node produced by the score language's `~` operator carries two
-extra params: `legato` (1 on every note but the last of a `~` chain, 0 on
-the last) and `legato_id` (unique per chain, including per copy produced by
-`repeat`/`reverse`).
+The score language's `~` operator compiles to a dedicated `legato` graph
+node (see the kind table above), not a param on a `state`. Each `~` chain
+shares one `legatoId` across every `legato` node it produces (a fresh id
+per chain, including per copy produced by `repeat`).
 
-When entering a `state` whose `legato_id` matches a chain `Conductor` is
-already tracking (`legato_voices`, keyed by `legato_id`), it reuses that
-chain's `instance_id` instead of calling `instantiate` again - only
-`set_param` runs, so the instrument voice glides into the new params instead
-of being retriggered. `instantiate` only runs for the first note of a chain
-(or any note with no `legato_id` at all). After resolving params, `legato:
-1` records the voice under `legato_id` for the next note to pick up;
-`legato: 0` removes it, since the chain ends there. If a chain's instrument
-name were to change mid-chain, the voice isn't reused (a fresh `instantiate`
-runs instead) to avoid handing one instrument's voice to another.
+While walking the graph (`walk_forward`), passing through a `legato` node
+records its `legatoId` on the token (`pending_legato_id`), to be consumed
+by the next `state` the token reaches. In `enter_state`:
+
+- The id used to look up an existing voice in `legato_voices` is whatever
+  the token is carrying (`pending_legato_id`, cleared immediately after
+  reading) - i.e. the id of the `legato` node most recently passed through
+  on the way to this `state`.
+- Whether to *keep* that voice alive for the next note is decided by
+  looking ahead: `Conductor` follows this `state`'s outgoing edge,
+  transparently skipping over any `passthrough`/`transform_push`/
+  `transform_pop` nodes in between, to see whether a `legato` node comes
+  next. If it does, the voice just used is recorded under that node's
+  `legatoId` for the next `state` to pick up; if not, any voice recorded
+  under the id this `state` itself carried is removed, since the chain
+  ends here.
+
+If entering a `state` whose lookup id matches a chain `Conductor` is
+already tracking, it reuses that chain's `instance_id` instead of calling
+`instantiate` again - only `set_param` runs, so the instrument voice glides
+into the new params instead of being retriggered. `instantiate` only runs
+for the first note of a chain (or any note with no matching id at all). If
+a chain's instrument name were to change mid-chain, the voice isn't reused
+(a fresh `instantiate` runs instead) to avoid handing one instrument's
+voice to another.
 
 ## Signals
 
 `Conductor` keeps a single `signals: Map<string, {params, instrument?}>`,
 global for the whole graph and the whole run - not scoped to a token, a
-`play` statement, or a `repeat`/`reverse` copy. A `signal_emit` node
+`play` statement, or a `repeat` copy. A `signal_emit` node
 (compiled from [`emit`](score-language.md#emit)) writes to it (last write
 wins, whichever token reaches it first in real time); a `transform_push`
 frame with `listenChannel` set (compiled from

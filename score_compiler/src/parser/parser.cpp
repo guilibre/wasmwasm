@@ -38,6 +38,23 @@ auto wrap_as_comp_expr(Term term) -> std::unique_ptr<CompExpr> {
     return comp;
 }
 
+auto wrap_terms_as_comp_expr(std::vector<Term> terms)
+    -> std::unique_ptr<CompExpr> {
+    auto comp = std::make_unique<CompExpr>();
+    comp->terms = std::move(terms);
+    return comp;
+}
+
+auto wrap_terms_as_single_term(std::vector<Term> terms) -> Term {
+    if (terms.size() == 1) return std::move(terms.front());
+    Term fork;
+    fork.kind = Term::Kind::Fork;
+    fork.line = terms.front().line;
+    fork.column = terms.front().column;
+    fork.branches.push_back(wrap_terms_as_comp_expr(std::move(terms)));
+    return fork;
+}
+
 } // namespace
 
 Parser::Parser(Tokenizer tokenizer) : tokenizer(tokenizer) { advance(); }
@@ -248,22 +265,71 @@ auto Parser::parse_block() -> Block {
     return block;
 }
 
-auto Parser::parse_comp_atom() -> Term {
+auto Parser::parse_comp_atom() -> std::vector<Term> {
+    if (current.kind == TokenKind::LParen) {
+        const auto line = current.line;
+        const auto column = current.column;
+        advance();
+        auto inner = parse_comp_expr();
+        expect(TokenKind::RParen, "')'");
+
+        if (current.kind == TokenKind::At) {
+            std::vector<Term> result;
+            result.push_back(continue_atomic_join_comp(
+                std::make_unique<CompExpr>(std::move(inner))));
+            return result;
+        }
+        if (current.kind == TokenKind::Pipe) {
+            std::vector<Term> result;
+            result.push_back(parse_pipe_suffix(
+                std::make_unique<CompExpr>(std::move(inner))));
+            return result;
+        }
+        if (current.kind == TokenKind::Bang) {
+            std::vector<Term> result;
+            result.push_back(parse_bang_suffix(
+                std::make_unique<CompExpr>(std::move(inner))));
+            return result;
+        }
+
+        if (inner.terms.size() == 1) {
+            std::vector<Term> result;
+            result.push_back(
+                continue_octave_suffix(std::move(inner.terms.front())));
+            return result;
+        }
+
+        if (current.kind == TokenKind::Tick ||
+            current.kind == TokenKind::Comma ||
+            current.kind == TokenKind::Ampersand) {
+            Term fork;
+            fork.kind = Term::Kind::Fork;
+            fork.line = line;
+            fork.column = column;
+            fork.branches.push_back(
+                std::make_unique<CompExpr>(std::move(inner)));
+            std::vector<Term> result;
+            result.push_back(continue_octave_suffix(std::move(fork)));
+            return result;
+        }
+
+        std::vector<Term> result;
+        result.reserve(inner.terms.size());
+        for (auto &term : inner.terms) result.push_back(std::move(term));
+        return result;
+    }
+
     Term term;
     term.line = current.line;
     term.column = current.column;
-    if (match(TokenKind::LParen)) {
-        term.kind = Term::Kind::Fork;
-        term.branches.push_back(std::make_unique<CompExpr>(parse_comp_expr()));
-        expect(TokenKind::RParen, "')'");
-    } else if (current.kind == TokenKind::LBrace) {
+    if (current.kind == TokenKind::LBrace) {
         term.kind = Term::Kind::BlockLit;
         term.block_lit = parse_block();
     } else if (match(TokenKind::KwChoose)) {
         term.kind = Term::Kind::Choose;
         term.pipe_expr = parse_ternary();
-        term.branches.push_back(wrap_as_comp_expr(parse_fork_term()));
-        term.branches.push_back(wrap_as_comp_expr(parse_fork_term()));
+        term.branches.push_back(wrap_terms_as_comp_expr(parse_fork_term()));
+        term.branches.push_back(wrap_terms_as_comp_expr(parse_fork_term()));
     } else if (match(TokenKind::KwEmit)) {
         term.kind = Term::Kind::Emit;
         term.rhs_name = expect(TokenKind::String, "signal id").lexeme;
@@ -274,7 +340,9 @@ auto Parser::parse_comp_atom() -> Term {
         term.var_name = name.lexeme;
     }
 
-    return continue_octave_suffix(std::move(term));
+    std::vector<Term> result;
+    result.push_back(continue_octave_suffix(std::move(term)));
+    return result;
 }
 
 auto Parser::continue_octave_suffix(Term term) -> Term {
@@ -330,8 +398,27 @@ auto Parser::continue_octave_suffix(Term term) -> Term {
     return term;
 }
 
-auto Parser::parse_atomic_join() -> Term {
-    return continue_atomic_join(parse_comp_atom());
+auto Parser::parse_atomic_join() -> std::vector<Term> {
+    return parse_comp_atom();
+}
+
+auto Parser::continue_atomic_join_comp(std::unique_ptr<CompExpr> lhs) -> Term {
+    const auto line = lhs->terms.front().line;
+    const auto column = lhs->terms.front().column;
+    Term join;
+    join.kind = Term::Kind::AtomicJoin;
+    join.line = line;
+    join.column = column;
+    join.lhs_expr = std::move(lhs);
+    advance();
+    if (current.kind == TokenKind::LBrace) {
+        join.rhs_is_block = true;
+        join.rhs_block = parse_block();
+    } else {
+        const auto &rhs_name = expect(TokenKind::Ident, "variable name");
+        join.rhs_name = rhs_name.lexeme;
+    }
+    return continue_atomic_join(std::move(join));
 }
 
 auto Parser::continue_atomic_join(Term lhs) -> Term {
@@ -402,22 +489,28 @@ auto Parser::parse_bang_suffix(std::unique_ptr<CompExpr> lhs) -> Term {
     return join;
 }
 
-auto Parser::continue_pipe_term(Term term) -> Term {
+auto Parser::continue_pipe_term(std::vector<Term> terms) -> std::vector<Term> {
     while (current.kind == TokenKind::Pipe || current.kind == TokenKind::Bang ||
            current.kind == TokenKind::At) {
+        Term applied;
         if (current.kind == TokenKind::At) {
-            term = continue_atomic_join(std::move(term));
+            applied = continue_atomic_join_comp(
+                wrap_terms_as_comp_expr(std::move(terms)));
+        } else if (current.kind == TokenKind::Pipe) {
+            applied =
+                parse_pipe_suffix(wrap_terms_as_comp_expr(std::move(terms)));
         } else {
-            term = current.kind == TokenKind::Pipe
-                       ? parse_pipe_suffix(wrap_as_comp_expr(std::move(term)))
-                       : parse_bang_suffix(wrap_as_comp_expr(std::move(term)));
+            applied =
+                parse_bang_suffix(wrap_terms_as_comp_expr(std::move(terms)));
         }
+        terms.clear();
+        terms.push_back(std::move(applied));
     }
-    return term;
+    return terms;
 }
 
 auto Parser::parse_pipe_term() -> Term {
-    return continue_pipe_term(parse_atomic_join());
+    return wrap_terms_as_single_term(continue_pipe_term(parse_atomic_join()));
 }
 
 auto Parser::continue_fork_term(Term first) -> Term {
@@ -432,8 +525,18 @@ auto Parser::continue_fork_term(Term first) -> Term {
     return fork;
 }
 
-auto Parser::parse_fork_term() -> Term {
-    return continue_fork_term(parse_pipe_term());
+auto Parser::parse_fork_term() -> std::vector<Term> {
+    auto terms = continue_pipe_term(parse_atomic_join());
+    if (terms.size() != 1) {
+        if (current.kind != TokenKind::Ampersand) return terms;
+        auto merged = wrap_terms_as_single_term(std::move(terms));
+        terms.clear();
+        terms.push_back(std::move(merged));
+    }
+
+    std::vector<Term> result;
+    result.push_back(continue_fork_term(std::move(terms.front())));
+    return result;
 }
 
 void Parser::consume_legato_tilde(Term &term) {
@@ -446,7 +549,8 @@ void Parser::consume_legato_tilde(Term &term) {
 
 void Parser::parse_comp_terms(CompExpr &comp) {
     while (starts_term()) {
-        comp.terms.push_back(parse_fork_term());
+        auto terms = parse_fork_term();
+        for (auto &term : terms) comp.terms.push_back(std::move(term));
         consume_legato_tilde(comp.terms.back());
     }
 }
@@ -480,8 +584,12 @@ auto Parser::parse_var_decl() -> VarDecl {
             term.block_lit = std::move(block);
             term.line = block_line;
             term.column = block_column;
-            Term first = continue_fork_term(continue_pipe_term(
-                continue_atomic_join(continue_octave_suffix(std::move(term)))));
+            auto joined =
+                continue_atomic_join(continue_octave_suffix(std::move(term)));
+            std::vector<Term> single;
+            single.push_back(std::move(joined));
+            Term first = continue_fork_term(wrap_terms_as_single_term(
+                continue_pipe_term(std::move(single))));
             decl.comp.terms.push_back(std::move(first));
             consume_legato_tilde(decl.comp.terms.back());
             parse_comp_terms(decl.comp);
