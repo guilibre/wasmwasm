@@ -1,7 +1,6 @@
 #include "lsp.hpp"
 
 #include "ast/binop_eval.hpp"
-#include "ast/simplify.hpp"
 #include "backend/json_writer.hpp"
 #include "parser/parser.hpp"
 #include "parser/tokenizer.hpp"
@@ -52,6 +51,7 @@ auto lsp_tokens(const std::string &src) -> std::string {
         case TokenKind::KwListen:
         case TokenKind::KwNull:
         case TokenKind::KwConst:
+        case TokenKind::KwSkip:
             emit(tok.line, tok.column, len, "keyword");
             break;
         case TokenKind::Ident:
@@ -93,12 +93,11 @@ auto lsp_tokens(const std::string &src) -> std::string {
 }
 
 auto lsp_diagnostics(const std::string &src) -> std::string {
-    const Tokenizer tokenizer(src);
-    Parser parser(tokenizer);
     try {
-        const auto program = simplify_program(parser.parse());
-        const auto graph = expand_program(program);
-        (void)graph;
+        const Tokenizer tokenizer(src);
+        Parser parser(tokenizer);
+        const auto program = parser.parse();
+        (void)expand_program(program);
     } catch (const ParseException &e) {
         return R"([{"msg":)" + json_string(e.what()) + R"(,"line":)" +
                std::to_string(e.line - 1) + R"(,"col":)" +
@@ -148,6 +147,7 @@ auto lsp_completions(const std::string &src, size_t /*line*/, size_t /*col*/)
     emit("true", "", "keyword");
     emit("false", "", "keyword");
     emit("const", "", "keyword");
+    emit("skip", "", "keyword");
 
     const Tokenizer tokenizer(src);
     Parser parser(tokenizer);

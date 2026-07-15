@@ -21,6 +21,10 @@ auto for_each_edge(ExpandedGraph &graph, const auto &visit_edge) -> void {
             visit_edge(node.reverse_body_entry_id);
             visit_edge(node.reverse_body_exit_id);
         }
+        if (node.kind == NodeKind::Repeat) {
+            visit_edge(node.repeat_body_entry_id);
+            visit_edge(node.repeat_body_exit_id);
+        }
     }
     for (auto &machine : graph.entries)
         for (auto &id : machine) visit_edge(id);
@@ -258,17 +262,22 @@ auto find_scope(const ExpandedGraph &graph, size_t push_id,
         } else if (node.kind == NodeKind::State) {
             scope.states.push_back(id);
         }
-        for (auto succ : node.next) {
+        auto visit_succ = [&](size_t succ) -> void {
             if (aborted) return;
             if (color[succ] == Color::Grey) {
                 scope.has_cycle = true;
-                continue;
+                return;
             }
-            if (color[succ] == Color::Black) continue;
+            if (color[succ] == Color::Black) return;
             color[succ] = Color::Grey;
             visit(succ);
             color[succ] = Color::Black;
-        }
+        };
+        if (node.kind == NodeKind::Reverse)
+            visit_succ(node.reverse_body_entry_id);
+        if (node.kind == NodeKind::Repeat)
+            visit_succ(node.repeat_body_entry_id);
+        for (auto succ : node.next) visit_succ(succ);
     };
 
     for (auto succ : graph.nodes[push_id].next) {
@@ -438,7 +447,9 @@ auto structural_cse(ExpandedGraph &graph) -> bool {
             graph.nodes[id].kind == NodeKind::Branch ||
             graph.nodes[id].kind == NodeKind::SignalEmit ||
             graph.nodes[id].kind == NodeKind::Reverse ||
-            graph.nodes[id].kind == NodeKind::Legato)
+            graph.nodes[id].kind == NodeKind::Legato ||
+            graph.nodes[id].kind == NodeKind::Skip ||
+            graph.nodes[id].kind == NodeKind::Repeat)
             part[id] = n + id;
 
     std::unordered_map<size_t, size_t> representative;
@@ -485,6 +496,11 @@ auto renumber_topological(ExpandedGraph &graph) -> void {
             visited[graph.nodes[id].reverse_body_entry_id] = true;
             queue.push_back(graph.nodes[id].reverse_body_entry_id);
         }
+        if (graph.nodes[id].kind == NodeKind::Repeat &&
+            !visited[graph.nodes[id].repeat_body_entry_id]) {
+            visited[graph.nodes[id].repeat_body_entry_id] = true;
+            queue.push_back(graph.nodes[id].repeat_body_entry_id);
+        }
     }
     for (size_t id = 0; id < graph.nodes.size(); ++id)
         if (!visited[id]) order.push_back(id);
@@ -502,6 +518,10 @@ auto renumber_topological(ExpandedGraph &graph) -> void {
         if (node.kind == NodeKind::Reverse) {
             node.reverse_body_entry_id = new_id[node.reverse_body_entry_id];
             node.reverse_body_exit_id = new_id[node.reverse_body_exit_id];
+        }
+        if (node.kind == NodeKind::Repeat) {
+            node.repeat_body_entry_id = new_id[node.repeat_body_entry_id];
+            node.repeat_body_exit_id = new_id[node.repeat_body_exit_id];
         }
     }
     for (auto &machine : graph.entries)

@@ -33,12 +33,21 @@ A graph node has a `kind`:
 | `signal_emit`    | writes `params`/`instrument` to the global `signalId` mailbox, then continues - compiled from [`emit`](score-language.md#emit)                                                 |
 | `reverse`        | walks the subgraph rooted at `reverseBodyEntryId`/`reverseBodyExitId` backward - compiled from [`reverse`](score-language.md#reverse)                                          |
 | `legato`         | marks the token so the next `state` it reaches reuses/sustains a voice, carrying `legatoId` - compiled from [`~`](score-language.md#legato---)                                |
+| `skip`           | adds `skipCount` to the token's remaining skip counter - compiled from [`skip`](score-language.md#skip)                                                                        |
+| `repeat`         | walks the subgraph rooted at `repeatBodyEntryId`/`repeatBodyExitId` `repeatCount` times in sequence, looping back to the entry each time the exit is reached - compiled from [`repeat`](score-language.md#repeat) |
 
-`repeat` is resolved entirely at compile time (by cloning the graph in
-`score_compiler`), so it never appears as a distinct `kind` here - by the
-time the JSON graph reaches `Conductor`, its effect is already baked into
-ordinary `next` edges. `reverse` is the only pipe operator resolved at
-playback time - see [Reverse](#reverse) below.
+`reverse`, `skip`, and `repeat` are the only pipe operators resolved at
+playback time rather than compile time - see [Reverse](#reverse) below. None
+of them clone the body they wrap, so none of them make the compiled graph
+grow with the size of a count/parameter (`n` in `repeat n`/`skip n`) - only
+a single marker node is added regardless of how large `n` is.
+
+While a token's remaining skip counter is above zero, each `state` node it
+reaches is treated as a no-op passthrough (no instrument instantiated, no
+params applied) and the counter is decremented instead of the state being
+entered - only once the counter reaches zero does the next `state` play
+normally. Forking while the counter is nonzero copies it onto every child
+token, so each branch counts down independently from the fork point.
 
 `ScoreGraph.entries` lists one node-id list per `play` statement - the
 starting points for tokens when playback begins.
@@ -120,12 +129,49 @@ elapsed, it continues stepping the right way even outside of `walk_forward`.
 Nesting a `reverse` inside another `reverse` flips the direction again, back
 to forward.
 
+## Repeat
+
+`repeat` (`expr |> repeat n`) is, like `reverse`, resolved at playback time
+rather than compile time - `score_compiler` compiles `expr`'s body exactly
+once and emits a single `repeat` node pointing at it
+(`repeatBodyEntryId`/`repeatBodyExitId`/`repeatCount`), instead of cloning
+the body `n` times. This keeps the compiled graph's size independent of
+`n`, however large.
+
+Each token tracks a `repeat_stack` of active repeat frames (`{
+repeat_node_id, body_entry_id, body_exit_id, remaining }`), pushed when the
+token enters a `repeat` node (jumping to `body_entry_id`) and popped when it
+reaches `body_exit_id`:
+
+- If `remaining > 0`, the token loops back to `body_entry_id` and
+  `remaining` is decremented - the body plays again from the top.
+- If `remaining === 0`, the token continues past the `repeat` node to
+  whatever follows it in the static graph (`succs_of(repeat_node, ...)`).
+
+Because the body is the same set of graph nodes on every iteration (not a
+fresh clone), any state a node carries across visits - most notably a
+`legato` node's id, and `join_arivals`/`transform_stack` bookkeeping - is
+naturally shared and correctly reused between repetitions, the same way it
+would be for a plain non-repeated sequence played twice in a row.
+
+Forking (`&`) inside a repeated body copies the current token's
+`repeat_stack` onto every child token, so each branch continues counting
+down its own remaining repetitions independently - the same pattern used
+for `skip_remaining` and `transform_stack`. `repeat` composes with `reverse`
+by tracking `body_entry_id`/`body_exit_id` relative to the token's current
+walk direction at the moment the `repeat` node is entered, so a `repeat`
+nested inside a `reverse` (or vice versa) loops through the body in
+whichever direction it's currently being walked.
+
 ## Legato
 
 The score language's `~` operator compiles to a dedicated `legato` graph
 node (see the kind table above), not a param on a `state`. Each `~` chain
 shares one `legatoId` across every `legato` node it produces (a fresh id
-per chain, including per copy produced by `repeat`).
+per chain). Since `repeat` no longer clones the body it wraps, a `~` chain
+inside a repeated body keeps the same `legatoId` across every repetition -
+the runtime's per-id voice bookkeeping is unaffected by how many times the
+same `legato` node is walked through.
 
 While walking the graph (`walk_forward`), passing through a `legato` node
 records its `legatoId` on the token (`pending_legato_id`), to be consumed

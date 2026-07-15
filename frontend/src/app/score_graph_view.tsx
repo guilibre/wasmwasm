@@ -71,6 +71,8 @@ const KIND_LABEL: Record<GraphNode['kind'], string> = {
     signal_emit: 'emit',
     reverse: 'reverse',
     legato: 'legato',
+    skip: 'skip',
+    repeat: 'repeat',
 };
 
 function ScoreGraphNoteBody({ node }: { node: GraphNode }) {
@@ -134,13 +136,19 @@ function summarize_sequence(nodes: GraphNode[]): { instrument?: string; total_du
     return { instrument, total_dur: longest_path_dur(nodes) };
 }
 
-function ScoreGraphSequenceSummary({ nodes }: { nodes: GraphNode[] }) {
+function ScoreGraphSequenceSummary({
+    nodes,
+    count_nodes,
+}: {
+    nodes: GraphNode[];
+    count_nodes?: GraphNode[];
+}) {
     const { instrument, total_dur } = summarize_sequence(nodes);
     return (
         <>
             {instrument && <div className="score-graph-node__instrument">{instrument}</div>}
             <div className="score-graph-node__summary">
-                {nodes.length} notas, dur {total_dur}
+                {(count_nodes ?? nodes).length} notas, dur {total_dur}
             </div>
         </>
     );
@@ -193,12 +201,36 @@ function ScoreGraphNode({ data }: NodeProps) {
                     <ScoreGraphNoteBody node={node} />
                 </>
             )}
+            {node.kind === 'skip' && node.skipCount !== undefined && (
+                <div className="score-graph-node__arity">skipped ×{node.skipCount}</div>
+            )}
+            {(node.kind === 'repeat' || node.kind === 'reverse') && (
+                <>
+                    {node.kind === 'repeat' && node.repeatCount !== undefined && (
+                        <div className="score-graph-node__arity">n: {node.repeatCount}</div>
+                    )}
+                    <ScoreGraphSequenceSummary
+                        nodes={nodes}
+                        count_nodes={nodes.filter((n) => n.kind === 'state')}
+                    />
+                </>
+            )}
+        </div>
+    );
+}
+
+function ScoreGraphPlayNode({ data }: NodeProps) {
+    return (
+        <div className="score-graph-node score-graph-node--play">
+            <Handle type="source" position={Position.Bottom} id="bottom" />
+            <div className="score-graph-node__kind">play {data.index as number}</div>
         </div>
     );
 }
 
 const NODE_TYPES = {
     score_node: ScoreGraphNode,
+    play_node: ScoreGraphPlayNode,
 };
 
 function get_node_intersection(intersection_node: InternalNode, target_node: InternalNode) {
@@ -296,7 +328,194 @@ async function layout_nodes(nodes: Node[], edges: Edge[]): Promise<Node[]> {
     });
 }
 
-function compact_flow_graph(graph: ScoreGraph): { nodes: Node[]; edges: Edge[] } {
+function body_entry_of(node: GraphNode): number | undefined {
+    if (node.kind === 'reverse') return node.reverseBodyEntryId;
+    if (node.kind === 'repeat') return node.repeatBodyEntryId;
+    return undefined;
+}
+
+function body_exit_of(node: GraphNode): number | undefined {
+    if (node.kind === 'reverse') return node.reverseBodyExitId;
+    if (node.kind === 'repeat') return node.repeatBodyExitId;
+    return undefined;
+}
+
+function is_loop_marker(node: GraphNode): boolean {
+    return body_entry_of(node) !== undefined;
+}
+
+function is_absorbing_marker(node: GraphNode): boolean {
+    return is_loop_marker(node) || node.kind === 'skip';
+}
+
+function is_transparent_link(node: GraphNode): boolean {
+    return (
+        (node.kind === 'legato' || node.kind === 'passthrough' || node.kind === 'transform_pop') &&
+        node.next.length === 1
+    );
+}
+
+function is_dead_end_passthrough(node: GraphNode): boolean {
+    return node.kind === 'passthrough' && node.next.length === 0;
+}
+
+function resolve_visual_target(
+    nodes_by_id: Map<number, GraphNode>,
+    start_id: number,
+): number | undefined {
+    let id = start_id;
+    const visited = new Set<number>();
+    while (!visited.has(id)) {
+        visited.add(id);
+        const node = nodes_by_id.get(id);
+        if (!node) return id;
+        if (is_dead_end_passthrough(node)) return undefined;
+        if (!is_transparent_link(node)) return id;
+        id = node.next[0];
+    }
+    return id;
+}
+
+function resolve_all(nodes_by_id: Map<number, GraphNode>, ids: number[]): number[] {
+    return ids
+        .map((id) => resolve_visual_target(nodes_by_id, id))
+        .filter((id): id is number => id !== undefined);
+}
+
+function collect_loop_body(
+    nodes_by_id: Map<number, GraphNode>,
+    body_entry_id: number,
+    exit_id: number,
+): number[] {
+    const members: number[] = [];
+    const visited = new Set<number>();
+    const stack = [body_entry_id];
+    while (stack.length > 0) {
+        const id = stack.pop()!;
+        if ((id === exit_id && id !== body_entry_id) || visited.has(id)) continue;
+        visited.add(id);
+        const node = nodes_by_id.get(id);
+        if (!node) continue;
+        members.push(id);
+        if (id !== body_entry_id && is_loop_marker(node)) continue;
+        stack.push(...node.next);
+    }
+    return members;
+}
+
+interface SkipRepeatFrame {
+    repeat_id: number;
+    remaining: number;
+}
+
+function skip_loop_back(
+    nodes_by_id: Map<number, GraphNode>,
+    repeat_stack: SkipRepeatFrame[],
+    node_id: number,
+): number[] | undefined {
+    const top = repeat_stack[repeat_stack.length - 1];
+    if (top === undefined) return undefined;
+    const repeat_node = nodes_by_id.get(top.repeat_id);
+    if (!repeat_node || body_exit_of(repeat_node) !== node_id) return undefined;
+    repeat_stack.pop();
+    if (top.remaining > 0) {
+        repeat_stack.push({ repeat_id: top.repeat_id, remaining: top.remaining - 1 });
+        return [body_entry_of(repeat_node)!];
+    }
+    return repeat_node.next;
+}
+
+function collect_skipped_states(
+    nodes_by_id: Map<number, GraphNode>,
+    start_id: number,
+    skip_count: number,
+): { members: number[]; continuation?: number[] } {
+    const members: number[] = [];
+    let remaining = skip_count;
+    let id = start_id;
+    const repeat_stack: SkipRepeatFrame[] = [];
+    const visited = new Set<number>();
+    for (;;) {
+        if (visited.has(id) || id === undefined) return { members };
+        visited.add(id);
+        const node = nodes_by_id.get(id);
+        if (!node) return { members };
+        members.push(id);
+
+        const entry_id = body_entry_of(node);
+        if (entry_id !== undefined && node.repeatCount !== undefined) {
+            repeat_stack.push({ repeat_id: node.id, remaining: node.repeatCount - 1 });
+            id = entry_id;
+            continue;
+        }
+
+        if (node.kind === 'state') {
+            remaining--;
+            if (remaining <= 0) {
+                const looped_after = skip_loop_back(nodes_by_id, repeat_stack, node.id);
+                if (looped_after !== undefined) return { members, continuation: looped_after };
+                return { members, continuation: node.next };
+            }
+        }
+
+        const looped = skip_loop_back(nodes_by_id, repeat_stack, node.id);
+        if (looped !== undefined) {
+            if (looped.length !== 1) return { members, continuation: looped };
+            id = looped[0];
+            continue;
+        }
+
+        if (node.next.length !== 1) return { members, continuation: node.next };
+        id = node.next[0];
+    }
+}
+
+function compact_flow_graph(full_graph: ScoreGraph): { nodes: Node[]; edges: Edge[] } {
+    const nodes_by_id_raw = new Map(full_graph.nodes.map((n) => [n.id, n]));
+
+    const absorbed_by: Map<number, number[]> = new Map();
+    const add_owner = (member_id: number, owner_id: number): void => {
+        const owners = absorbed_by.get(member_id) ?? [];
+        if (!owners.includes(owner_id)) owners.push(owner_id);
+        absorbed_by.set(member_id, owners);
+    };
+    for (const n of full_graph.nodes) {
+        const entry_id = body_entry_of(n);
+        const exit_id = body_exit_of(n);
+        if (entry_id === undefined || exit_id === undefined) continue;
+        for (const member_id of collect_loop_body(nodes_by_id_raw, entry_id, exit_id))
+            add_owner(member_id, n.id);
+    }
+
+    const skip_continuation: Map<number, number[]> = new Map();
+    for (const n of full_graph.nodes) {
+        if (n.kind !== 'skip' || n.next.length !== 1 || n.skipCount === undefined) continue;
+        const { members, continuation } = collect_skipped_states(
+            nodes_by_id_raw,
+            n.next[0],
+            n.skipCount,
+        );
+        for (const member_id of members) add_owner(member_id, n.id);
+        if (continuation !== undefined) skip_continuation.set(n.id, continuation);
+    }
+
+    const graph: ScoreGraph = {
+        ...full_graph,
+        nodes: full_graph.nodes
+            .filter(
+                (n) =>
+                    !is_transparent_link(n) &&
+                    !is_dead_end_passthrough(n) &&
+                    !absorbed_by.has(n.id),
+            )
+            .map((n) => ({
+                ...n,
+                next:
+                    n.kind === 'skip' && skip_continuation.has(n.id)
+                        ? resolve_all(nodes_by_id_raw, skip_continuation.get(n.id)!)
+                        : resolve_all(nodes_by_id_raw, n.next),
+            })),
+    };
     const nodes_by_id = new Map(graph.nodes.map((n) => [n.id, n]));
     const in_degree = new Map<number, number>();
     for (const n of graph.nodes)
@@ -324,7 +543,7 @@ function compact_flow_graph(graph: ScoreGraph): { nodes: Node[]; edges: Edge[] }
             visited.add(id);
             const node = nodes_by_id.get(id);
             if (!node || node.kind === 'join') continue;
-            if (has_real_transform(node)) {
+            if (has_real_transform(node) || is_absorbing_marker(node)) {
                 found = true;
                 break;
             }
@@ -384,6 +603,34 @@ function compact_flow_graph(graph: ScoreGraph): { nodes: Node[]; edges: Edge[] }
         if ((in_degree.get(target.id) ?? 0) === 1) union(n.id, target.id);
     }
 
+    const resolve_absorption_roots = (id: number): number[] => {
+        const roots = new Set<number>();
+        const visit = (current: number, path: Set<number>): void => {
+            const owners = absorbed_by.get(current);
+            if (!owners || path.has(current)) {
+                roots.add(current);
+                return;
+            }
+            const next_path = new Set(path);
+            next_path.add(current);
+            for (const owner of owners) visit(owner, next_path);
+        };
+        visit(id, new Set());
+        return [...roots];
+    };
+
+    for (const [member_id] of absorbed_by.entries()) {
+        const member = nodes_by_id_raw.get(member_id);
+        if (!member || is_transparent_link(member) || is_dead_end_passthrough(member)) continue;
+        const root_ids = resolve_absorption_roots(member_id);
+        node_group.set(member_id, root_ids[0]);
+        for (const root_id of root_ids) {
+            const group = groups.get(root_id) ?? [];
+            group.push(member);
+            groups.set(root_id, group);
+        }
+    }
+
     const representative = new Map<number, number>();
     for (const [root, group] of groups.entries())
         for (const node of group) representative.set(node.id, root);
@@ -397,6 +644,19 @@ function compact_flow_graph(graph: ScoreGraph): { nodes: Node[]; edges: Edge[] }
         }
 
     const nodes: Node[] = [...groups.entries()].map(([start_id, group]) => {
+        const marker = group.find((n) => n.id === start_id && is_absorbing_marker(n));
+        if (marker) {
+            return {
+                id: String(start_id),
+                type: 'score_node',
+                position: { x: 0, y: 0 },
+                data: {
+                    nodes: [marker, ...group.filter((n) => n.id !== marker.id)],
+                    entry_ids: [],
+                    exit_ids: [],
+                },
+            };
+        }
         const group_ids = new Set(group.map((n) => n.id));
         const is_playable = (n: GraphNode): boolean => n.kind === 'state' || n.kind === 'fork';
         const playable = group.filter(is_playable);
@@ -417,6 +677,15 @@ function compact_flow_graph(graph: ScoreGraph): { nodes: Node[]; edges: Edge[] }
         };
     });
 
+    for (const [index] of full_graph.entries.entries()) {
+        nodes.push({
+            id: `play-${index}`,
+            type: 'play_node',
+            position: { x: 0, y: 0 },
+            data: { index },
+        });
+    }
+
     const edges: Edge[] = [];
     const seen_edges = new Set<string>();
     for (const n of graph.nodes) {
@@ -431,6 +700,26 @@ function compact_flow_graph(graph: ScoreGraph): { nodes: Node[]; edges: Edge[] }
             edges.push({
                 id: edge_id,
                 source: String(source_rep),
+                target: String(target_rep),
+                type: 'floating',
+                animated: false,
+                markerEnd: { type: MarkerType.ArrowClosed },
+            });
+        }
+    }
+    for (const [index, machine] of full_graph.entries.entries()) {
+        const play_id = `play-${index}`;
+        for (const entry_id of machine) {
+            const target_id = resolve_visual_target(nodes_by_id_raw, entry_id);
+            if (target_id === undefined) continue;
+            const target_rep = representative.get(target_id);
+            if (target_rep === undefined) continue;
+            const edge_id = `${play_id}->${target_rep}`;
+            if (seen_edges.has(edge_id)) continue;
+            seen_edges.add(edge_id);
+            edges.push({
+                id: edge_id,
+                source: play_id,
                 target: String(target_rep),
                 type: 'floating',
                 animated: false,
@@ -497,6 +786,15 @@ function ScoreGraphViewInner({ source, bpm }: Props) {
                     edges={edges}
                     onNodesChange={on_nodes_change}
                     onNodeDoubleClick={(_event, node) => {
+                        const group_nodes = node.data.nodes as GraphNode[] | undefined;
+                        const marker = group_nodes?.find((n) => is_loop_marker(n));
+                        if (marker) {
+                            const start_id = body_entry_of(marker);
+                            const stop_id = body_exit_of(marker);
+                            if (start_id !== undefined && stop_id !== undefined)
+                                set_piano_roll_target({ start_id, stop_id });
+                            return;
+                        }
                         const entry_ids = node.data.entry_ids as number[];
                         const exit_ids = node.data.exit_ids as number[];
                         if (entry_ids.length === 0 || exit_ids.length === 0) return;

@@ -46,6 +46,10 @@ auto node_kind_name(NodeKind kind) -> std::string {
         return "reverse";
     case NodeKind::Legato:
         return "legato";
+    case NodeKind::Skip:
+        return "skip";
+    case NodeKind::Repeat:
+        return "repeat";
     }
     return "state";
 }
@@ -131,6 +135,15 @@ void write_node(const GraphNode &node, std::string &out) {
     }
     if (node.kind == NodeKind::Legato)
         out += ",\"legatoId\":" + std::to_string(node.legato_id);
+    if (node.kind == NodeKind::Skip)
+        out += ",\"skipCount\":" + std::to_string(node.skip_count);
+    if (node.kind == NodeKind::Repeat) {
+        out += ",\"repeatBodyEntryId\":" +
+               std::to_string(node.repeat_body_entry_id);
+        out +=
+            ",\"repeatBodyExitId\":" + std::to_string(node.repeat_body_exit_id);
+        out += ",\"repeatCount\":" + std::to_string(node.repeat_count);
+    }
     if (node.kind == NodeKind::SignalEmit) {
         out += ",\"signalId\":" + json_string(*node.signal_id);
         out += ",\"params\":{";

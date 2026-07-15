@@ -28,7 +28,9 @@ export function InstrumentTabs({
     const [name_draft, set_name_draft] = useState('');
 
     const resolved_id =
-        view === 'global' ? GLOBAL_CACHE_KEY : (active_instrument_id ?? instruments[0]?.id ?? null);
+        view === 'global'
+            ? GLOBAL_CACHE_KEY
+            : (active_instrument_id ?? instruments[0]?.id ?? GLOBAL_CACHE_KEY);
     const is_global_tab = resolved_id === GLOBAL_CACHE_KEY;
 
     const handle_tab_click = (id: string) => {

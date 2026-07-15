@@ -44,6 +44,7 @@ class Parser {
     [[nodiscard]] auto continue_atomic_join(Term lhs) -> Term;
     [[nodiscard]] auto continue_atomic_join_comp(std::unique_ptr<CompExpr> lhs)
         -> Term;
+    [[nodiscard]] auto continue_atomic_join_and_octave(Term term) -> Term;
     [[nodiscard]] auto continue_pipe_term(std::vector<Term> terms)
         -> std::vector<Term>;
     [[nodiscard]] auto parse_pipe_term() -> Term;

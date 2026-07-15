@@ -28,7 +28,7 @@ auto make(TokenKind kind, std::string lexeme, size_t line, size_t column)
 } // namespace
 
 auto Token::to_string() const -> std::string {
-    static constexpr std::array<const char *, 43> names = {
+    static constexpr std::array<const char *, 44> names = {
         "Ident",     "Number",    "String",    "Equals",   "Colon",
         "Semicolon", "Plus",      "Minus",     "Star",     "Slash",
         "Percent",   "LBrace",    "RBrace",    "LParen",   "RParen",
@@ -37,7 +37,7 @@ auto Token::to_string() const -> std::string {
         "Question",  "EqEq",      "NotEq",     "Less",     "Greater",
         "LessEq",    "GreaterEq", "KwPlay",    "KwNull",   "KwReverse",
         "KwRepeat",  "KwChoose",  "KwEmit",    "KwListen", "KwConst",
-        "Or",        "Eof",       "Invalid",
+        "KwSkip",    "Or",        "Eof",       "Invalid",
     };
     std::string out = names[static_cast<uint8_t>(kind)];
     out += " '" + lexeme + "' @" + std::to_string(line) + ":" +
@@ -107,6 +107,7 @@ auto Tokenizer::scan_identifier() -> Token {
         return make(TokenKind::KwListen, lexeme, line, column);
     if (lexeme == "const")
         return make(TokenKind::KwConst, lexeme, line, column);
+    if (lexeme == "skip") return make(TokenKind::KwSkip, lexeme, line, column);
     return make(TokenKind::Ident, lexeme, line, column);
 }
 

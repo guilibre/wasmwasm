@@ -123,6 +123,7 @@ export function useAudioEngine(
             const score_graph = await ScoreWasm.compile_score(score_source);
             const instrument_callbacks = transpile_instrument_callbacks(score_param_bindings);
             const global_callback = transpile_callback_source(global_callback_source);
+            if (global_callback) instrument_callbacks['global'] = global_callback;
 
             const global_node = new AudioWorkletNode(context, 'wasm-processor', {
                 numberOfOutputs: 1,
@@ -145,7 +146,6 @@ export function useAudioEngine(
                 score_graph,
                 param_index,
                 instrument_callbacks,
-                global_callback,
                 bpm: orchestra.bpm,
             });
             await global_ready;

@@ -142,4 +142,17 @@
     &--transform_pop {
         border-color: #ffcb6b;
     }
+
+    &--play {
+        border-radius: 50%;
+        min-width: 2.5rem;
+        min-height: 2.5rem;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        text-align: center;
+        border-color: #c3e88d;
+        color: #c3e88d;
+        font-weight: bold;
+    }
 }

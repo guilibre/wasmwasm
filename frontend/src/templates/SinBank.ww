@@ -1,0 +1,15 @@
+param freq = 440
+
+static two_pi = 2*PI
+static as = array 10 {i. 1/((i + 1)^3)}
+static ts = array 10 {_. uniform(0)(2*PI)}
+static dts = array 10 {i. (i + 1)*two_pi/SAMPLE_RATE}
+
+xs = zip {a t. a*sin(t)} as ts
+x = foldr 0 {x acc. x + acc} xs
+OUT[0] <- IN[0]*x
+
+ts = zip {dt t.
+  t_ = t + freq*dt
+  t_ < two_pi ? t_ : t_ - two_pi
+} dts ts

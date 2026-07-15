@@ -1,4 +1,4 @@
-import type { ExprNode, GraphNode, ScoreGraph, TransformEntry } from './conductor';
+import type { ExprNode, GraphNode, NodeKind, ScoreGraph, TransformEntry } from './conductor';
 import { eval_expr, eval_presence, SKIP } from './conductor';
 import { Rational, to_seconds, wire_to_number, type WireNumber } from './rational';
 
@@ -30,15 +30,31 @@ const MAX_EVENTS = 5000;
 const MAX_CYCLES = 200;
 const MAX_TOKEN_STEPS = 20000;
 
+type Direction = 'forward' | 'backward';
+
+function flip(direction: Direction): Direction {
+    return direction === 'forward' ? 'backward' : 'forward';
+}
+
 interface ActiveTransformFrame {
     transforms: TransformEntry[];
 }
 
+interface RepeatFrame {
+    repeat_node_id: number;
+    body_entry_id: number;
+    body_exit_id: number;
+    remaining: number;
+}
+
 interface SimToken {
     node_id: number;
+    direction: Direction;
     time: Rational;
     params: Record<string, number | string>;
     transform_stack: ActiveTransformFrame[];
+    skip_remaining?: number;
+    repeat_stack: RepeatFrame[];
     is_root: boolean;
     cycle_index: number;
     own_visited: Set<number>;
@@ -126,6 +142,8 @@ export class ScoreTracer {
     private readonly start_node_id: number;
     private readonly stop_after_node_id: number | undefined;
     private readonly nodes_by_id: Map<number, GraphNode>;
+    private readonly prev_of: Map<number, number[]>;
+    private readonly transform_push_of_pop: Map<number, number>;
 
     constructor(
         graph: ScoreGraph,
@@ -138,6 +156,66 @@ export class ScoreTracer {
         this.start_node_id = start_node_id;
         this.stop_after_node_id = stop_after_node_id;
         this.nodes_by_id = new Map(graph.nodes.map((n) => [n.id, n]));
+        this.prev_of = new Map();
+        for (const node of graph.nodes) {
+            for (const succ of node.next) {
+                const preds = this.prev_of.get(succ);
+                if (preds) preds.push(node.id);
+                else this.prev_of.set(succ, [node.id]);
+            }
+        }
+        this.transform_push_of_pop = new Map(
+            Object.entries(graph.transformPopOfPush).map(([push_id, pop_id]) => [
+                pop_id,
+                Number(push_id),
+            ]),
+        );
+    }
+
+    private succs_of(node: GraphNode, direction: Direction): number[] {
+        return direction === 'backward' ? (this.prev_of.get(node.id) ?? []) : node.next;
+    }
+
+    private effective_kind(node: GraphNode, direction: Direction): NodeKind {
+        if (direction === 'forward') return node.kind;
+        if (node.kind === 'fork') return 'join';
+        if (node.kind === 'join') return 'fork';
+        if (node.kind === 'transform_push') return 'transform_pop';
+        if (node.kind === 'transform_pop') return 'transform_push';
+        return node.kind;
+    }
+
+    private loop_repeat_if_body_exit(token: SimToken, node_id: number): number | null | undefined {
+        const frame = token.repeat_stack[token.repeat_stack.length - 1];
+        if (frame === undefined || frame.body_exit_id !== node_id) return undefined;
+        token.repeat_stack = token.repeat_stack.slice(0, -1);
+        if (frame.remaining > 0) {
+            token.repeat_stack = [
+                ...token.repeat_stack,
+                { ...frame, remaining: frame.remaining - 1 },
+            ];
+            return frame.body_entry_id;
+        }
+        const repeat_node = this.nodes_by_id.get(frame.repeat_node_id)!;
+        const repeat_succs = this.succs_of(repeat_node, token.direction);
+        if (repeat_succs.length > 0) return repeat_succs[0];
+        const outer_looped = this.loop_repeat_if_body_exit(token, frame.repeat_node_id);
+        return outer_looped === undefined ? null : outer_looped;
+    }
+
+    private advance_past_current_node(token: SimToken): boolean {
+        const looped = this.loop_repeat_if_body_exit(token, token.node_id);
+        if (looped !== undefined) {
+            if (looped === null) return false;
+            token.node_id = looped;
+            return true;
+        }
+        const node = this.nodes_by_id.get(token.node_id);
+        if (!node) return false;
+        const succs = this.succs_of(node, token.direction);
+        if (succs.length === 0) return false;
+        token.node_id = succs[0];
+        return true;
     }
 
     trace(): TraceResult {
@@ -152,15 +230,19 @@ export class ScoreTracer {
 
         const spawn_from_fork = (parent: SimToken, branch_node_id: number): SimToken => ({
             node_id: branch_node_id,
+            direction: parent.direction,
             time: parent.time,
             params: {},
             transform_stack: parent.transform_stack,
+            skip_remaining: parent.skip_remaining,
+            repeat_stack: [...parent.repeat_stack],
             is_root: false,
             cycle_index: parent.cycle_index,
             own_visited: new Set(),
         });
 
-        const walk = (token: SimToken, local_visited: Set<number>): SimToken[] => {
+        const walk = (token: SimToken, initial_local_visited: Set<number>): SimToken[] => {
+            let local_visited = initial_local_visited;
             for (;;) {
                 if (events.length >= MAX_EVENTS) {
                     truncated = true;
@@ -169,13 +251,60 @@ export class ScoreTracer {
                 }
                 const node = this.nodes_by_id.get(token.node_id);
                 if (!node) return [];
+                const succs = this.succs_of(node, token.direction);
+                const kind = this.effective_kind(node, token.direction);
 
-                if (node.kind !== 'join') {
+                if (
+                    node.kind !== 'repeat' &&
+                    kind !== 'state' &&
+                    kind !== 'join' &&
+                    kind !== 'fork'
+                ) {
+                    const looped = this.loop_repeat_if_body_exit(token, token.node_id);
+                    if (looped !== undefined) {
+                        if (looped === null) return [];
+                        token.node_id = looped;
+                        local_visited = new Set();
+                        continue;
+                    }
+                }
+
+                if (node.kind === 'repeat') {
+                    const body_entry =
+                        token.direction === 'backward'
+                            ? node.repeatBodyExitId!
+                            : node.repeatBodyEntryId!;
+                    const body_exit =
+                        token.direction === 'backward'
+                            ? node.repeatBodyEntryId!
+                            : node.repeatBodyExitId!;
+                    token.repeat_stack = [
+                        ...token.repeat_stack,
+                        {
+                            repeat_node_id: node.id,
+                            body_entry_id: body_entry,
+                            body_exit_id: body_exit,
+                            remaining: node.repeatCount! - 1,
+                        },
+                    ];
+                    token.node_id = body_entry;
+                    local_visited = new Set();
+                    continue;
+                }
+
+                if (kind !== 'join') {
                     if (local_visited.has(token.node_id)) return [];
                     local_visited.add(token.node_id);
                 }
 
-                if (node.kind === 'state') {
+                if (kind === 'state') {
+                    if (token.skip_remaining !== undefined && token.skip_remaining > 0) {
+                        token.skip_remaining -= 1;
+                        if (succs.length === 0) return [];
+                        token.node_id = succs[0];
+                        continue;
+                    }
+
                     if (token.is_root) {
                         if (root_visited_in_cycle.has(node.id)) {
                             cyclic = true;
@@ -223,66 +352,95 @@ export class ScoreTracer {
                     return [token];
                 }
 
-                if (node.kind === 'passthrough') {
-                    if (node.next.length === 0) return [];
-                    token.node_id = node.next[0];
+                if (node.kind === 'reverse') {
+                    token.node_id = node.reverseBodyExitId!;
+                    token.direction = flip(token.direction);
                     continue;
                 }
 
-                if (node.kind === 'fork') {
+                if (kind === 'skip') {
+                    token.skip_remaining = (token.skip_remaining ?? 0) + node.skipCount!;
+                    if (succs.length === 0) return [];
+                    token.node_id = succs[0];
+                    continue;
+                }
+
+                if (kind === 'passthrough' || kind === 'legato') {
+                    if (succs.length === 0) return [];
+                    token.node_id = succs[0];
+                    continue;
+                }
+
+                if (kind === 'fork') {
                     const resolved: SimToken[] = [];
-                    for (const branch_id of node.next)
+                    for (const branch_id of succs)
                         resolved.push(
                             ...walk(spawn_from_fork(token, branch_id), new Set(local_visited)),
                         );
                     return resolved;
                 }
 
-                if (node.kind === 'transform_push') {
+                if (kind === 'transform_push') {
+                    const push_node =
+                        token.direction === 'backward'
+                            ? this.nodes_by_id.get(this.transform_push_of_pop.get(node.id)!)!
+                            : node;
                     token.transform_stack = [
                         ...token.transform_stack,
-                        { transforms: node.transforms ?? [] },
+                        { transforms: push_node.transforms ?? [] },
                     ];
-                    if (node.next.length === 0) return [];
-                    token.node_id = node.next[0];
+                    if (succs.length === 0) return [];
+                    token.node_id = succs[0];
                     continue;
                 }
 
-                if (node.kind === 'transform_pop') {
+                if (kind === 'transform_pop') {
                     token.transform_stack = token.transform_stack.slice(0, -1);
-                    if (node.next.length === 0) return [];
-                    token.node_id = node.next[0];
+                    if (succs.length === 0) return [];
+                    token.node_id = succs[0];
                     continue;
                 }
 
-                if (node.kind === 'branch') {
+                if (kind === 'branch') {
                     const cond = node.cond as ExprNode;
                     const truthy =
                         cond.kind === 'ident'
                             ? eval_presence(cond, token.params)
                             : (eval_expr(cond, token.params) ?? 0) !== 0;
-                    token.node_id = node.next[truthy ? 0 : 1];
+                    token.node_id = succs[truthy ? 0 : 1];
                     continue;
                 }
 
                 const arrived = (join_arrivals.get(node.id) ?? 0) + 1;
-                const arity = node.joinArity ?? 1;
+                const arity =
+                    token.direction === 'backward' && node.kind === 'fork'
+                        ? node.next.length
+                        : (node.joinArity ?? 1);
                 if (arrived < arity) {
                     join_arrivals.set(node.id, arrived);
                     return [];
                 }
                 join_arrivals.set(node.id, 0);
-                if (node.next.length === 0) return [];
-                token.node_id = node.next[0];
+                const looped = this.loop_repeat_if_body_exit(token, token.node_id);
+                if (looped !== undefined) {
+                    if (looped === null) return [];
+                    token.node_id = looped;
+                    local_visited = new Set();
+                    continue;
+                }
+                if (succs.length === 0) return [];
+                token.node_id = succs[0];
             }
         };
 
         const live: SimToken[] = walk(
             {
                 node_id: this.start_node_id,
+                direction: 'forward',
                 time: Rational.ZERO,
                 params: {},
                 transform_stack: [],
+                repeat_stack: [],
                 is_root: true,
                 cycle_index: 0,
                 own_visited: new Set(),
@@ -290,7 +448,6 @@ export class ScoreTracer {
             new Set<number>(),
         );
 
-        const local_visited = new Set<number>();
         let steps = 0;
         while (live.length > 0) {
             if (++steps > MAX_TOKEN_STEPS) {
@@ -303,10 +460,8 @@ export class ScoreTracer {
             const token = live[min_i];
             live.splice(min_i, 1);
 
-            const node = this.nodes_by_id.get(token.node_id);
-            if (!node || node.next.length === 0) continue;
-            token.node_id = node.next[0];
-            live.push(...walk(token, local_visited));
+            if (!this.advance_past_current_node(token)) continue;
+            live.push(...walk(token, new Set()));
         }
 
         if (!cyclic || reached_stop) {

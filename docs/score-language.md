@@ -221,12 +221,12 @@ a ~ b ~ c   # a -> legato(id=X) -> b -> legato(id=X) -> c
 
 The id is unique per `~` chain (a fresh id every time a chain starts),
 letting the runtime tell separate legato groups apart - e.g. `a~b c~d` uses
-two different ids. `repeat` assigns a fresh id to each copy it produces, so
-a `~` chain inside a repeated composition still gets a distinct id per
-repetition. `reverse` doesn't clone anything (it's resolved at playback
-time - see below): a `legato` node is a plain link in the graph, so walking
-it backward has the same effect as walking it forward, with no special
-handling needed.
+two different ids. Neither `repeat` nor `reverse` clone anything (both are
+resolved at playback time - see below): a `legato` node inside a repeated or
+reversed body is the same graph node reused across iterations/directions,
+carrying the same id every time - the runtime's per-id voice bookkeeping
+handles this correctly since it's keyed by id and updated on every visit,
+regardless of how many times the same node is walked through.
 
 The runtime decides, at playback time, whether a note reuses the previous
 voice: it does if the graph node it just left carried a `legato` id, or if
@@ -340,6 +340,34 @@ expr |> repeat n
 Repeats `expr` `n` times in sequence. `n` is a compile-time constant, at
 least `1`; a fractional `n` is floored (`repeat 5.31` behaves like
 `repeat 5`). `expr` may not itself be an unbounded self-referential loop.
+
+Like `reverse` and `skip`, `repeat` isn't resolved at compile time: the
+compiler emits a single marker node pointing at `expr`'s untouched body (it
+is compiled once, not cloned), and the runtime conductor walks through it
+`n` times in sequence, looping back to the body's start each time it
+reaches the body's end, before finally continuing on to whatever follows
+the `repeat`. Because the body isn't duplicated, `repeat` with a large `n`
+doesn't inflate the compiled graph or its JSON representation.
+
+### `skip`
+
+```SCORE
+expr |> skip n
+```
+
+Skips the first `n` atomic events of `expr` at playback time. `n` is a
+compile-time constant, at least `0` (a fractional `n` is floored, same as
+`repeat`). Like `reverse`, `skip` isn't resolved at compile time: the
+compiler emits a single marker node pointing at `expr`'s untouched body,
+and the runtime conductor counts down `n` as it walks through the body's
+notes - each of the first `n` notes is skipped entirely (no instrument is
+instantiated and no parameters are set for it; it's as if it were never
+there) before playback resumes normally from the `n`+1th note onward.
+
+If `expr` forks (`&`) while `n` is still being counted down, each branch
+continues counting down its own remaining `n` independently from the fork
+point. If `expr` reaches a `choose`, the condition is evaluated as usual and
+the countdown simply continues along whichever branch is taken.
 
 ### listen
 

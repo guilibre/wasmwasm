@@ -61,15 +61,6 @@ auto link_after(std::vector<GraphNode> &nodes, const Piece &piece,
     }
 }
 
-struct PendingRepeatClone {
-    MemberSet members;
-    size_t body_entry_id;
-    size_t body_exit_id;
-    size_t entry_anchor;
-    size_t exit_anchor;
-    size_t count;
-};
-
 struct ProgressFrame {
     std::string name;
     std::shared_ptr<PassthroughInfo> passthrough;
@@ -82,7 +73,6 @@ struct ExpansionContext {
     std::vector<ProgressFrame> progress_stack;
     std::vector<GraphNode> nodes;
     std::vector<std::shared_ptr<PassthroughInfo>> passthroughs;
-    std::vector<PendingRepeatClone> pending_repeat_clones;
     std::unordered_map<size_t, size_t> transform_pop_of_push;
     std::vector<std::unique_ptr<Expr>> owned_exprs;
     size_t next_legato_id = 0;
@@ -439,6 +429,21 @@ auto expand_term(const Term &term, ExpansionContext &ctx) -> Piece {
         if (term.rhs_is_block) {
             for (const auto &param : term.rhs_block.params) {
                 if (param.is_const) continue;
+                if (param.name == "scale" &&
+                    param.value->kind == Expr::Kind::Ident) {
+                    const auto it =
+                        ctx.scale_index.find(param.value->ident_name);
+                    if (it == ctx.scale_index.end())
+                        throw ResolveException(
+                            "undefined scale '" + param.value->ident_name + "'",
+                            param.value->line, param.value->column);
+                    ctx.owned_exprs.push_back(
+                        make_expr(static_cast<double>(it->second)));
+                    ctx.nodes[push_id].transforms.push_back(
+                        TransformEntry{.param_name = param.name,
+                                       .expr = ctx.owned_exprs.back().get()});
+                    continue;
+                }
                 const auto *expr =
                     inherited_const_names->contains(param.name)
                         ? guard_against_const(param.name, *param.value,
@@ -549,25 +554,19 @@ auto expand_term(const Term &term, ExpansionContext &ctx) -> Piece {
                     "repeats infinitely",
                     term.line, term.column);
 
-            const auto entry_anchor = ctx.alloc(NodeKind::Passthrough);
-            const auto exit_anchor = ctx.alloc(NodeKind::Passthrough);
-            body.members->insert(entry_anchor);
-            body.members->insert(exit_anchor);
+            const auto repeat_id = ctx.alloc(NodeKind::Repeat);
+            ctx.nodes[repeat_id].repeat_body_entry_id = body.entry_id;
+            ctx.nodes[repeat_id].repeat_body_exit_id = body.exit_id;
+            ctx.nodes[repeat_id].repeat_count = count;
 
-            ctx.pending_repeat_clones.push_back(PendingRepeatClone{
-                .members = body.members,
-                .body_entry_id = body.entry_id,
-                .body_exit_id = body.exit_id,
-                .entry_anchor = entry_anchor,
-                .exit_anchor = exit_anchor,
-                .count = count,
-            });
+            const auto members = make_members({repeat_id});
+            merge_members(members, body.members);
 
             return Piece{
-                .entry_id = entry_anchor,
-                .exit_id = exit_anchor,
-                .members = body.members,
-                .open_passthrough = {},
+                .entry_id = repeat_id,
+                .exit_id = repeat_id,
+                .members = members,
+                .open_passthrough = body.open_passthrough,
                 .const_names = body.const_names,
             };
         }
@@ -592,6 +591,32 @@ auto expand_term(const Term &term, ExpansionContext &ctx) -> Piece {
                 .exit_id = reverse_id,
                 .members = members,
                 .open_passthrough = body.open_passthrough,
+                .const_names = body.const_names,
+            };
+        }
+
+        if (term.pipe_op == Term::PipeOp::Skip) {
+            const auto count_value = fold_expr(*term.pipe_expr);
+            if (count_value < 0)
+                throw ResolveException("'skip' count cannot be negative",
+                                       term.line, term.column);
+            const auto count = static_cast<size_t>(std::floor(count_value));
+
+            const auto body = expand_comp_expr(*term.lhs_expr, ctx);
+
+            const auto skip_id = ctx.alloc(NodeKind::Skip);
+            ctx.nodes[skip_id].skip_count = count;
+            ctx.nodes[skip_id].next.push_back(body.entry_id);
+
+            const auto members = make_members({skip_id});
+            merge_members(members, body.members);
+
+            return Piece{
+                .entry_id = skip_id,
+                .exit_id = body.exit_id,
+                .members = members,
+                .open_passthrough = body.open_passthrough,
+                .exit_unreachable = body.exit_unreachable,
                 .const_names = body.const_names,
             };
         }
@@ -873,6 +898,9 @@ auto prune_unreachable(ExpandedGraph &graph) -> void {
         if (graph.nodes[id].kind == NodeKind::Reverse &&
             !reachable[graph.nodes[id].reverse_body_entry_id])
             stack.push_back(graph.nodes[id].reverse_body_entry_id);
+        if (graph.nodes[id].kind == NodeKind::Repeat &&
+            !reachable[graph.nodes[id].repeat_body_entry_id])
+            stack.push_back(graph.nodes[id].repeat_body_entry_id);
     }
 
     std::unordered_map<size_t, size_t> new_id;
@@ -889,6 +917,10 @@ auto prune_unreachable(ExpandedGraph &graph) -> void {
             node.reverse_body_entry_id = new_id[node.reverse_body_entry_id];
             node.reverse_body_exit_id = new_id[node.reverse_body_exit_id];
         }
+        if (node.kind == NodeKind::Repeat) {
+            node.repeat_body_entry_id = new_id[node.repeat_body_entry_id];
+            node.repeat_body_exit_id = new_id[node.repeat_body_exit_id];
+        }
     }
     for (auto &machine : graph.entries)
         for (auto &id : machine) id = new_id[id];
@@ -904,83 +936,6 @@ auto prune_unreachable(ExpandedGraph &graph) -> void {
 }
 
 namespace {
-
-auto collect_body_members(const ExpansionContext &ctx, size_t entry_id,
-                          size_t exit_id) -> std::vector<size_t> {
-    std::vector<size_t> members;
-    std::unordered_set<size_t> visited;
-    std::vector<size_t> stack{entry_id};
-    while (!stack.empty()) {
-        const auto id = stack.back();
-        stack.pop_back();
-        if (!visited.insert(id).second) continue;
-        members.push_back(id);
-        if (id == exit_id) continue;
-        for (auto succ : ctx.nodes[id].next) stack.push_back(succ);
-    }
-    return members;
-}
-
-auto remap_legato_ids(ExpansionContext &ctx,
-                      const std::unordered_map<size_t, size_t> &clone_of)
-    -> void {
-    std::unordered_map<size_t, size_t> fresh_id;
-    for (const auto &[original, clone_id] : clone_of) {
-        if (ctx.nodes[clone_id].kind != NodeKind::Legato) continue;
-        const auto [fresh_it, inserted] = fresh_id.try_emplace(
-            ctx.nodes[clone_id].legato_id, ctx.next_legato_id);
-        if (inserted) ++ctx.next_legato_id;
-        ctx.nodes[clone_id].legato_id = fresh_it->second;
-    }
-}
-
-auto resolve_pending_repeat_clones(ExpansionContext &ctx) -> void {
-    for (const auto &pr : ctx.pending_repeat_clones) {
-        const auto members =
-            collect_body_members(ctx, pr.body_entry_id, pr.body_exit_id);
-        auto prev_exit = pr.entry_anchor;
-
-        for (size_t copy = 0; copy < pr.count; ++copy) {
-            std::unordered_map<size_t, size_t> clone_of;
-            const auto get_clone = [&](size_t original) -> size_t {
-                auto it = clone_of.find(original);
-                if (it != clone_of.end()) return it->second;
-                const auto clone_id = ctx.nodes.size();
-                GraphNode clone = ctx.nodes[original];
-                clone.id = clone_id;
-                clone.next.clear();
-                ctx.nodes.push_back(std::move(clone));
-                clone_of[original] = clone_id;
-                return clone_id;
-            };
-
-            for (auto original : members) get_clone(original);
-            remap_legato_ids(ctx, clone_of);
-            for (auto original : members) {
-                const auto clone_id = clone_of[original];
-                for (auto succ : ctx.nodes[original].next) {
-                    if (!clone_of.contains(succ)) continue;
-                    ctx.nodes[clone_id].next.push_back(clone_of[succ]);
-                }
-            }
-            for (auto original : members) {
-                if (ctx.nodes[original].kind != NodeKind::TransformPush)
-                    continue;
-                const auto pop_it = ctx.transform_pop_of_push.find(original);
-                if (pop_it == ctx.transform_pop_of_push.end()) continue;
-                const auto original_pop = pop_it->second;
-                if (!clone_of.contains(original_pop)) continue;
-                ctx.transform_pop_of_push[clone_of[original]] =
-                    clone_of[original_pop];
-            }
-
-            ctx.nodes[prev_exit].next.push_back(clone_of[pr.body_entry_id]);
-            prev_exit = clone_of[pr.body_exit_id];
-        }
-
-        ctx.nodes[prev_exit].next.push_back(pr.exit_anchor);
-    }
-}
 
 auto expand_program_impl(const Program &program) -> ExpandedGraph {
     ExpansionContext ctx;
@@ -1042,7 +997,6 @@ auto expand_program_impl(const Program &program) -> ExpandedGraph {
         }
     }
     resolve_passthroughs(ctx);
-    resolve_pending_repeat_clones(ctx);
     graph.nodes = std::move(ctx.nodes);
     graph.owned_exprs = std::move(ctx.owned_exprs);
     graph.transform_pop_of_push = std::move(ctx.transform_pop_of_push);

@@ -81,7 +81,7 @@ function load_initial_patch(): PatchState {
                 return {
                     orchestra: normalize_orchestra(orchestra),
                     selected_id: null,
-                    view: 'instrument',
+                    view: 'global',
                     score_source: (score_source as string | undefined) ?? '',
                     score_param_bindings: normalize_score_param_bindings(score_param_bindings),
                     global_callback_source: (global_callback_source as string | undefined) ?? '',
@@ -95,7 +95,7 @@ function load_initial_patch(): PatchState {
     return {
         orchestra: DEFAULT_ORCHESTRA,
         selected_id: null,
-        view: 'instrument',
+        view: 'global',
         score_source: '',
         score_param_bindings: {},
         global_callback_source: '',

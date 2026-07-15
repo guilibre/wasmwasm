@@ -8,7 +8,9 @@ export type NodeKind =
     | 'branch'
     | 'signal_emit'
     | 'reverse'
-    | 'legato';
+    | 'legato'
+    | 'skip'
+    | 'repeat';
 
 export type BinOp =
     | 'add'
@@ -56,6 +58,10 @@ export interface GraphNode {
     reverseBodyEntryId?: number;
     reverseBodyExitId?: number;
     legatoId?: number;
+    skipCount?: number;
+    repeatBodyEntryId?: number;
+    repeatBodyExitId?: number;
+    repeatCount?: number;
     next: number[];
 }
 
@@ -77,10 +83,6 @@ export interface InstrumentExports {
     set_param: (id: number, index: number, value: number) => number;
 }
 
-export interface GlobalExports {
-    set_param: (index: number, value: number) => number;
-}
-
 export type ParamIndex = Record<string, Record<string, number>>;
 export type InstrumentExportsMap = Record<string, InstrumentExports>;
 
@@ -91,10 +93,6 @@ export interface TokenParams {
 
 export interface InstrumentCallbackHandler {
     call(p: Record<string, number | string>, ap: TokenParams[]): Record<string, number>;
-}
-
-export interface GlobalCallbackHandler {
-    call(ap: TokenParams[]): Record<string, number | string>;
 }
 
 export type InstrumentCallbackMap = Record<string, new () => InstrumentCallbackHandler>;
@@ -125,6 +123,15 @@ interface Token {
     dur_beats: Rational;
     transform_stack: ActiveTransformFrame[];
     pending_legato_id?: number;
+    skip_remaining?: number;
+    repeat_stack: RepeatFrame[];
+}
+
+interface RepeatFrame {
+    repeat_node_id: number;
+    body_entry_id: number;
+    body_exit_id: number;
+    remaining: number;
 }
 
 function kahan_subtract(value: number, amount: number, error: number): [number, number] {
@@ -135,6 +142,7 @@ function kahan_subtract(value: number, amount: number, error: number): [number, 
 }
 
 const max_steps_per_tick = 64;
+const global_instance_id = 0;
 
 export function eval_presence(expr: ExprNode, params: Record<string, number | string>): boolean {
     if (expr.kind !== 'ident')
@@ -245,10 +253,8 @@ export class Conductor {
     private readonly transform_push_of_pop: Map<number, number>;
     private readonly param_index: ParamIndex;
     private readonly exports: InstrumentExportsMap;
-    private readonly global_exports: GlobalExports | null;
     private readonly sample_rate: number;
     private readonly instrument_callback_handlers: Record<string, InstrumentCallbackHandler>;
-    private readonly global_callback_handler: GlobalCallbackHandler | null;
 
     private bpm: number;
     private next_instance_id = 0;
@@ -264,9 +270,7 @@ export class Conductor {
         exports: InstrumentExportsMap,
         sample_rate: number,
         bpm: number,
-        global_exports: GlobalExports | null = null,
         instrument_callbacks: InstrumentCallbackMap = {},
-        global_callback: (new () => GlobalCallbackHandler) | null = null,
     ) {
         this.nodes_by_id = new Map(graph.nodes.map((n) => [n.id, n]));
         this.prev_of = new Map();
@@ -285,7 +289,6 @@ export class Conductor {
         );
         this.param_index = param_index;
         this.exports = exports;
-        this.global_exports = global_exports;
         this.sample_rate = sample_rate;
         this.bpm = bpm;
         this.instrument_callback_handlers = Object.fromEntries(
@@ -294,7 +297,6 @@ export class Conductor {
                 new ctor(),
             ]),
         );
-        this.global_callback_handler = global_callback ? new global_callback() : null;
 
         const initial: Token[] = [];
         for (const machine of graph.entries) {
@@ -309,6 +311,7 @@ export class Conductor {
                     params: {},
                     dur_beats: Rational.ZERO,
                     transform_stack: [],
+                    repeat_stack: [],
                 });
             }
         }
@@ -380,6 +383,12 @@ export class Conductor {
     }
 
     private advance_past_current_node(token: Token): boolean {
+        const looped = this.loop_repeat_if_body_exit(token, token.node_id);
+        if (looped !== undefined) {
+            if (looped === null) return false;
+            token.node_id = looped;
+            return true;
+        }
         const node = this.nodes_by_id.get(token.node_id);
         if (!node) throw new Error(`conductor: unknown node id ${token.node_id}`);
         const succs =
@@ -387,6 +396,24 @@ export class Conductor {
         if (succs.length === 0) return false;
         token.node_id = succs[0];
         return true;
+    }
+
+    private loop_repeat_if_body_exit(token: Token, node_id: number): number | null | undefined {
+        const frame = token.repeat_stack[token.repeat_stack.length - 1];
+        if (frame === undefined || frame.body_exit_id !== node_id) return undefined;
+        token.repeat_stack = token.repeat_stack.slice(0, -1);
+        if (frame.remaining > 0) {
+            token.repeat_stack = [
+                ...token.repeat_stack,
+                { ...frame, remaining: frame.remaining - 1 },
+            ];
+            return frame.body_entry_id;
+        }
+        const repeat_node = this.nodes_by_id.get(frame.repeat_node_id)!;
+        const repeat_succs = this.succs_of(repeat_node, token.direction);
+        if (repeat_succs.length > 0) return repeat_succs[0];
+        const outer_looped = this.loop_repeat_if_body_exit(token, frame.repeat_node_id);
+        return outer_looped === undefined ? null : outer_looped;
     }
 
     private destroy_instance(token: Token): void {
@@ -441,7 +468,42 @@ export class Conductor {
             const succs = this.succs_of(node, direction);
             const kind = this.effective_kind(node, direction);
 
+            if (node.kind !== 'repeat' && kind !== 'state' && kind !== 'join' && kind !== 'fork') {
+                const looped = this.loop_repeat_if_body_exit(token, node_id);
+                if (looped !== undefined) {
+                    if (looped === null) return [];
+                    node_id = looped;
+                    visited.clear();
+                    continue;
+                }
+            }
+
+            if (node.kind === 'repeat') {
+                const body_entry =
+                    direction === 'backward' ? node.repeatBodyExitId! : node.repeatBodyEntryId!;
+                const body_exit =
+                    direction === 'backward' ? node.repeatBodyEntryId! : node.repeatBodyExitId!;
+                token.repeat_stack = [
+                    ...token.repeat_stack,
+                    {
+                        repeat_node_id: node.id,
+                        body_entry_id: body_entry,
+                        body_exit_id: body_exit,
+                        remaining: node.repeatCount! - 1,
+                    },
+                ];
+                node_id = body_entry;
+                visited.clear();
+                continue;
+            }
+
             if (kind === 'state') {
+                if (token.skip_remaining !== undefined && token.skip_remaining > 0) {
+                    token.skip_remaining -= 1;
+                    if (succs.length === 0) return [];
+                    node_id = succs[0];
+                    continue;
+                }
                 token.node_id = node.id;
                 token.direction = direction;
                 this.enter_state(token, node);
@@ -451,6 +513,13 @@ export class Conductor {
             if (node.kind === 'reverse') {
                 node_id = node.reverseBodyExitId!;
                 direction = flip(direction);
+                continue;
+            }
+
+            if (kind === 'skip') {
+                token.skip_remaining = (token.skip_remaining ?? 0) + node.skipCount!;
+                if (succs.length === 0) return [];
+                node_id = succs[0];
                 continue;
             }
 
@@ -480,6 +549,8 @@ export class Conductor {
                         params: {},
                         dur_beats: Rational.ZERO,
                         transform_stack: [...token.transform_stack],
+                        skip_remaining: token.skip_remaining,
+                        repeat_stack: [...token.repeat_stack],
                     };
                     children.push(...this.walk_forward(child));
                 }
@@ -539,22 +610,31 @@ export class Conductor {
                 return [];
             }
             this.join_arrivals.set(node.id, 0);
+            const looped = this.loop_repeat_if_body_exit(token, node_id);
+            if (looped !== undefined) {
+                if (looped === null) return [];
+                node_id = looped;
+                visited.clear();
+                continue;
+            }
             if (succs.length === 0) return [];
             node_id = succs[0];
         }
     }
 
     private apply_global_callback(): void {
-        if (!this.global_callback_handler || !this.global_exports) return;
+        const exports = this.exports['global'];
+        if (!exports) return;
         const index_table = this.param_index['global'] ?? {};
-        const result = this.global_callback_handler.call(this.tokens);
+        const handler = this.instrument_callback_handlers['global'];
+        const result = handler ? handler.call({}, this.tokens) : {};
         for (const [name, value] of Object.entries(result)) {
             const index = index_table[name];
             if (index === undefined) continue;
             if (typeof value !== 'number' || Number.isNaN(value))
                 throw new Error(`conductor: global callback did not return a number for '${name}'`);
 
-            this.global_exports.set_param(index, value);
+            exports.set_param(global_instance_id, index, value);
         }
     }
 

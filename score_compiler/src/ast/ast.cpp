@@ -135,6 +135,9 @@ void print_term(const Term &term, std::string &out) {
         case Term::PipeOp::Listen:
             out += " |> listen \"" + term.rhs_name + "\"";
             break;
+        case Term::PipeOp::Skip:
+            out += " |> skip \"" + term.rhs_name + "\"";
+            break;
         }
         return;
     }

@@ -19,7 +19,9 @@ enum class NodeKind : uint8_t {
     Branch,
     SignalEmit,
     Reverse,
-    Legato
+    Legato,
+    Skip,
+    Repeat
 };
 
 struct TransformEntry {
@@ -40,6 +42,10 @@ struct GraphNode {
     size_t reverse_body_entry_id = 0;
     size_t reverse_body_exit_id = 0;
     size_t legato_id = 0;
+    size_t skip_count = 0;
+    size_t repeat_body_entry_id = 0;
+    size_t repeat_body_exit_id = 0;
+    size_t repeat_count = 0;
 };
 
 struct ExpandedGraph {

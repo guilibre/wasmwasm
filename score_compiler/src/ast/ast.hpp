@@ -77,7 +77,7 @@ struct Term {
         Choose,
         Emit
     } kind = Kind::VarRef;
-    enum class PipeOp : uint8_t { Reverse, Repeat, Listen };
+    enum class PipeOp : uint8_t { Reverse, Repeat, Listen, Skip };
     std::string var_name;
     std::vector<std::unique_ptr<CompExpr>> branches;
     std::unique_ptr<CompExpr> lhs_expr;

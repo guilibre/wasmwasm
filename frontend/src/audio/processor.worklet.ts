@@ -1,7 +1,5 @@
 import { Conductor } from './conductor';
 import type {
-    GlobalCallbackHandler,
-    GlobalExports,
     InstrumentCallbackHandler,
     InstrumentCallbackMap,
     InstrumentExportsMap,
@@ -38,7 +36,6 @@ interface WasmGlobal {
 class WasmProcessor extends AudioWorkletProcessor {
     main: ((...args: number[]) => void) | undefined = undefined;
     instrument_exports: InstrumentExportsMap = {};
-    global_exports: GlobalExports | null = null;
     conductor: Conductor | null = null;
     heap: Float32Array | null = null;
     stopped = false;
@@ -93,18 +90,11 @@ class WasmProcessor extends AudioWorkletProcessor {
                 this.instance = instance;
                 this.main = exports.main;
                 this.instrument_exports = {};
-                this.global_exports = null;
                 for (const key of Object.keys(exports)) {
                     const sep = key.indexOf('$');
                     if (sep === -1) continue;
                     const instrument_id = key.substring(0, sep);
                     const suffix = key.substring(sep + 1);
-
-                    if (instrument_id === 'global') {
-                        if (suffix !== 'set_param') continue;
-                        this.global_exports = { set_param: exports[key] as never };
-                        continue;
-                    }
 
                     if (suffix !== 'instantiate' && suffix !== 'set_param') continue;
                     this.instrument_exports[instrument_id] ??= {
@@ -130,22 +120,13 @@ class WasmProcessor extends AudioWorkletProcessor {
                         )() as new () => InstrumentCallbackHandler;
                     }
 
-                    const global_callback_source = event.data.global_callback as string | undefined;
-                    const global_callback = global_callback_source
-                        ? (new Function(
-                              `${scale_prelude}\nreturn (\n${global_callback_source}\n);`,
-                          )() as new () => GlobalCallbackHandler)
-                        : null;
-
                     this.conductor = new Conductor(
                         event.data.score_graph as ScoreGraph,
                         (event.data.param_index as ParamIndex) ?? {},
                         this.instrument_exports,
                         sampleRate,
                         event.data.bpm as number,
-                        this.global_exports,
                         instrument_callbacks,
-                        global_callback,
                     );
                 }
 

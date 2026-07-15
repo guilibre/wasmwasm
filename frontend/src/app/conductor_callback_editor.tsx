@@ -14,27 +14,19 @@ export const instrument_callback_example = `class InstrumentHandler implements I
     p: Record<string, number>,
     ap: TokenParams[],
   ): Record<string, number> {
-    const atk = p['atk'] ?? 0.01;
-    const dur = p['dur'] ?? 1;
-    const rel = p['rel'] ?? 0.5;
-    const legato = p['legato'] ?? 0;
-    const amp = p['amp'] ?? 0.2;
-    const freq =
-      p['freq'] != undefined ? p['freq'] :
-      p['scale'] != undefined && p['degree'] != undefined && p['octave'] != undefined
-      ? 440*scales[p['scale']](p['degree'], p['octave'])
-      : 440;
-    const pan = p['pan'] ?? 0;
+    const result: Record<string, number> = {};
+    for (const k of Object.keys(p))
+      if (typeof p[k] === 'number') result[k] = p[k];
 
-    return {
-      atk,
-      dur,
-      rel,
-      legato,
-      amp,
-      freq,
-      pan,
-    };
+    if (
+      typeof result['freq'] !== 'number' &&
+      typeof p['scale'] === 'number' &&
+      typeof p['degree'] === 'number' &&
+      typeof p['octave'] === 'number'
+    )
+      result['freq'] = 440*scales[p['scale']](p['degree'], p['octave']);
+
+    return result;
   }
 }`;
 
