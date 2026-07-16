@@ -335,24 +335,26 @@ auto emit_stmts(FnCtx &ctx, const std::vector<IRInstr> &body)
                         mod, ctx.idx.at(ptr_var),
                         BinaryenLoad(mod, 4, false, 0, 4, BinaryenTypeInt32(),
                                      field_addr(mod, delay_ptr_off), "0")));
-                    auto *ptr = [&]() -> BinaryenExpressionRef {
+                    auto ptr = [&]() -> BinaryenExpressionRef {
                         return BinaryenLocalGet(mod, ctx.idx.at(ptr_var),
                                                 BinaryenTypeInt32());
-                    }();
+                    };
                     stmts.push_back(BinaryenStore(
                         mod, 8, 0, 8,
                         BinaryenBinary(mod, BinaryenAddInt32(),
-                                       ctx.resolve_mem(i.delay), ptr),
+                                       ctx.resolve_mem(i.delay), ptr()),
                         ctx.get(i.value), BinaryenTypeFloat64(), "0"));
-                    auto *tmp = BinaryenBinary(
-                        mod, BinaryenAddInt32(), ptr,
-                        BinaryenConst(mod, BinaryenLiteralInt32(8)));
+                    auto tmp = [&]() -> BinaryenExpressionRef {
+                        return BinaryenBinary(
+                            mod, BinaryenAddInt32(), ptr(),
+                            BinaryenConst(mod, BinaryenLiteralInt32(8)));
+                    };
                     auto *cond = BinaryenBinary(
-                        mod, BinaryenGeUInt32(), tmp,
+                        mod, BinaryenGeUInt32(), tmp(),
                         BinaryenConst(mod, BinaryenLiteralInt32(size_bytes)));
                     auto *new_ptr = BinaryenSelect(
                         mod, cond, BinaryenConst(mod, BinaryenLiteralInt32(0)),
-                        tmp);
+                        tmp());
                     stmts.push_back(BinaryenStore(
                         mod, 4, 0, 4, field_addr(mod, delay_ptr_off), new_ptr,
                         BinaryenTypeInt32(), "0"));

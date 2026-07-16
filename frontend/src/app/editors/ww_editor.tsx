@@ -18,7 +18,8 @@ import {
     get_hover,
     type LspCompletion,
     type LspModule,
-} from '../lsp/lsp';
+} from '../../lsp/lsp';
+import { editor_theme } from './editor_theme';
 import './ww_editor.scss';
 
 const TOKEN_CLASS: Record<string, string> = {
@@ -124,24 +125,6 @@ function make_hover_plugin(get_module: () => LspModule) {
         };
     });
 }
-
-const editor_theme = EditorView.theme(
-    {
-        '&': { height: '100%', background: 'transparent', color: '#cdd6f4' },
-        '.cm-scroller': {
-            overflow: 'auto',
-            fontFamily: 'monospace',
-            fontSize: '0.7rem',
-            lineHeight: '1.5',
-        },
-        '.cm-content': { padding: '0.5rem', caretColor: 'currentColor' },
-        '.cm-line': { padding: '0' },
-        '&.cm-focused': { outline: 'none' },
-        '.cm-cursor': { borderLeftColor: '#cdd6f4' },
-        '.cm-tooltip': { background: 'transparent', border: 'none' },
-    },
-    { dark: true },
-);
 
 export interface WWEditorHandle {
     set_value(code: string): void;

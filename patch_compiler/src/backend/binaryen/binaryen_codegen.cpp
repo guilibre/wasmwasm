@@ -1,7 +1,9 @@
 #include "binaryen_codegen.hpp"
 
+#include "binaryen-c.h"
 #include "binaryen_emit.hpp"
 #include "binaryen_simd_vectorize_pass.hpp"
+#include <iostream>
 #include <memory>
 #include <stdexcept>
 
@@ -44,6 +46,7 @@ void BinaryenCodeGen::finalize(const RoutingGraph &graph) {
         emit_ir(ir, mod_, math_module_, sample_rate_, layouts_.at(name));
 
     for (const auto &group : graph.instruments) {
+        if (group.module_names.empty()) continue;
         std::vector<const IRModule *> members;
         members.reserve(group.module_names.size());
         for (const auto &name : group.module_names)
@@ -80,8 +83,12 @@ void BinaryenCodeGen::finalize(const RoutingGraph &graph) {
     BinaryenSetOneCallerInlineMaxSize(250);
     BinaryenModuleOptimize(mod_);
 
-    if (!BinaryenModuleValidate(mod_))
+    if (!BinaryenModuleValidate(mod_)) {
+        std::unique_ptr<char, decltype(&free)> wat{
+            BinaryenModuleAllocateAndWriteText(mod_), free};
+        std::cerr << wat.get() << "\n";
         throw std::runtime_error("invalid module");
+    }
 
     run_simd_vectorization_pass(mod_);
 }

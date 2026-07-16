@@ -1,14 +1,14 @@
 import { useEffect, useState } from 'react';
-import WasmWasm from '../audio/compiler';
-import ScoreWasm from '../scorewasm/compiler';
-import { orchestra_to_json } from '../patch/orchestra_to_json';
-import type { OrchestraState, ScoreParamBindings } from '../patch/store/patch_types';
-import type { ParamIndex } from '../audio/conductor';
-import { score_scale_ambient_source, update_score_ambient } from './ts_env';
+import WasmWasm from '../../audio/compiler';
+import ScoreWasm from '../../scorewasm/compiler';
+import { orchestra_to_json } from '../../patch/orchestra_to_json';
+import type { OrchestraState, ScoreParamBindings } from '../../patch/store/patch_types';
+import type { ParamIndex } from '../../audio/conductor';
+import { score_scale_ambient_source, update_score_ambient } from '../editors/ts_env';
 import ConductorCallbackEditor, {
     instrument_callback_example,
     global_callback_example,
-} from './conductor_callback_editor';
+} from '../editors/conductor_callback_editor';
 import './conductor_panel.scss';
 
 interface Props {

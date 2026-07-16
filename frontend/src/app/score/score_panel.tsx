@@ -1,9 +1,9 @@
 import './score_panel.scss';
-import { ConductorPanel } from './conductor_panel';
+import { ConductorPanel } from '../conductor/conductor_panel';
 import { useEffect, useRef, useState, useCallback } from 'react';
-import ScoreWasm from '../scorewasm/compiler';
-import type { OrchestraState, ScoreParamBindings } from '../patch/store/patch_types';
-import WWEditor from './ww_editor';
+import ScoreWasm from '../../scorewasm/compiler';
+import type { OrchestraState, ScoreParamBindings } from '../../patch/store/patch_types';
+import WWEditor from '../editors/ww_editor';
 import { ScoreGraphView } from './score_graph_view';
 
 interface Props {

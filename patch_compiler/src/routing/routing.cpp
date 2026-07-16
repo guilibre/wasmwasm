@@ -4,7 +4,6 @@
 #include <cctype>
 #include <functional>
 #include <json/json.h>
-#include <map>
 #include <optional>
 #include <stdexcept>
 #include <unordered_map>
@@ -28,7 +27,9 @@ auto split_trailing_index(const std::string &src)
 
 void validate_graph(const Json::Value &modules, const Json::Value &patch,
                     const std::unordered_set<std::string> &extra_source_names,
-                    const std::string &context) {
+                    const std::string &context,
+                    const std::string &own_instrument_id,
+                    const std::unordered_set<std::string> &instrument_ids) {
     if (!modules.isObject())
         throw std::runtime_error("'" + context + ".modules' must be an object");
     if (!patch.isObject())
@@ -44,7 +45,13 @@ void validate_graph(const Json::Value &modules, const Json::Value &patch,
     for (const auto &name : extra_source_names) mod_names.insert(name);
 
     auto valid_source = [&](const std::string &src) -> bool {
-        if (src == "capture_l" || src == "capture_r") return true;
+        if (src == "adc_l" || src == "adc_r") return true;
+        if (!own_instrument_id.empty()) {
+            const auto prefix = own_instrument_id + "_in_";
+            if (src.starts_with(prefix) &&
+                split_trailing_index(src).has_value())
+                return true;
+        }
         const auto under = src.rfind('_');
         if (under != std::string::npos && under >= 4) {
             const auto mod = src.substr(0, under - 4);
@@ -64,6 +71,11 @@ void validate_graph(const Json::Value &modules, const Json::Value &patch,
                 }))
                 return true;
         }
+        constexpr std::string_view in_marker = "_in_";
+        const auto marker_pos = sink.find(in_marker);
+        if (marker_pos != std::string::npos &&
+            instrument_ids.contains(sink.substr(0, marker_pos)))
+            return true;
         const auto under = sink.rfind('_');
         if (under == std::string::npos || under < 3) return false;
         const auto mod = sink.substr(0, under - 3);
@@ -129,7 +141,7 @@ auto parse_patch_json(const std::string &json_str) -> ParsedPatch {
                                 ? instr["patch"]
                                 : Json::Value{Json::objectValue};
         validate_graph(mods, patch, /*extra_source_names=*/{},
-                       "instruments." + instr_id);
+                       "instruments." + instr_id, instr_id, instrument_ids);
 
         InstrumentSource src;
         src.id = instr_id;
@@ -147,7 +159,8 @@ auto parse_patch_json(const std::string &json_str) -> ParsedPatch {
     const auto &global_patch = global.isMember("patch")
                                    ? global["patch"]
                                    : Json::Value{Json::objectValue};
-    validate_graph(global_mods, global_patch, instrument_ids, "global");
+    validate_graph(global_mods, global_patch, instrument_ids, "global", "",
+                   instrument_ids);
 
     for (const auto &name : global_mods.getMemberNames())
         result.global_module_sources.emplace_back(name,
@@ -169,52 +182,18 @@ struct RoutedGraph {
     std::string dac_l;
     std::string dac_r;
     std::vector<std::string> out_sources;
-    std::unordered_map<std::string, int> external_input_channels;
-    int external_input_count = 0;
 };
 
 auto route_one_graph(
     const std::vector<std::pair<std::string, std::string>> &module_sources,
-    const std::vector<std::pair<std::string, std::string>> &connections,
-    const std::unordered_set<std::string> &extra_output_names = {})
+    const std::vector<std::pair<std::string, std::string>> &connections)
     -> RoutedGraph {
-    std::unordered_set<std::string> mod_names;
-    for (const auto &[mod_name, _] : module_sources) mod_names.insert(mod_name);
-    for (const auto &name : extra_output_names) mod_names.insert(name);
-
-    auto is_module_output = [&](const std::string &src) -> bool {
-        const auto under = src.rfind('_');
-        if (under == std::string::npos || under < 4) return false;
-        const auto mod = src.substr(0, under - 4);
-        const auto mid = src.substr(under - 4, 4);
-        return mid == "_out" && mod_names.contains(mod);
-    };
-
     std::unordered_map<std::string, std::vector<std::string>> mod_inputs;
     std::string dac_l;
     std::string dac_r;
     std::vector<std::string> out_sources;
 
-    std::map<std::string, int> ext_channel_counts;
-    std::unordered_map<std::string, std::string> ext_source_group;
-    std::unordered_map<std::string, int> ext_source_local_channel;
-
     for (const auto &[sink, src] : connections) {
-        if (src == "capture_l" || src == "capture_r") {
-            const auto local = src == "capture_l" ? 0 : 1;
-            ext_channel_counts["capture"] =
-                std::max(ext_channel_counts["capture"], local + 1);
-            ext_source_group[src] = "capture";
-            ext_source_local_channel[src] = local;
-        } else if (!is_module_output(src)) {
-            if (auto split = split_trailing_index(src)) {
-                auto &count = ext_channel_counts[split->first];
-                count = std::max(count, split->second + 1);
-                ext_source_group[src] = split->first;
-                ext_source_local_channel[src] = split->second;
-            }
-        }
-
         if (sink == "dac_l") {
             dac_l = src;
             continue;
@@ -239,18 +218,6 @@ auto route_one_graph(
             inputs[idx] = src;
         }
     }
-
-    std::unordered_map<std::string, int> group_base_offset;
-    int cumulative_offset = 0;
-    for (const auto &[name, channels] : ext_channel_counts) {
-        group_base_offset[name] = cumulative_offset;
-        cumulative_offset += channels;
-    }
-
-    std::unordered_map<std::string, int> external_input_channels;
-    for (const auto &[src, group] : ext_source_group)
-        external_input_channels[src] =
-            group_base_offset[group] + ext_source_local_channel[src];
 
     std::unordered_map<std::string, std::vector<std::string>> deps;
     for (const auto &[mod_name, _] : module_sources) {
@@ -304,9 +271,59 @@ auto route_one_graph(
         .dac_l = std::move(dac_l),
         .dac_r = std::move(dac_r),
         .out_sources = std::move(out_sources),
-        .external_input_channels = std::move(external_input_channels),
-        .external_input_count = cumulative_offset,
     };
+}
+
+auto route_and_emit_instrument(
+    const InstrumentSource &instr,
+    const std::unordered_map<std::string, IRModule> &compiled_modules_by_name,
+    RoutingGraph &graph,
+    std::unordered_set<std::string> &all_instrument_block_names)
+    -> RoutedGraph {
+    auto routed = route_one_graph(instr.module_sources, instr.connections);
+
+    std::vector<std::string> param_names;
+    std::unordered_set<std::string> seen_params;
+    for (const auto &name : routed.order) {
+        const auto it = compiled_modules_by_name.find(name);
+        if (it == compiled_modules_by_name.end())
+            throw std::runtime_error("Module not found: " + name);
+        for (const auto &[param_name, _] : it->second.params) {
+            if (!seen_params.contains(param_name)) {
+                seen_params.insert(param_name);
+                param_names.push_back(param_name);
+            }
+        }
+    }
+
+    InstrumentGroup group;
+    group.id = instr.id;
+    group.module_names = routed.order;
+    group.param_names = std::move(param_names);
+    graph.instruments.push_back(std::move(group));
+
+    for (const auto &name : routed.order) {
+        all_instrument_block_names.insert(name);
+        const auto it = compiled_modules_by_name.find(name);
+        if (it == compiled_modules_by_name.end())
+            throw std::runtime_error("Module not found: " + name);
+        const auto &inputs = routed.mod_inputs[name];
+        const auto &producers = routed.feedback_producers[name];
+        std::vector<bool> feedback_inputs(inputs.size(), false);
+        for (size_t i = 0; i < inputs.size(); ++i) {
+            const auto under = inputs[i].rfind("_out_");
+            if (under != std::string::npos &&
+                producers.contains(inputs[i].substr(0, under)))
+                feedback_inputs[i] = true;
+        }
+        graph.modules.push_back({
+            .ir = it->second,
+            .inputs = inputs,
+            .feedback_inputs = std::move(feedback_inputs),
+        });
+    }
+
+    return routed;
 }
 
 } // namespace
@@ -318,60 +335,130 @@ auto build_routing_graph(const ParsedPatch &patch,
     for (size_t i = 0; i < patch.instruments.size(); ++i)
         instr_index[patch.instruments[i].id] = i;
 
+    std::unordered_map<std::string, IRModule> compiled_modules_by_name;
+    for (auto &m : compiled_modules)
+        compiled_modules_by_name[m.name] = std::move(m);
+
     RoutingGraph graph;
     std::vector<RoutedGraph> per_instrument;
     per_instrument.reserve(patch.instruments.size());
     std::unordered_set<std::string> all_instrument_block_names;
 
     for (const auto &instr : patch.instruments) {
-        auto routed = route_one_graph(instr.module_sources, instr.connections);
-
-        std::vector<std::string> param_names;
-        std::unordered_set<std::string> seen_params;
-        for (const auto &name : routed.order) {
-            auto it = std::ranges::find_if(
-                compiled_modules,
-                [&](const IRModule &m) -> bool { return m.name == name; });
-            if (it == compiled_modules.end())
-                throw std::runtime_error("Module not found: " + name);
-            for (const auto &[param_name, _] : it->params) {
-                if (!seen_params.contains(param_name)) {
-                    seen_params.insert(param_name);
-                    param_names.push_back(param_name);
-                }
-            }
-        }
-
-        InstrumentGroup group;
-        group.id = instr.id;
-        group.module_names = routed.order;
-        group.param_names = std::move(param_names);
-        graph.instruments.push_back(std::move(group));
-
-        for (const auto &name : routed.order) {
-            all_instrument_block_names.insert(name);
-            auto it = std::ranges::find_if(
-                compiled_modules,
-                [&](const IRModule &m) -> bool { return m.name == name; });
-            if (it == compiled_modules.end())
-                throw std::runtime_error("Module not found: " + name);
-            const auto &inputs = routed.mod_inputs[name];
-            const auto &producers = routed.feedback_producers[name];
-            std::vector<bool> feedback_inputs(inputs.size(), false);
-            for (size_t i = 0; i < inputs.size(); ++i) {
-                const auto under = inputs[i].rfind("_out_");
-                if (under != std::string::npos &&
-                    producers.contains(inputs[i].substr(0, under)))
-                    feedback_inputs[i] = true;
-            }
-            graph.modules.push_back({
-                .ir = std::move(*it),
-                .inputs = inputs,
-                .feedback_inputs = std::move(feedback_inputs),
-            });
-        }
-
+        auto routed = route_and_emit_instrument(
+            instr, compiled_modules_by_name, graph, all_instrument_block_names);
         per_instrument.push_back(std::move(routed));
+    }
+
+    std::unordered_map<std::string, std::string> instrument_in_source;
+    std::unordered_map<std::string, std::string> instrument_in_producer;
+    for (const auto &[sink, src] : patch.global_connections) {
+        constexpr std::string_view marker = "_in_";
+        const auto pos = sink.find(marker);
+        if (pos == std::string::npos) continue;
+        const auto instr_id = sink.substr(0, pos);
+        if (!instr_index.contains(instr_id)) continue;
+
+        const auto under = src.rfind('_');
+        bool src_is_instr_out = false;
+        if (under != std::string::npos && under >= 4) {
+            const auto mod = src.substr(0, under - 4);
+            const auto mid = src.substr(under - 4, 4);
+            src_is_instr_out = mid == "_out" && instr_index.contains(mod);
+        }
+        if (src_is_instr_out) {
+            const auto src_instr_id = src.substr(0, under - 4);
+            const auto idx = std::stoul(src.substr(under + 1));
+            const auto &out_sources =
+                per_instrument[instr_index.at(src_instr_id)].out_sources;
+            if (idx >= out_sources.size())
+                throw std::runtime_error("instrument '" + src_instr_id +
+                                         "' has no out_" + std::to_string(idx));
+            instrument_in_source[sink] = out_sources[idx];
+            instrument_in_producer[sink] = src_instr_id;
+        } else {
+            instrument_in_source[sink] = src;
+        }
+    }
+
+    std::unordered_set<std::string> instruments_needing_reroute;
+    for (const auto &[sink, _] : instrument_in_source)
+        instruments_needing_reroute.insert(sink.substr(0, sink.find("_in_")));
+
+    for (const auto &instr_id : instruments_needing_reroute) {
+        const auto instr_idx = instr_index.at(instr_id);
+        const auto &instr = patch.instruments[instr_idx];
+        const auto &old_group = graph.instruments[instr_idx];
+        graph.modules.erase(
+            std::ranges::remove_if(graph.modules,
+                                   [&](const ModuleRoute &m) -> bool {
+                                       return std::ranges::find(
+                                                  old_group.module_names,
+                                                  m.ir.name) !=
+                                              old_group.module_names.end();
+                                   })
+                .begin(),
+            graph.modules.end());
+        graph.instruments.erase(graph.instruments.begin() +
+                                static_cast<std::ptrdiff_t>(instr_idx));
+
+        std::vector<std::pair<std::string, std::string>> rewritten_connections;
+        rewritten_connections.reserve(instr.connections.size());
+        for (const auto &[sink, src] : instr.connections) {
+            if (const auto it = instrument_in_source.find(src);
+                it != instrument_in_source.end())
+                rewritten_connections.emplace_back(sink, it->second);
+            else
+                rewritten_connections.emplace_back(sink, src);
+        }
+
+        auto routed = route_and_emit_instrument(
+            InstrumentSource{.id = instr.id,
+                             .module_sources = instr.module_sources,
+                             .connections = rewritten_connections},
+            compiled_modules_by_name, graph, all_instrument_block_names);
+        auto new_group = std::move(graph.instruments.back());
+        graph.instruments.pop_back();
+        graph.instruments.insert(graph.instruments.begin() +
+                                     static_cast<std::ptrdiff_t>(instr_idx),
+                                 std::move(new_group));
+        per_instrument[instr_idx] = std::move(routed);
+    }
+
+    std::unordered_map<std::string, std::unordered_set<std::string>> depends_on;
+    for (const auto &[sink, producer_id] : instrument_in_producer) {
+        const auto consumer_id = sink.substr(0, sink.find("_in_"));
+        if (producer_id != consumer_id)
+            depends_on[consumer_id].insert(producer_id);
+    }
+
+    {
+        std::vector<std::string> order;
+        std::unordered_set<std::string> visited;
+        std::unordered_set<std::string> in_stack;
+        std::function<void(const std::string &)> topo =
+            [&](const std::string &id) -> void {
+            if (visited.contains(id)) return;
+            visited.insert(id);
+            in_stack.insert(id);
+            for (const auto &dep : depends_on[id]) {
+                if (in_stack.contains(dep))
+                    throw std::runtime_error(
+                        "cyclic instrument input dependency involving '" + id +
+                        "' and '" + dep + "'");
+                topo(dep);
+            }
+            in_stack.erase(id);
+            order.push_back(id);
+        };
+        for (const auto &instr : patch.instruments) topo(instr.id);
+
+        std::vector<InstrumentGroup> reordered_instruments;
+        reordered_instruments.reserve(graph.instruments.size());
+        for (const auto &id : order)
+            reordered_instruments.push_back(
+                std::move(graph.instruments[instr_index.at(id)]));
+        graph.instruments = std::move(reordered_instruments);
     }
 
     std::vector<std::pair<std::string, std::string>>
@@ -401,18 +488,15 @@ auto build_routing_graph(const ParsedPatch &patch,
     }
 
     auto global_routed = route_one_graph(patch.global_module_sources,
-                                         resolved_global_connections,
-                                         all_instrument_block_names);
+                                         resolved_global_connections);
 
     std::vector<std::string> global_param_names;
     std::unordered_set<std::string> seen_global_params;
     for (const auto &name : global_routed.order) {
-        auto it = std::ranges::find_if(
-            compiled_modules,
-            [&](const IRModule &m) -> bool { return m.name == name; });
-        if (it == compiled_modules.end())
+        const auto it = compiled_modules_by_name.find(name);
+        if (it == compiled_modules_by_name.end())
             throw std::runtime_error("Module not found: " + name);
-        for (const auto &[param_name, _] : it->params) {
+        for (const auto &[param_name, _] : it->second.params) {
             if (!seen_global_params.contains(param_name)) {
                 seen_global_params.insert(param_name);
                 global_param_names.push_back(param_name);
@@ -428,7 +512,7 @@ auto build_routing_graph(const ParsedPatch &patch,
                 feedback_inputs[i] = true;
         }
         graph.modules.push_back({
-            .ir = std::move(*it),
+            .ir = it->second,
             .inputs = inputs,
             .feedback_inputs = std::move(feedback_inputs),
         });
@@ -439,8 +523,8 @@ auto build_routing_graph(const ParsedPatch &patch,
     graph.dac_l_source = global_routed.dac_l;
     graph.dac_r_source = global_routed.dac_r;
     graph.out_sources = global_routed.out_sources;
-    graph.external_input_channels = global_routed.external_input_channels;
-    graph.external_input_count = global_routed.external_input_count;
+    graph.external_input_channels = {{"adc_l", 0}, {"adc_r", 1}};
+    graph.external_input_count = 2;
 
     return graph;
 }

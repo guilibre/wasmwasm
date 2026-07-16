@@ -1,0 +1,20 @@
+{
+  "global": {
+    "modules": {},
+    "patch": {
+      "dac_l": "test_out_0",
+      "test_in_0": "adc_l"
+    }
+  },
+  "instruments": {
+    "test": {
+      "modules": {
+        "block_1784216181891": "block_1784216181891_b = delay 48000 {_. 0}\nOUT[0] <- @block_1784216181891_b\nblock_1784216181891_b <- IN[0]"
+      },
+      "patch": {
+        "block_1784216181891_in_0": "test_in_0",
+        "out_0": "block_1784216181891_out_0"
+      }
+    }
+  }
+}

@@ -50,10 +50,18 @@ auto instance_base_of_slot(BinaryenModuleRef mod, const InstanceLayout &layout,
 
 using OutLocalMap = std::unordered_map<std::string, BinaryenIndex>;
 
+auto module_name_of_out_key(const std::string &key) -> std::string {
+    const auto under = key.rfind("_out_");
+    return under == std::string::npos ? key : key.substr(0, under);
+}
+
 auto resolve_source(BinaryenModuleRef mod, const RoutingGraph &graph,
-                    const OutLocalMap &out_locals, const std::string &src,
-                    BinaryenIndex in_base, BinaryenIndex sample,
-                    BinaryenIndex num_samples) -> BinaryenExpressionRef {
+                    const OutLocalMap &cur_locals,
+                    const OutLocalMap &out_locals,
+                    const std::unordered_set<std::string> &same_group_modules,
+                    const std::string &src, BinaryenIndex in_base,
+                    BinaryenIndex sample, BinaryenIndex num_samples)
+    -> BinaryenExpressionRef {
     if (auto it = graph.external_input_channels.find(src);
         it != graph.external_input_channels.end()) {
         auto *ch_base = BinaryenBinary(
@@ -75,7 +83,10 @@ auto resolve_source(BinaryenModuleRef mod, const RoutingGraph &graph,
                              BinaryenLoad(mod, 4, false, 0, 4,
                                           BinaryenTypeFloat32(), addr, "0"));
     }
-    if (auto it = out_locals.find(src); it != out_locals.end())
+    const auto &locals =
+        same_group_modules.contains(module_name_of_out_key(src)) ? cur_locals
+                                                                 : out_locals;
+    if (auto it = locals.find(src); it != locals.end())
         return BinaryenLocalGet(mod, it->second, BinaryenTypeFloat64());
     return BinaryenConst(mod, BinaryenLiteralFloat64(0.0));
 }
@@ -154,14 +165,15 @@ void emit_main_loop(
     auto emit_block_body =
         [&](const ModuleRoute &route, const InstanceLayout &layout,
             const std::function<BinaryenExpressionRef()> &slot_get,
-            const OutLocalMap &input_locals,
+            const std::unordered_set<std::string> &same_group_modules,
             std::vector<BinaryenExpressionRef> &out_stmts) -> void {
         for (size_t i = 0; i < route.inputs.size(); ++i) {
             auto *val =
                 (i < route.feedback_inputs.size() && route.feedback_inputs[i])
                     ? resolve_feedback_source(mod, route.inputs[i], layouts,
                                               slot_get)
-                    : resolve_source(mod, graph, input_locals, route.inputs[i],
+                    : resolve_source(mod, graph, cur_locals, out_locals,
+                                     same_group_modules, route.inputs[i],
                                      IN_BASE, SAMPLE, NUM_SAMPLES);
             auto *instance_base =
                 instance_base_of_slot(mod, layout, slot_get());
@@ -223,6 +235,8 @@ void emit_main_loop(
         for (const auto &group : graph.instruments) {
             if (group.module_names.empty()) continue;
             const auto &shared_layout = layouts.at(group.module_names.front());
+            const std::unordered_set<std::string> same_group_modules(
+                group.module_names.begin(), group.module_names.end());
 
             for (const auto &name : group.module_names)
                 reset_outputs(route_by_name.at(name)->ir, out_locals, stmts);
@@ -250,7 +264,8 @@ void emit_main_loop(
             for (const auto &name : group.module_names) {
                 const auto &route = *route_by_name.at(name);
                 const auto &layout = layouts.at(name);
-                emit_block_body(route, layout, slot_get, cur_locals, live_body);
+                emit_block_body(route, layout, slot_get, same_group_modules,
+                                live_body);
             }
 
             for (auto *live_stmt : live_body) loop_stmts.push_back(live_stmt);
@@ -352,6 +367,7 @@ void emit_main_loop(
             }
         }
 
+        static const std::unordered_set<std::string> no_group_modules;
         for (const auto &route : graph.modules) {
             if (grouped_module_names.contains(route.ir.name)) continue;
             const auto &layout = layouts.at(route.ir.name);
@@ -361,13 +377,15 @@ void emit_main_loop(
             auto slot_zero = [&]() -> BinaryenExpressionRef {
                 return BinaryenConst(mod, BinaryenLiteralInt32(0));
             };
-            emit_block_body(route, layout, slot_zero, out_locals, stmts);
+            emit_block_body(route, layout, slot_zero, no_group_modules, stmts);
         }
 
         auto dac_f32 = [&](const std::string &src) -> BinaryenExpressionRef {
             return BinaryenUnary(mod, BinaryenDemoteFloat64(),
-                                 resolve_source(mod, graph, out_locals, src,
-                                                IN_BASE, SAMPLE, NUM_SAMPLES));
+                                 resolve_source(mod, graph, out_locals,
+                                                out_locals, no_group_modules,
+                                                src, IN_BASE, SAMPLE,
+                                                NUM_SAMPLES));
         };
 
         auto out_addr =

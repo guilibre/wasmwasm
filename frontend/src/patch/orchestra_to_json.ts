@@ -35,6 +35,7 @@ function build_module_graph(
     edges: Edge[],
     build_module_code: (block: Node) => string,
     resolve_source: (src_node: Node, source_handle: string) => string,
+    resolve_sink: (tgt_node: Node, target_handle: string) => string,
 ): InstrumentModule {
     const node_map = new Map(nodes.map((n) => [n.id, n]));
     const block_nodes = nodes.filter((n) => n.type === 'block');
@@ -49,10 +50,7 @@ function build_module_graph(
         if (!src_node || !tgt_node || !edge.sourceHandle || !edge.targetHandle) continue;
 
         const src_key = resolve_source(src_node, edge.sourceHandle);
-        const sink_key =
-            tgt_node.type === 'out' || tgt_node.type === 'dac'
-                ? edge.targetHandle
-                : `${tgt_node.id}_${edge.targetHandle}`;
+        const sink_key = resolve_sink(tgt_node, edge.targetHandle);
 
         patch[sink_key] = src_key;
     }
@@ -60,13 +58,26 @@ function build_module_graph(
     return { modules, patch };
 }
 
-function build_instrument_module(nodes: Node[], edges: Edge[]): InstrumentModule {
+function instrument_in_key(instrument_id: string, handle: string): string {
+    return `${instrument_id}_in_${handle.replace('in_', '')}`;
+}
+
+function build_instrument_module(
+    instrument_id: string,
+    nodes: Node[],
+    edges: Edge[],
+): InstrumentModule {
     return build_module_graph(
         nodes,
         edges,
         (block) =>
             rewrite_non_param_declarations((block.data as unknown as BlockNodeData).code, block.id),
-        (src_node, source_handle) => `${src_node.id}_${source_handle}`,
+        (src_node, source_handle) =>
+            src_node.type === 'instrument_in'
+                ? instrument_in_key(instrument_id, source_handle)
+                : `${src_node.id}_${source_handle}`,
+        (tgt_node, target_handle) =>
+            tgt_node.type === 'out' ? target_handle : `${tgt_node.id}_${target_handle}`,
     );
 }
 
@@ -79,10 +90,18 @@ function build_global_graph(nodes: Node[], edges: Edge[]): InstrumentModule {
         edges,
         (block) => (block.data as unknown as BlockNodeData).code,
         (src_node, source_handle) => {
+            if (src_node.type === 'adc') return source_handle;
             const src_instrument_id = in_node_instrument_id(src_node.id);
             return src_node.type === 'in' && src_instrument_id
                 ? `${src_instrument_id}_${source_handle.replace('in_', 'out_')}`
                 : `${src_node.id}_${source_handle}`;
+        },
+        (tgt_node, target_handle) => {
+            if (tgt_node.type === 'dac') return target_handle;
+            const tgt_instrument_id = in_node_instrument_id(tgt_node.id);
+            return tgt_node.type === 'in' && tgt_instrument_id && target_handle.startsWith('in_')
+                ? instrument_in_key(tgt_instrument_id, target_handle)
+                : `${tgt_node.id}_${target_handle}`;
         },
     );
 }
@@ -93,7 +112,7 @@ export function orchestra_to_json(orchestra: OrchestraState): string {
         { modules: Record<string, string>; patch: Record<string, string> }
     > = {};
     for (const instr of orchestra.instruments) {
-        instruments[instr.id] = build_instrument_module(instr.nodes, instr.edges);
+        instruments[instr.id] = build_instrument_module(instr.id, instr.nodes, instr.edges);
     }
 
     const global = build_global_graph(orchestra.global_nodes, orchestra.global_edges);

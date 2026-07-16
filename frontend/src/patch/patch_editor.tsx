@@ -12,8 +12,10 @@ import type {
 import '@xyflow/react/dist/style.css';
 import { BlockNode } from './nodes/block_node';
 import { DacNode } from './nodes/dac_node';
+import { AdcNode } from './nodes/adc_node';
 import { OutNode } from './nodes/out_node';
 import { InNode } from './nodes/in_node';
+import { InstrumentInNode } from './nodes/instrument_in_node';
 import { SelfLoopEdge } from './nodes/self_loop_edge';
 import type { usePatchStore } from './store/use_patch_store';
 
@@ -24,8 +26,10 @@ const EDGE_TYPES = {
 const NODE_TYPES = {
     block: BlockNode,
     dac: DacNode,
+    adc: AdcNode,
     out: OutNode,
     in: InNode,
+    instrument_in: InstrumentInNode,
 };
 
 interface ContextMenu {
@@ -82,7 +86,7 @@ export function PatchEditor({ store }: Props) {
                 select(node.id);
                 return;
             }
-            if (node.type === 'out') {
+            if (node.type === 'out' || node.type === 'instrument_in') {
                 const bounds = (e.currentTarget as HTMLElement)
                     .closest('.ww-canvas')
                     ?.getBoundingClientRect();

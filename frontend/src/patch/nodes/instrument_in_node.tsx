@@ -3,34 +3,20 @@ import { Handle, Position, useUpdateNodeInternals } from '@xyflow/react';
 import type { NodeProps } from '@xyflow/react';
 import { handle_offset } from '../store/elk_auto_layout';
 
-export function InNode({ id, data, selected }: NodeProps) {
-    const { name, num_channels, num_in_channels } = data as unknown as {
-        name: string;
-        num_channels: number;
-        num_in_channels: number;
-    };
+export function InstrumentInNode({ id, data, selected }: NodeProps) {
+    const { name, num_channels } = data as unknown as { name: string; num_channels: number };
     const update_node_internals = useUpdateNodeInternals();
     useEffect(() => {
         update_node_internals(id);
-    }, [id, num_channels, num_in_channels, update_node_internals]);
+    }, [id, num_channels, update_node_internals]);
 
     return (
         <div className={`ww-node ww-node--system${selected ? ' ww-node--selected' : ''}`}>
-            {Array.from({ length: num_in_channels }, (_, i) => (
-                <Handle
-                    key={`in_${i}`}
-                    id={`in_${i}`}
-                    type="target"
-                    position={Position.Top}
-                    style={{ left: handle_offset(i, num_in_channels) }}
-                    className="ww-handle ww-handle--in"
-                />
-            ))}
             <div className="ww-node__label">{name}</div>
             {Array.from({ length: num_channels }, (_, i) => (
                 <Handle
-                    key={`out_${i}`}
-                    id={`out_${i}`}
+                    key={`in_${i}`}
+                    id={`in_${i}`}
                     type="source"
                     position={Position.Bottom}
                     style={{ left: handle_offset(i, num_channels) }}
