@@ -1,6 +1,6 @@
 import { applyNodeChanges, applyEdgeChanges } from '@xyflow/react';
 import type { Edge, NodeChange } from '@xyflow/react';
-import { scan_arity, scan_params, parse_out_name } from './code_scanning';
+import { scan_arity, scan_params, parse_out_name, parse_in_name } from './code_scanning';
 import {
     default_nodes,
     default_global_nodes,
@@ -40,11 +40,25 @@ const DEFAULT_ORCHESTRA: OrchestraState = {
 };
 
 function normalize_orchestra(orchestra: Partial<OrchestraState>): OrchestraState {
-    const instruments = (orchestra.instruments ?? []).map((i: Partial<InstrumentState>) => ({
-        ...i,
-        nodes: (i.nodes ?? default_nodes()).map((n) => ({ ...n, position: { x: 0, y: 0 } })),
-        edges: i.edges ?? [],
-    })) as InstrumentState[];
+    const instruments = (orchestra.instruments ?? []).map((i: Partial<InstrumentState>) => {
+        const nodes = (i.nodes ?? default_nodes()).map((n) => ({ ...n, position: { x: 0, y: 0 } }));
+        const has_instrument_in = nodes.some((n) => n.type === 'instrument_in');
+        return {
+            ...i,
+            nodes: has_instrument_in
+                ? nodes
+                : [
+                      ...nodes,
+                      {
+                          id: 'in',
+                          type: 'instrument_in',
+                          position: { x: 0, y: 200 },
+                          data: { name: 'IN 2', num_channels: 2 },
+                      },
+                  ],
+            edges: i.edges ?? [],
+        };
+    }) as InstrumentState[];
     const global_nodes = sync_global_in_nodes(
         instruments,
         (orchestra.global_nodes ?? default_global_nodes()).map((n) => ({
@@ -129,7 +143,7 @@ function patch_reducer(state: PatchState, action: PatchAction): PatchState {
             const active = get_active(state);
             if (!active) return state;
             const filtered_changes = action.changes.filter(
-                (c) => !(c.type === 'remove' && c.id === 'out'),
+                (c) => !(c.type === 'remove' && (c.id === 'out' || c.id === 'in')),
             );
             const removed_ids = new Set(
                 filtered_changes
@@ -301,6 +315,37 @@ function patch_reducer(state: PatchState, action: PatchAction): PatchState {
                         global_edges: next_state.orchestra.global_edges.filter((e) => {
                             if (e.source !== in_id) return true;
                             const idx = parseInt((e.sourceHandle ?? '').replace('in_', ''));
+                            return isNaN(idx) || idx < num_channels;
+                        }),
+                    },
+                };
+            }
+            if (target_node?.type === 'instrument_in') {
+                const num_channels = parse_in_name(action.name);
+                if (num_channels === null) return state;
+                const next_state = map_active(state, (i) => ({
+                    ...i,
+                    nodes: i.nodes.map((n) =>
+                        n.id === action.id
+                            ? { ...n, data: { name: `IN ${num_channels}`, num_channels } }
+                            : n,
+                    ),
+                }));
+                const updated_active = get_active(next_state)!;
+                const in_id = in_node_id(updated_active.id);
+                return {
+                    ...next_state,
+                    orchestra: {
+                        ...next_state.orchestra,
+                        global_nodes: sync_global_in_nodes(
+                            next_state.orchestra.instruments.map((i) =>
+                                i.id === updated_active.id ? updated_active : i,
+                            ),
+                            next_state.orchestra.global_nodes,
+                        ),
+                        global_edges: next_state.orchestra.global_edges.filter((e) => {
+                            if (e.target !== in_id) return true;
+                            const idx = parseInt((e.targetHandle ?? '').replace('in_', ''));
                             return isNaN(idx) || idx < num_channels;
                         }),
                     },

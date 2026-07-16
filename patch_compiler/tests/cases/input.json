@@ -1,0 +1,37 @@
+{
+  "instruments": {
+    "saw": {
+      "modules": {
+        "block_1784210154716": "param atk = 0.01\nparam dur = 1\nparam rel = 0.5\nparam legato = 0\n\nstatic block_1784210154716_env = 0\n\nOUT[0] <- block_1784210154716_env\n\nstatic block_1784210154716_gate = 1\nblock_1784210154716_gate ? (\n  block_1784210154716_env < 1 ? block_1784210154716_env = atk <= 0 ? 1 : block_1784210154716_env + 1/(atk*SAMPLE_RATE)\n) : block_1784210154716_env = block_1784210154716_env - 1/(rel*SAMPLE_RATE)\nblock_1784210154716_env = min 1 (max 0 block_1784210154716_env)\nblock_1784210154716_env <= 0 ? die\n\nstatic block_1784210154716_dt = 1/SAMPLE_RATE\nstatic block_1784210154716_t = 0\nlegato == 0 ? block_1784210154716_t = block_1784210154716_t + block_1784210154716_dt\nblock_1784210154716_t >= dur ? block_1784210154716_gate = 0\n",
+        "block_1784210970621": "param amp = 0.2\nparam freq = 440\nstatic block_1784210970621_ts = array 3 {_. 0}\nstatic block_1784210970621_t = 0\n\nOUT[0] <- amp * IN[0] * block_1784210970621_t\n\nblock_1784210970621_freqs = array 3 {i. freq*(1 + 0.01*(i - 1))}\nstatic block_1784210970621_sr_inv2 = 2/SAMPLE_RATE\nblock_1784210970621_ts = zip {a b. a + b*block_1784210970621_sr_inv2} block_1784210970621_ts block_1784210970621_freqs\nblock_1784210970621_ts = map {a. a >= 1 ? a - 2 : a} block_1784210970621_ts\nblock_1784210970621_t = (foldr 0 {a acc. a + acc} block_1784210970621_ts)/3\n"
+      },
+      "patch": {
+        "block_1784210970621_in_0": "block_1784210154716_out_0",
+        "out_0": "block_1784210970621_out_0"
+      }
+    },
+    "delay": {
+      "modules": {
+        "block_1784210988950": "param echo_delay = 2/3\nparam decay = 0.9\n\nblock_1784210988950_buffer = delay 48000 {_. 0}\nstatic block_1784210988950_idx = 0\n\nblock_1784210988950_out = decay*@[block_1784210988950_idx]block_1784210988950_buffer\nOUT[0] <- IN[1]*block_1784210988950_out\n@[block_1784210988950_idx]block_1784210988950_buffer = IN[0] + block_1784210988950_out\nblock_1784210988950_idx = block_1784210988950_idx + 1\nblock_1784210988950_idx >= echo_delay*SAMPLE_RATE ? block_1784210988950_idx = 0\n",
+        "block_1784211793837": "param dur = 1\n\nstatic block_1784211793837_t = 0\n\nOUT[0] <- 1 - 0.5*(cos(block_1784211793837_t) + 1)\n\nblock_1784211793837_t = block_1784211793837_t + 2*PI/(dur*SAMPLE_RATE)\nblock_1784211793837_t >= 2*PI ? block_1784211793837_t = 2*PI\n"
+      },
+      "patch": {
+        "block_1784210988950_in_0": "delay_in_0",
+        "out_0": "block_1784210988950_out_0",
+        "block_1784210988950_in_1": "block_1784211793837_out_0"
+      }
+    }
+  },
+  "global": {
+    "modules": {
+      "block_1784211061749": "OUT[0] <- 0.5*clip(IN[0] + IN[1])"
+    },
+    "patch": {
+      "delay_in_0": "saw_out_0",
+      "dac_l": "block_1784211061749_out_0",
+      "block_1784211061749_in_1": "delay_out_0",
+      "block_1784211061749_in_0": "saw_out_0",
+      "dac_r": "adc_l"
+    }
+  }
+}

@@ -1,16 +1,16 @@
 import { useEffect, useRef, useState } from 'react';
 import { ReactFlowProvider } from '@xyflow/react';
 import WasmWasm from '../audio/compiler';
-import WWEditor, { type WWEditorHandle } from './ww_editor';
-import { Sidebar } from './sidebar';
-import { ScorePanel } from './score_panel';
-import { InstrumentTabs } from './instrument_tabs';
+import WWEditor, { type WWEditorHandle } from './editors/ww_editor';
+import { Sidebar } from './sidebar/sidebar';
+import { ScorePanel } from './score/score_panel';
+import { InstrumentTabs } from './instrument_tabs/instrument_tabs';
 import { PatchEditor } from '../patch/patch_editor';
 import { usePatchStore } from '../patch/store/use_patch_store';
-import { useAudioEngine } from './use_audio_engine';
+import { useAudioEngine } from './hooks/use_audio_engine';
 import { StatusBar } from './status_bar';
-import { useBlockModal } from './use_block_modal';
-import { useUndoRedoShortcuts } from './use_undo_redo_shortcuts';
+import { useBlockModal } from './hooks/use_block_modal';
+import { useUndoRedoShortcuts } from './hooks/use_undo_redo_shortcuts';
 import './app.scss';
 
 export default function App() {

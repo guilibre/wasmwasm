@@ -1,10 +1,18 @@
 const OUT_NAME_RE = /^OUT\s+(\d+)$/i;
+const IN_NAME_RE = /^IN\s+(\d+)$/i;
 
 export function parse_out_name(name: string): number | null {
     const m = OUT_NAME_RE.exec(name.trim());
     if (!m) return null;
     const n = parseInt(m[1], 10);
     return n > 0 ? n : null;
+}
+
+export function parse_in_name(name: string): number | null {
+    const m = IN_NAME_RE.exec(name.trim());
+    if (!m) return null;
+    const n = parseInt(m[1], 10);
+    return n >= 0 ? n : null;
 }
 
 export function scan_params(code: string): string[] {

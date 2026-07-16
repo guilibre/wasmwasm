@@ -33,6 +33,13 @@ function node_ports(node: Node) {
             { id: `${node.id}__dac_r`, x: xr, y: 0 },
         ];
     }
+    if (node.type === 'adc') {
+        const [xl, xr] = spaced(2, width);
+        return [
+            { id: `${node.id}__adc_l`, x: xl, y: height },
+            { id: `${node.id}__adc_r`, x: xr, y: height },
+        ];
+    }
     if (node.type === 'out') {
         const num_channels = (node.data as Partial<OutData>).num_channels ?? 0;
         return spaced(num_channels, width).map((x, i) => ({
@@ -41,13 +48,22 @@ function node_ports(node: Node) {
             y: 0,
         }));
     }
-    if (node.type === 'in') {
+    if (node.type === 'instrument_in') {
         const num_channels = (node.data as Partial<InData>).num_channels ?? 0;
         return spaced(num_channels, width).map((x, i) => ({
             id: `${node.id}__in_${i}`,
             x,
             y: height,
         }));
+    }
+    if (node.type === 'in') {
+        const { num_channels, num_in_channels } = node.data as Partial<InData>;
+        const ports = [];
+        for (const [i, x] of spaced(num_in_channels ?? 0, width).entries())
+            ports.push({ id: `${node.id}__in_${i}`, x, y: 0 });
+        for (const [i, x] of spaced(num_channels ?? 0, width).entries())
+            ports.push({ id: `${node.id}__out_${i}`, x, y: height });
+        return ports;
     }
     const data = node.data as Partial<BlockData>;
     const num_in = data.num_inputs ?? 0;
@@ -72,6 +88,9 @@ export async function elk_layout(nodes: Node[], edges: Edge[]): Promise<Node[]> 
     const dac_node_idx = children.findIndex((x) => x.type === 'dac' || x.type === 'out');
     const dac_node = dac_node_idx === -1 ? null : children[dac_node_idx];
     if (dac_node_idx !== -1) children.splice(dac_node_idx, 1);
+    const adc_node_idx = children.findIndex((x) => x.type === 'adc' || x.type === 'instrument_in');
+    const adc_node = adc_node_idx === -1 ? null : children[adc_node_idx];
+    if (adc_node_idx !== -1) children.splice(adc_node_idx, 1);
     const graph = {
         id: 'root',
         layoutOptions: {
@@ -98,7 +117,8 @@ export async function elk_layout(nodes: Node[], edges: Edge[]): Promise<Node[]> 
                     e.source !== e.target &&
                     e.sourceHandle &&
                     e.targetHandle &&
-                    e.target !== dac_node?.id,
+                    e.target !== dac_node?.id &&
+                    e.source !== adc_node?.id,
             )
             .map((e) => ({
                 id: e.id,
@@ -109,9 +129,11 @@ export async function elk_layout(nodes: Node[], edges: Edge[]): Promise<Node[]> 
     const laid_out = await elk.layout(graph);
 
     const all_lefts = children.map((c) => c.x ?? 0);
+    const all_tops = children.map((c) => c.y ?? 0);
     const all_bottoms = children.map((c) => (c.y ?? 0) + (c.height ?? 0));
 
     const min_x = all_lefts.length > 0 ? Math.min(...all_lefts) : 0;
+    const min_y = all_tops.length > 0 ? Math.min(...all_tops) : 0;
     const max_y = all_bottoms.length > 0 ? Math.max(...all_bottoms) : 0;
 
     if (dac_node) {
@@ -119,7 +141,12 @@ export async function elk_layout(nodes: Node[], edges: Edge[]): Promise<Node[]> 
         dac_node.y = max_y + 20;
     }
 
-    const fixed_nodes = [dac_node].filter((n): n is NonNullable<typeof n> => n != null);
+    if (adc_node) {
+        adc_node.x = min_x;
+        adc_node.y = min_y - 20 - (adc_node.height ?? 0);
+    }
+
+    const fixed_nodes = [dac_node, adc_node].filter((n): n is NonNullable<typeof n> => n != null);
 
     return nodes.map((n) => {
         const child = [...fixed_nodes, ...(laid_out.children ?? [])].find((c) => c.id === n.id);

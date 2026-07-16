@@ -714,8 +714,9 @@ export class Conductor {
                     instrument_id: instrument,
                 });
                 token.params['legato'] = 1;
-            } else if (legato_id !== undefined) {
-                this.legato_voices.delete(legato_id);
+            } else {
+                if (legato_id !== undefined) this.legato_voices.delete(legato_id);
+                token.params['legato'] = 0;
             }
 
             const index_table = this.param_index[instrument] ?? {};

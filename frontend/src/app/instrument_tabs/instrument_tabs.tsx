@@ -1,6 +1,6 @@
 import { useState } from 'react';
-import type { OrchestraState, PatchView } from '../patch/store/patch_types';
-import { GLOBAL_CACHE_KEY } from './constants';
+import type { OrchestraState, PatchView } from '../../patch/store/patch_types';
+import { GLOBAL_CACHE_KEY } from '../constants';
 import './instrument.scss';
 
 interface Props {

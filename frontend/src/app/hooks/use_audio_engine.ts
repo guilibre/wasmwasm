@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import ts from 'typescript';
-import workletUrl from '../audio/processor.worklet.ts?worker&url';
-import WasmWasm from '../audio/compiler';
-import ScoreWasm from '../scorewasm/compiler';
-import { orchestra_to_json } from '../patch/orchestra_to_json';
-import type { OrchestraState, ScoreParamBindings } from '../patch/store/patch_types';
+import workletUrl from '../../audio/processor.worklet.ts?worker&url';
+import WasmWasm from '../../audio/compiler';
+import ScoreWasm from '../../scorewasm/compiler';
+import { orchestra_to_json } from '../../patch/orchestra_to_json';
+import type { OrchestraState, ScoreParamBindings } from '../../patch/store/patch_types';
 
 function transpile_callback_source(source: string): string | null {
     if (!source.trim()) return null;
@@ -12,6 +12,11 @@ function transpile_callback_source(source: string): string | null {
         compilerOptions: { target: ts.ScriptTarget.ES2020, module: ts.ModuleKind.None },
     });
     return outputText.replace(/^"use strict";\n/, '').replace(/;\s*$/, '');
+}
+
+function patch_uses_adc(patch_json: string): boolean {
+    const { global } = JSON.parse(patch_json) as { global: { patch: Record<string, string> } };
+    return Object.values(global.patch).some((src) => src === 'adc_l' || src === 'adc_r');
 }
 
 function transpile_instrument_callbacks(
@@ -35,6 +40,8 @@ export function useAudioEngine(
     const audio_context_ref = useRef<AudioContext | null>(null);
     const merger_ref = useRef<GainNode | null>(null);
     const global_node_ref = useRef<AudioWorkletNode | null>(null);
+    const mic_stream_ref = useRef<MediaStream | null>(null);
+    const mic_source_ref = useRef<MediaStreamAudioSourceNode | null>(null);
     const analyser_l_ref = useRef<AnalyserNode | null>(null);
     const analyser_r_ref = useRef<AnalyserNode | null>(null);
     const play_inflight_ref = useRef<Promise<void> | null>(null);
@@ -70,6 +77,8 @@ export function useAudioEngine(
     useEffect(() => {
         return () => {
             global_node_ref.current?.disconnect();
+            mic_source_ref.current?.disconnect();
+            mic_stream_ref.current?.getTracks().forEach((t) => t.stop());
             audio_context_ref.current?.close();
         };
     }, []);
@@ -126,11 +135,30 @@ export function useAudioEngine(
             if (global_callback) instrument_callbacks['global'] = global_callback;
 
             const global_node = new AudioWorkletNode(context, 'wasm-processor', {
+                numberOfInputs: 1,
                 numberOfOutputs: 1,
                 outputChannelCount: [2],
             });
             global_node.connect(merger);
             global_node.port.start();
+
+            if (patch_uses_adc(patch_json)) {
+                try {
+                    const stream = await navigator.mediaDevices.getUserMedia({
+                        audio: {
+                            echoCancellation: false,
+                            noiseSuppression: false,
+                            autoGainControl: false,
+                        },
+                    });
+                    mic_stream_ref.current = stream;
+                    const mic_source = context.createMediaStreamSource(stream);
+                    mic_source.connect(global_node);
+                    mic_source_ref.current = mic_source;
+                } catch (e) {
+                    console.error('microphone access failed', e);
+                }
+            }
             const global_ready = new Promise<void>((resolve) => {
                 global_node.port.onmessage = (e: MessageEvent) => {
                     if (e.data.type === 'wasm-ready') resolve();
@@ -191,6 +219,10 @@ export function useAudioEngine(
             global_node_ref.current.disconnect();
             global_node_ref.current = null;
         }
+        mic_source_ref.current?.disconnect();
+        mic_source_ref.current = null;
+        mic_stream_ref.current?.getTracks().forEach((t) => t.stop());
+        mic_stream_ref.current = null;
         await context?.suspend();
         merger?.gain.setValueAtTime(1, context?.currentTime ?? 0);
         set_analysers(null);

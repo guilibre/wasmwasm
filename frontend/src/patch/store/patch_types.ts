@@ -16,6 +16,7 @@ export interface OutData {
 export interface InData {
     name: string;
     num_channels: number;
+    num_in_channels: number;
 }
 
 export interface InstrumentState {
