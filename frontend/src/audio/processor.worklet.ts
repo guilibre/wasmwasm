@@ -81,8 +81,8 @@ class WasmProcessor extends AudioWorkletProcessor {
                 const pages = Math.max(128, Math.ceil(memory_bytes / wasm_page_bytes));
                 const memory = new WebAssembly.Memory({ initial: pages, maximum: pages });
 
-                const instance = await WebAssembly.instantiate(
-                    event.data.module as WebAssembly.Module,
+                const { instance } = await WebAssembly.instantiate(
+                    event.data.module as BufferSource,
                     { env: { memory } },
                 );
                 const exports = instance.exports as WasmExports;
