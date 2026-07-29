@@ -2,7 +2,7 @@ import Module, { type EmscriptenModule } from '../wasmwasm/wasmwasm';
 import type { ParamIndex } from './conductor';
 
 export interface CompiledPatch {
-    wasm_module: WebAssembly.Module;
+    bytes: Uint8Array;
     memory_bytes: number;
 }
 
@@ -45,9 +45,8 @@ export default class WasmWasm {
         const math_bin = await this.getMathBin();
         try {
             const { bytes, memory_bytes } = mod.run_compiler(sample_rate, patch_json, math_bin);
-            const wasm_module = await WebAssembly.compile(bytes as Uint8Array<ArrayBuffer>);
             return {
-                wasm_module,
+                bytes: bytes as Uint8Array,
                 memory_bytes,
             };
         } catch (err) {

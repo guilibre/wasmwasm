@@ -166,7 +166,7 @@ export function useAudioEngine(
             });
             global_node.port.postMessage({
                 type: 'load-wasm',
-                module: compiled.wasm_module,
+                module: compiled.bytes,
                 memory_bytes: compiled.memory_bytes,
                 num_out_channels: 2,
                 is_global: true,
