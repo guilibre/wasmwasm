@@ -1,0 +1,3 @@
+{$DOMAIN} {
+    reverse_proxy backwasm:8080
+}

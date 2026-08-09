@@ -1,0 +1,95 @@
+.auth-modal {
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+    width: 280px;
+    padding: 1rem;
+    background: #1a1d2e;
+    border: 1px solid #2a2d40;
+    border-radius: 6px;
+    color: #cdd6f4;
+    font-family: monospace;
+
+    &__overlay {
+        position: fixed;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: rgba(0, 0, 0, 0.5);
+        z-index: 100;
+    }
+
+    &__tabs {
+        display: flex;
+        gap: 0.4rem;
+        margin-bottom: 0.4rem;
+
+        button {
+            flex: 1;
+            padding: 0.3rem;
+            background: #263238;
+            color: #cdd6f4;
+            border: 1px solid #37474f;
+            border-radius: 4px;
+            cursor: pointer;
+            font-family: monospace;
+
+            &.active {
+                background: #37474f;
+                border-color: #82aaff;
+            }
+        }
+    }
+
+    &__close {
+        flex: 0 0 auto !important;
+        padding: 0.3rem 0.6rem !important;
+    }
+
+    &__error {
+        color: #f07178;
+        font-size: 0.8rem;
+    }
+
+    form {
+        display: flex;
+        flex-direction: column;
+        gap: 0.6rem;
+    }
+
+    label {
+        display: flex;
+        flex-direction: column;
+        gap: 0.2rem;
+        font-size: 0.8rem;
+    }
+
+    input {
+        background: #13151f;
+        border: 1px solid #37474f;
+        border-radius: 4px;
+        color: #cdd6f4;
+        padding: 0.35rem;
+        font-family: monospace;
+    }
+
+    button[type='submit'] {
+        padding: 0.4rem;
+        background: #263238;
+        color: #cdd6f4;
+        border: 1px solid #37474f;
+        border-radius: 4px;
+        cursor: pointer;
+        font-family: monospace;
+
+        &:hover {
+            background: #37474f;
+        }
+
+        &:disabled {
+            opacity: 0.6;
+            cursor: default;
+        }
+    }
+}
