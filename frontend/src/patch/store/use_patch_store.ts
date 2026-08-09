@@ -3,21 +3,7 @@ import type { Node, NodeChange, EdgeChange, Connection } from '@xyflow/react';
 import { scan_arity, scan_params } from './code_scanning';
 import { elk_layout } from './elk_auto_layout';
 import { reducer, load_initial } from './patch_reducer';
-import type { BlockData, PatchView, OrchestraState, ScoreParamBindings } from './patch_types';
-
-function is_valid_patch_json(value: unknown): value is {
-    orchestra: OrchestraState;
-    score_source?: string;
-    score_param_bindings?: ScoreParamBindings;
-    global_callback_source?: string;
-} {
-    if (typeof value !== 'object' || value === null) return false;
-    const orchestra = (value as { orchestra?: unknown }).orchestra;
-    if (typeof orchestra !== 'object' || orchestra === null) return false;
-    const instruments = (orchestra as { instruments?: unknown }).instruments;
-    const global_nodes = (orchestra as { global_nodes?: unknown }).global_nodes;
-    return Array.isArray(instruments) && Array.isArray(global_nodes);
-}
+import type { BlockData, PatchView, ScoreParamBindings, PatchExportData } from './patch_types';
 
 const raw_templates = import.meta.glob('../../templates/*.ww', {
     query: '?raw',
@@ -39,7 +25,6 @@ function get_default_code(name: string): string {
 export function usePatchStore() {
     const [history, dispatch] = useReducer(reducer, undefined, load_initial);
     const state = history.present;
-    const [import_error, set_import_error] = useState<string | null>(null);
 
     const active_instrument =
         state.orchestra.instruments.find((i) => i.id === state.orchestra.active_id) ?? null;
@@ -200,64 +185,15 @@ export function usePatchStore() {
         [],
     );
 
-    const export_patch = useCallback(() => {
-        const blob = new Blob(
-            [
-                JSON.stringify(
-                    {
-                        orchestra: state.orchestra,
-                        score_source: state.score_source,
-                        score_param_bindings: state.score_param_bindings,
-                        global_callback_source: state.global_callback_source,
-                    },
-                    null,
-                    2,
-                ),
-            ],
-            { type: 'application/json' },
-        );
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = 'patch.json';
-        a.click();
-        URL.revokeObjectURL(url);
-    }, [
-        state.orchestra,
-        state.score_source,
-        state.score_param_bindings,
-        state.global_callback_source,
-    ]);
-
-    const import_patch = useCallback((file: File) => {
-        const reader = new FileReader();
-        reader.onload = (e) => {
-            try {
-                const parsed = JSON.parse(e.target!.result as string);
-                if (!is_valid_patch_json(parsed)) {
-                    set_import_error('Arquivo de patch inválido.');
-                    return;
-                }
-                const { orchestra, score_source, score_param_bindings, global_callback_source } =
-                    parsed;
-                set_import_error(null);
-                dispatch({
-                    type: 'load',
-                    orchestra,
-                    score_source,
-                    score_param_bindings,
-                    global_callback_source,
-                });
-            } catch (_e) {
-                console.error(_e);
-                set_import_error('Não foi possível ler o arquivo de patch.');
-            }
-        };
-        reader.readAsText(file);
-    }, []);
-
     const load_patch = useCallback(
-        (orchestra: OrchestraState) => dispatch({ type: 'load', orchestra }),
+        (patch: PatchExportData) =>
+            dispatch({
+                type: 'load',
+                orchestra: patch.orchestra,
+                score_source: patch.score_source,
+                score_param_bindings: patch.score_param_bindings,
+                global_callback_source: patch.global_callback_source,
+            }),
         [],
     );
 
@@ -291,9 +227,6 @@ export function usePatchStore() {
         remove_instrument,
         rename_instrument,
         set_active_instrument,
-        export_patch,
-        import_patch,
-        import_error,
         load_patch,
         load_serial: state.load_serial,
         layout_serial,

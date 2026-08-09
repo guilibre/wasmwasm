@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { ReactFlowProvider } from '@xyflow/react';
-import WasmWasm from '../audio/compiler';
+import WasmWasm from '../wasmwasm/compiler';
 import WWEditor, { type WWEditorHandle } from './editors/ww_editor';
 import { Sidebar } from './sidebar/sidebar';
 import { ScorePanel } from './score/score_panel';
@@ -11,12 +11,17 @@ import { useAudioEngine } from './hooks/use_audio_engine';
 import { StatusBar } from './status_bar';
 import { useBlockModal } from './hooks/use_block_modal';
 import { useUndoRedoShortcuts } from './hooks/use_undo_redo_shortcuts';
+import { useAuth } from '../auth/use_auth';
+import { useRemotePatches } from '../patch/remote/use_remote_patches';
+import { PatchesPanel } from '../patch/remote/patches_panel';
 import './app.scss';
 
 export default function App() {
     const [error, set_error] = useState<string | null>(null);
-    const import_ref = useRef<HTMLInputElement>(null);
+    const [show_patches_panel, set_show_patches_panel] = useState(false);
     const editor_ref = useRef<WWEditorHandle>(null);
+    const auth = useAuth();
+    const remote = useRemotePatches();
 
     const store = usePatchStore();
     const {
@@ -25,9 +30,6 @@ export default function App() {
         update_code,
         update_name,
         select,
-        export_patch,
-        import_patch,
-        import_error,
         storage_error,
         load_serial,
         add_instrument,
@@ -45,6 +47,7 @@ export default function App() {
         global_callback_source,
         update_global_callback_source,
         set_orchestra_bpm,
+        load_patch,
     } = store;
     const selected_block = selected_node?.type === 'block' ? selected_node : null;
 
@@ -80,21 +83,9 @@ export default function App() {
                 <button onClick={is_playing ? () => stop(0) : play}>
                     {is_playing ? 'Stop' : 'Play'}
                 </button>
-                <button onClick={export_patch}>Export</button>
-                <button onClick={() => import_ref.current?.click()}>Import</button>
-                <input
-                    ref={import_ref}
-                    type="file"
-                    accept=".json"
-                    style={{ display: 'none' }}
-                    onChange={(e) => {
-                        const file = e.target.files?.[0];
-                        if (file) import_patch(file);
-                        e.target.value = '';
-                    }}
-                />
-                {(error || import_error || storage_error) && (
-                    <span className="app__error">{error || import_error || storage_error}</span>
+                <button onClick={() => set_show_patches_panel(true)}>Meus Patches</button>
+                {(error || storage_error) && (
+                    <span className="app__error">{error || storage_error}</span>
                 )}
             </div>
 
@@ -162,6 +153,24 @@ export default function App() {
                         get_module={() => WasmWasm.getModule()}
                     />
                 </div>
+            )}
+
+            {show_patches_panel && (
+                <PatchesPanel
+                    auth={auth}
+                    remote={remote}
+                    current_data={{
+                        orchestra,
+                        score_source,
+                        score_param_bindings,
+                        global_callback_source,
+                    }}
+                    on_close={() => set_show_patches_panel(false)}
+                    on_loaded={(data) => {
+                        load_patch(data);
+                        set_show_patches_panel(false);
+                    }}
+                />
             )}
         </div>
     );

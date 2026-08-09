@@ -1,0 +1,13 @@
+services:
+  oracle-dev:
+    build: ./db
+    restart: unless-stopped
+    environment:
+      - ORACLE_PWD=${ORACLE_PWD:-devpassword123}
+    ports:
+      - "1521:1521"
+    volumes:
+      - oracle_dev_data:/opt/oracle/oradata
+
+volumes:
+  oracle_dev_data:

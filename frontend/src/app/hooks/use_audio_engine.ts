@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import ts from 'typescript';
 import workletUrl from '../../audio/processor.worklet.ts?worker&url';
-import WasmWasm from '../../audio/compiler';
+import WasmWasm from '../../wasmwasm/compiler';
 import ScoreWasm from '../../scorewasm/compiler';
 import { orchestra_to_json } from '../../patch/orchestra_to_json';
 import type { OrchestraState, ScoreParamBindings } from '../../patch/store/patch_types';

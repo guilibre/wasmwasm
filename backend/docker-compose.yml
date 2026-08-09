@@ -1,0 +1,32 @@
+services:
+  backwasm:
+    image: backwasm:latest
+    restart: unless-stopped
+    environment:
+      - TNS_ADMIN=/opt/oracle/wallet
+      - DB_CONNECT_STRING=${DB_TNS_ALIAS}
+      - DB_USER=${DB_USER}
+      - DB_PASSWORD=${DB_PASSWORD}
+    volumes:
+      - ./vendor/wallet:/opt/oracle/wallet:ro
+    expose:
+      - "8080"
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    environment:
+      - DOMAIN=${DOMAIN}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - backwasm
+
+volumes:
+  caddy_data:
+  caddy_config:

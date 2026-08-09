@@ -1,0 +1,12 @@
+.cache
+.clang-format
+.clang-tidy
+.dockerignore
+.env*
+.gitignore
+build*
+Caddyfile
+db
+docker-compose.dev.yml
+docker-compose.yml
+Dockerfile

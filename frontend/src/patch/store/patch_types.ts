@@ -88,3 +88,19 @@ export interface HistoryState {
     future: PatchState[];
     storage_error: string | null;
 }
+
+export interface PatchExportData {
+    orchestra: OrchestraState;
+    score_source: string;
+    score_param_bindings: ScoreParamBindings;
+    global_callback_source: string;
+}
+
+export function is_valid_patch_export(value: unknown): value is PatchExportData {
+    if (typeof value !== 'object' || value === null) return false;
+    const orchestra = (value as { orchestra?: unknown }).orchestra;
+    if (typeof orchestra !== 'object' || orchestra === null) return false;
+    const instruments = (orchestra as { instruments?: unknown }).instruments;
+    const global_nodes = (orchestra as { global_nodes?: unknown }).global_nodes;
+    return Array.isArray(instruments) && Array.isArray(global_nodes);
+}
