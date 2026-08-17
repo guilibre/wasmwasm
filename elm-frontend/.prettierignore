@@ -1,0 +1,5 @@
+dist/
+node_modules/
+public/
+src/wasmwasm/wasmwasm.js
+src/scorewasm/scorewasm.js

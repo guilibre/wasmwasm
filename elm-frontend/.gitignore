@@ -1,0 +1,6 @@
+**/*.wasm
+**/scorewasm.js
+**/wasmwasm.js
+dist/
+elm-stuff/
+node_modules/

@@ -30,4 +30,14 @@ cp ../patch_compiler/build/app/wasmwasm.js src/wasmwasm
 cp ../score_compiler/build/app/scorewasm.wasm src/scorewasm
 cp ../score_compiler/build/app/scorewasm.js src/scorewasm
 
+cd ../elm-frontend
+
+cp ../patch_compiler/build/math/math.wasm public/
+
+cp ../patch_compiler/build/app/wasmwasm.wasm public
+cp ../patch_compiler/build/app/wasmwasm.js public
+
+cp ../score_compiler/build/app/scorewasm.wasm public
+cp ../score_compiler/build/app/scorewasm.js public
+
 echo "Build complete and files copied."
