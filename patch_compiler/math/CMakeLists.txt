@@ -1,7 +1,16 @@
-get_filename_component(EM_BIN_DIR "${CMAKE_CXX_COMPILER}" DIRECTORY)
-get_filename_component(EMSDK_UPSTREAM "${EM_BIN_DIR}/.." ABSOLUTE)
-set(WASM_CLANG "${EMSDK_UPSTREAM}/bin/clang++")
-set(WASM_SYSROOT "${EMSDK_UPSTREAM}/emscripten/cache/sysroot")
+find_program(EM_CONFIG em-config REQUIRED)
+execute_process(
+    COMMAND ${EM_CONFIG} LLVM_ROOT
+    OUTPUT_VARIABLE EM_LLVM_ROOT
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+)
+execute_process(
+    COMMAND ${EM_CONFIG} CACHE
+    OUTPUT_VARIABLE EM_CACHE_DIR
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+)
+set(WASM_CLANG "${EM_LLVM_ROOT}/clang++")
+set(WASM_SYSROOT "${EM_CACHE_DIR}/sysroot")
 
 set(MATH_WASM "${CMAKE_CURRENT_BINARY_DIR}/math.wasm")
 
@@ -9,6 +18,7 @@ add_custom_command(
     OUTPUT ${MATH_WASM}
     COMMAND ${WASM_CLANG}
     --target=wasm32
+    -B${EM_LLVM_ROOT}
     --no-standard-libraries
     -Wl,--no-entry
     -Wl,--export=wasmwasm_abs

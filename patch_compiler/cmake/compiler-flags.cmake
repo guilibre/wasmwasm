@@ -1,10 +1,16 @@
 option(WW_CLANGD_EMSCRIPTEN_INCLUDES "Add emscripten sysroot -isystem flags to compile_commands.json for clangd" ON)
 if(WW_CLANGD_EMSCRIPTEN_INCLUDES)
-    get_filename_component(WW_EM_BIN_DIR "${CMAKE_CXX_COMPILER}" DIRECTORY)
-    get_filename_component(WW_EMSDK_UPSTREAM "${WW_EM_BIN_DIR}/.." ABSOLUTE)
-    set(WW_EM_SYSROOT "${WW_EMSDK_UPSTREAM}/emscripten/cache/sysroot")
+    find_program(WW_EM_CONFIG em-config)
+    if(WW_EM_CONFIG)
+        execute_process(
+            COMMAND ${WW_EM_CONFIG} CACHE
+            OUTPUT_VARIABLE WW_EM_CACHE_DIR
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+        )
+        set(WW_EM_SYSROOT "${WW_EM_CACHE_DIR}/sysroot")
+    endif()
 
-    if(EXISTS "${WW_EM_SYSROOT}/include")
+    if(WW_EM_SYSROOT AND EXISTS "${WW_EM_SYSROOT}/include")
         add_compile_options($<$<COMPILE_LANGUAGE:CXX>:--target=wasm32>)
     endif()
 

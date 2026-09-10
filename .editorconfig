@@ -1,0 +1,25 @@
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+indent_style = space
+indent_size = 4
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+# clang-format (patch_compiler/.clang-format, score_compiler/.clang-format) sets
+# ColumnLimit: 80 and InsertNewlineAtEOF: false; keep editorconfig from fighting it.
+[*.{cpp,hpp,h,c}]
+max_line_length = 80
+insert_final_newline = false
+
+# frontend/.prettierrc
+[*.{ts,tsx,js,jsx,html,scss,css,json}]
+max_line_length = 100
+
+[*.sh]
+indent_style = tab
+
+[*.nix]
+indent_size = 2
