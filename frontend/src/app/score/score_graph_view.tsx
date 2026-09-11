@@ -14,6 +14,9 @@ import ScoreWasm from '../../scorewasm/compiler';
 import type { ScoreGraph, GraphNode } from '../../audio/conductor';
 import { ScorePianoRoll } from './score_piano_roll';
 import { ScoreGraphNode, ScoreGraphPlayNode, FloatingEdge } from './score_graph_nodes';
+import { to_app_error, type AppError } from '../../scorewasm/score_compile_error';
+import { ErrorMessage } from '../error_message';
+import { useT } from '../../i18n/lang_context';
 import './score_graph_view.scss';
 
 interface Props {
@@ -462,9 +465,10 @@ function compact_flow_graph(full_graph: ScoreGraph): { nodes: Node[]; edges: Edg
 }
 
 function ScoreGraphViewInner({ source, bpm }: Props) {
+    const t = useT();
     const [nodes, set_nodes, on_nodes_change] = useNodesState<Node>([]);
     const [edges, set_edges] = useState<Edge[]>([]);
-    const [error, set_error] = useState<string | null>(null);
+    const [error, set_error] = useState<AppError | null>(null);
     const [measured_once, set_measured_once] = useState(false);
     const [graph, set_graph] = useState<ScoreGraph | null>(null);
     const [piano_roll_target, set_piano_roll_target] = useState<{
@@ -485,7 +489,7 @@ function ScoreGraphViewInner({ source, bpm }: Props) {
                 set_error(null);
             })
             .catch((e: unknown) => {
-                set_error(e instanceof Error ? e.message : String(e));
+                set_error(to_app_error(e));
             });
     }, [source, set_nodes]);
 
@@ -507,10 +511,12 @@ function ScoreGraphViewInner({ source, bpm }: Props) {
     return (
         <div className="score-graph-view__inner">
             <button className="score-graph-view__redraw" onClick={redraw}>
-                redesenhar
+                {t('redraw')}
             </button>
             {error ? (
-                <div className="score-graph-view__error">{error}</div>
+                <div className="score-graph-view__error">
+                    <ErrorMessage message={error.message} line={error.line} col={error.col} />
+                </div>
             ) : (
                 <ReactFlow
                     nodes={nodes}

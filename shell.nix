@@ -22,17 +22,6 @@ pkgs.mkShell {
   shellHook = ''
     export CMAKE_POLICY_VERSION_MINIMUM=3.5
 
-    if [ -d frontend/node_modules ]; then
-      _nix_ld="$(cat "$(dirname "$(dirname "$(readlink -f "$(command -v cc)")")")/nix-support/dynamic-linker")"
-      find frontend/node_modules -type f 2>/dev/null | while read -r f; do
-        if file "$f" 2>/dev/null | grep -q "interpreter /lib64/ld-linux\|interpreter /lib/ld-linux"; then
-          patchelf --set-interpreter "$_nix_ld" --set-rpath "$(patchelf --print-rpath "$f")" "$f" \
-            && echo "patched for NixOS: $f"
-        fi
-      done
-      unset _nix_ld
-    fi
-
     echo "wasmwasm dev shell"
     echo "  emcc:   $(emcc --version | head -n1)"
     echo "  cmake:  $(cmake --version | head -n1)"

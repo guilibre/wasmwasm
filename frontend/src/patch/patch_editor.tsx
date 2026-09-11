@@ -18,6 +18,7 @@ import { InNode } from './nodes/in_node';
 import { InstrumentInNode } from './nodes/instrument_in_node';
 import { SelfLoopEdge } from './nodes/self_loop_edge';
 import type { usePatchStore } from './store/use_patch_store';
+import { useT } from '../i18n/lang_context';
 
 const EDGE_TYPES = {
     self_loop: SelfLoopEdge,
@@ -44,6 +45,7 @@ interface Props {
 }
 
 export function PatchEditor({ store }: Props) {
+    const t = useT();
     const {
         nodes,
         edges,
@@ -237,7 +239,7 @@ export function PatchEditor({ store }: Props) {
                     onChange={(e) => set_pending_name(e.target.value)}
                     onKeyDown={on_key_down_name}
                     onBlur={commit_name}
-                    placeholder="block name"
+                    placeholder={t('block_name_placeholder')}
                 />
             )}
 
@@ -250,6 +252,8 @@ export function PatchEditor({ store }: Props) {
                     onChange={(e) => set_pending_rename(e.target.value)}
                     onKeyDown={on_key_down_rename}
                     onBlur={commit_rename}
+                    // Not translated: this is the literal syntax parse_out_name/parse_in_name
+                    // expect the user to type, not UI copy.
                     placeholder="OUT N"
                 />
             )}
@@ -260,7 +264,7 @@ export function PatchEditor({ store }: Props) {
                     style={{ left: ctx_menu.x, top: ctx_menu.y }}
                     onClick={(e) => e.stopPropagation()}
                 >
-                    <button onClick={ctx_remove}>Remove</button>
+                    <button onClick={ctx_remove}>{t('remove')}</button>
                 </div>
             )}
         </div>

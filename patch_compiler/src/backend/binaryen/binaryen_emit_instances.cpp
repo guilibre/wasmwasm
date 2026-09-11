@@ -476,8 +476,8 @@ void emit_global_set_param(
             modules_by_param[name].push_back(ir);
     }
 
-    constexpr BinaryenIndex param_index_param = 0;
-    constexpr BinaryenIndex value_param = 1;
+    constexpr BinaryenIndex param_index_param = 1;
+    constexpr BinaryenIndex value_param = 2;
 
     std::vector<BinaryenExpressionRef> stmts;
 
@@ -511,8 +511,11 @@ void emit_global_set_param(
     auto *body = BinaryenBlock(mod, nullptr, stmts.data(),
                                static_cast<BinaryenIndex>(stmts.size()),
                                BinaryenTypeInt32());
-    std::array<BinaryenType, 2> param_types = {BinaryenTypeInt32(),
-                                               BinaryenTypeFloat64()};
+    // id (unused: global has a single, fixed instance) kept as the first
+    // param so the JS side can call every instrument's set_param(id, index,
+    // value) uniformly.
+    std::array<BinaryenType, 3> param_types = {
+        BinaryenTypeInt32(), BinaryenTypeInt32(), BinaryenTypeFloat64()};
     constexpr auto fn_name = "global$set_param";
     BinaryenAddFunction(
         mod, fn_name,

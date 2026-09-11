@@ -1,0 +1,178 @@
+\documentclass[12pt,a4paper]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[brazilian]{babel}
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{setspace}
+\usepackage{indentfirst}
+\usepackage{hyperref}
+\usepackage{url}
+\usepackage{enumitem}
+
+\onehalfspacing
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=black,
+  citecolor=black,
+  urlcolor=blue,
+  pdftitle={Proposta de Mestrado em Sonologia},
+}
+
+\title{\textbf{wasmwasm: linguagens de programação musical no navegador \\
+como mediação do pensamento composicional} \\[0.3cm]
+\large Proposta de Projeto de Pesquisa para Seleção de Mestrado \\
+Programa de Pós-Graduação em Música da UFMG \\
+Área de Concentração: Sonologia \\
+Linha de Pesquisa: Música e Tecnologia}
+
+\author{[Nome do candidato] \\ \small e-mail: [a completar] \\ \small Possível orientação: Prof. Dr. Sérgio Freire (ou docente da linha, a confirmar)}
+
+\date{2026}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+\noindent Esta proposta parte do desenvolvimento do \emph{wasmwasm}, um ambiente de síntese sonora e composição algorítmica que roda inteiramente no navegador, compilando duas linguagens de domínio específico (DSLs) - uma linguagem de \emph{patch}, para definição de instrumentos/vozes sonoras, e uma linguagem de \emph{score}, para sequenciamento e organização temporal - para WebAssembly, com execução em tempo real via Web Audio API. A pesquisa proposta investiga como escolhas de design dessas linguagens (tipagem, separação entre instrumento e partitura, primitivas de controle temporal) moldam, habilitam e constrangem o pensamento composicional de quem as utiliza. A metodologia combina pesquisa-ação/pesquisa por design - o desenvolvimento contínuo do sistema como parte do processo investigativo - com um estudo de caso qualitativo envolvendo compositores externos em oficinas de uso da ferramenta. O trabalho articula-se com a tradição de linguagens de programação musical (Csound, SuperCollider, ChucK, TidalCycles) e com os estudos de \emph{live coding} e de linguagem como mediação técnica do fazer musical, contribuindo para a sonologia com uma reflexão situada sobre autoria, ferramenta e pensamento sonoro no contexto de tecnologias nativas de navegador.
+
+\vspace{0.3cm}
+\noindent \textbf{Palavras-chave:} sonologia; linguagens de programação musical; WebAssembly; composição algorítmica; live coding; síntese sonora.
+\end{abstract}
+
+\section{Introdução e Justificativa}
+
+O ato de compor com código é, ao mesmo tempo, um ato de programar e um ato de pensar musicalmente através de uma linguagem formal. Desde o Music~N de Max Mathews até ambientes contemporâneos como Csound, SuperCollider, ChucK e TidalCycles, a história da música eletroacústica e da sonologia é indissociável da história das linguagens criadas para descrever som e tempo computacionalmente. Cada uma dessas linguagens carrega, em suas escolhas sintáticas e semânticas, um modelo implícito de como o som pode ser pensado, organizado e manipulado - e, por extensão, molda o próprio pensamento composicional de quem a utiliza.
+
+O projeto \emph{wasmwasm}\footnote{Repositório do projeto: \url{https://github.com/guilibre/wasmwasm} (a confirmar/ajustar conforme publicação).}, desenvolvido pelo candidato, insere-se nesse território, com uma particularidade tecnológica relevante: trata-se de um ambiente de síntese e composição que roda inteiramente no navegador, sem necessidade de instalação, compilando código-fonte para WebAssembly (WASM) e executando síntese em tempo real através da Web Audio API (mais especificamente, via \texttt{AudioWorkletProcessor}). O sistema é composto por dois compiladores, escritos em C++ e compilados via Emscripten:
+
+\begin{itemize}
+  \item uma \textbf{linguagem de patch}, para definição de instrumentos e vozes sonoras, com inferência de tipos ao estilo Hindley-Milner e geração de código intermediário otimizado - incluindo \emph{unrolling} automático de laços para integradores numéricos de passo fixo, usados tipicamente em filtros e envelopes;
+  \item uma \textbf{linguagem de score}, para sequenciamento e organização temporal, cujo código-fonte é resolvido em um grafo de nós (\texttt{state}, \texttt{fork}, \texttt{join}, \texttt{transform}, \texttt{legato}, \texttt{repeat}, \texttt{reverse}, \texttt{skip}, entre outros), interpretado em tempo real por um módulo \emph{conductor} que percorre o grafo e aciona instâncias de instrumentos WASM dentro do \texttt{AudioWorklet}.
+\end{itemize}
+
+O frontend, em React/TypeScript, oferece editor de código com suporte a \emph{Language Server Protocol} (LSP), osciloscópio, espectrograma, visualização em grafo da partitura e piano roll - reunindo, em um único ambiente acessível via navegador, ferramentas de escrita, execução e visualização sonora.
+
+Essa arquitetura - duas linguagens decopladas, uma para o timbre/instrumento e outra para a organização temporal/partitura, ambas compiladas e executadas localmente no navegador do usuário - constitui um caso de estudo pouco explorado na literatura de sonologia e de linguagens de programação musical: a maior parte dos ambientes canônicos (Csound, SuperCollider, ChucK) foi concebida para execução nativa, com modelos de instalação, texto único ou paradigmas de live coding centrados em uma linguagem só. A proposta de investigar como a separação patch/score e as escolhas de tipagem e de primitivas de grafo do \emph{wasmwasm} afetam o pensamento composicional de seus usuários contribui tanto para a prática de desenvolvimento de ferramentas musicais quanto para a reflexão teórica sobre linguagem como mediadora da criação sonora - núcleo de interesse da sonologia enquanto campo que articula tecnologia, escuta e composição.
+
+\section{Problema e Pergunta de Pesquisa}
+
+A pergunta central que orienta esta proposta é:
+
+\begin{quote}
+\emph{De que modo as escolhas de design de uma linguagem de programação musical - nomeadamente, a separação entre linguagem de instrumento (patch) e linguagem de partitura (score), o sistema de tipos e as primitivas de controle temporal do grafo de score - moldam, habilitam e constrangem o pensamento composicional de compositores que a utilizam?}
+\end{quote}
+
+Desdobram-se dessa pergunta central três questões secundárias:
+
+\begin{enumerate}
+  \item Como a separação arquitetural entre a linguagem de instrumento, voltada a timbre e síntese, e a linguagem de partitura, voltada a tempo e sequenciamento, refletida nas duas DSLs do \emph{wasmwasm}, se compara a modelos de outras linguagens musicais, e que efeitos essa separação tem sobre o processo composicional?
+  \item Que primitivas do grafo de score (fork, join, transform, legato, repeat, reverse, skip) emergem como recursos expressivos genuinamente novos ou como reformulações de conceitos musicais já conhecidos (ex.: canon, retrogradação, transformação paramétrica)?
+  \item Em que medida a execução no navegador, sem instalação, e a natureza acessível/compartilhável do ambiente afetam quem consegue experimentar composição algorítmica e síntese sonora, e como isso se relaciona à apropriação criativa da linguagem?
+\end{enumerate}
+
+\section{Objetivos}
+
+\subsection{Objetivo Geral}
+
+Investigar, por meio do desenvolvimento contínuo do sistema \emph{wasmwasm} e de sua utilização por compositores, como as escolhas de design de suas linguagens de patch e de score moldam o pensamento e o processo composicional de quem as utiliza, contribuindo para a reflexão sonológica sobre linguagem como mediação técnica da criação musical.
+
+\subsection{Objetivos Específicos}
+
+\begin{itemize}
+  \item Consolidar e ampliar o desenvolvimento técnico do \emph{wasmwasm} durante o mestrado, documentando decisões de design das linguagens de patch e de score à luz da literatura de linguagens de programação musical;
+  \item Situar teoricamente o \emph{wasmwasm} face a ambientes correlatos (Csound, SuperCollider, ChucK, TidalCycles, Faust, Sporth, entre outros), identificando continuidades e rupturas;
+  \item Conduzir um estudo de caso qualitativo - oficina(s) com compositores externos ao projeto usando as DSLs do \emph{wasmwasm} - para observar e analisar como a linguagem afeta suas decisões e seu pensamento composicional;
+  \item Produzir um corpus de exemplos e/ou obras (próprias e/ou dos participantes da oficina) que evidenciem usos e apropriações da ferramenta;
+  \item Articular, a partir dos resultados empíricos e do processo de desenvolvimento, uma reflexão teórica sobre a relação entre design de linguagem, materialidade computacional e pensamento sonoro/composicional.
+\end{itemize}
+
+\section{Referencial Teórico}
+
+A fundamentação teórica desta proposta articula-se em três eixos principais, a serem aprofundados ao longo do mestrado:
+
+\textbf{(1) Linguagens de programação musical e sonologia.} A literatura sobre ambientes de síntese e composição algorítmica - de Curtis Roads (\emph{Microsound}; \emph{Computer Music Tutorial}) às análises comparativas de linguagens como Csound, SuperCollider e ChucK - oferece o pano de fundo técnico-histórico para situar as escolhas do \emph{wasmwasm}.
+
+\textbf{(2) Live coding e linguagem como escrita sonora.} A obra de Thor Magnusson, em especial \emph{Sonic Writing: Technologies for Composing, Performing and Notating Music} (2019), é central para pensar como sistemas de notação e linguagens de programação musical funcionam como tecnologias de escrita do som, moldando cognição e prática musical. Os trabalhos de Nick Collins e da comunidade de \emph{live coding} (incluindo o TOPLAP e publicações associadas ao \emph{International Conference on Live Coding}) fornecem referências sobre a relação entre código, tempo real e pensamento musical emergente.
+
+\textbf{(3) Interfaces, mediação técnica e design de instrumentos musicais digitais.} O trabalho de Andrew McPherson (e colaborações com Magnusson) sobre o design de \emph{Digital Musical Instruments} e sobre a relação entre affordances técnicas e prática musical fundamenta a análise de como decisões de engenharia (tipagem, arquitetura patch/score, execução em WASM/navegador) se traduzem em possibilidades e limitações expressivas.
+
+Complementarmente, a proposta dialoga com a filosofia da técnica aplicada à música (mediação técnica, não-neutralidade da ferramenta) e com estudos sobre acessibilidade e democratização de ferramentas criativas digitais, na medida em que a execução no navegador, sem instalação, constitui uma escolha técnica com implicações sobre quem pode compor e experimentar com síntese sonora.
+
+\section{Metodologia}
+
+A pesquisa proposta é de natureza prático-teórica, combinando duas abordagens metodológicas complementares:
+
+\subsection{Pesquisa-ação / pesquisa por design}
+
+O desenvolvimento contínuo do \emph{wasmwasm} ao longo do mestrado constitui parte central do método: decisões de design das linguagens de patch e de score serão tomadas, documentadas e revisadas como parte do processo investigativo, seguindo uma lógica de pesquisa por design (\emph{research through design}), na qual o artefato construído é também instrumento e resultado de conhecimento.
+
+\subsection{Estudo de caso qualitativo}
+
+Serão conduzidas uma ou mais oficinas com compositores externos ao projeto, convidados a utilizar as DSLs do \emph{wasmwasm} para compor peças curtas ou estudos sonoros. Os dados a coletar incluem:
+
+\begin{itemize}
+  \item registros do código produzido pelos participantes (análise de padrões de uso, dificuldades, apropriações não previstas);
+  \item entrevistas semiestruturadas antes/depois da oficina, sobre processo composicional e percepção da linguagem;
+  \item observação participante durante as sessões de uso.
+\end{itemize}
+
+A análise dos dados qualitativos seguirá procedimentos de análise temática, articulando achados empíricos com o referencial teórico apresentado na Seção 4.
+
+\section{Cronograma}
+
+Cronograma estimado para 24 meses, estrutura típica de mestrado no PPGMUS-UFMG:
+
+\begin{center}
+\begin{tabular}{|p{7cm}|c|c|c|c|c|c|c|c|}
+\hline
+\textbf{Atividade} & \multicolumn{8}{c|}{\textbf{Trimestre}} \\
+\hline
+ & 1 & 2 & 3 & 4 & 5 & 6 & 7 & 8 \\
+\hline
+Revisão bibliográfica e créditos & X & X & X & & & & & \\
+\hline
+Desenvolvimento do \emph{wasmwasm} (contínuo) & X & X & X & X & X & X & & \\
+\hline
+Desenho e preparação da(s) oficina(s) & & X & X & & & & & \\
+\hline
+Realização da(s) oficina(s) / coleta de dados & & & X & X & & & & \\
+\hline
+Análise dos dados qualitativos & & & & X & X & & & \\
+\hline
+Redação da dissertação & & & & X & X & X & X & \\
+\hline
+Qualificação & & & & & X & & & \\
+\hline
+Revisão final e defesa & & & & & & & X & X \\
+\hline
+\end{tabular}
+\end{center}
+
+\section{Resultados Esperados}
+
+\begin{itemize}
+  \item Versão consolidada e documentada do sistema \emph{wasmwasm}, com registro das decisões de design tomadas durante o mestrado;
+  \item Corpus de composições e/ou estudos sonoros produzidos com a ferramenta, pelo candidato e/ou participantes da oficina;
+  \item Dissertação de mestrado articulando desenvolvimento técnico, estudo de caso empírico e reflexão teórica sobre linguagem de programação musical como mediação do pensamento composicional;
+  \item Publicações em eventos/periódicos da área (ex.: Simpósio Brasileiro de Computação Musical, NIME, International Conference on Live Coding), conforme oportunidade e maturidade dos resultados.
+\end{itemize}
+
+\section*{Referências (fundação inicial)}
+\addcontentsline{toc}{section}{Referências}
+
+\begin{itemize}[leftmargin=1.5cm]
+  \item COLLINS, Nick; MCLEAN, Alex; ROHRHUBER, Julian; WARD, Adrian. Live coding in laptop performance. \emph{Organised Sound}, v. 8, n. 3, p. 321–330, 2003.
+  \item MAGNUSSON, Thor. \emph{Sonic Writing: Technologies for Composing, Performing and Notating Music}. New York: Bloomsbury Academic, 2019.
+  \item MCPHERSON, Andrew; ZAPPI, Victor. An environment for submillisecond-latency audio and sensor processing on BeagleBone Black. In: \emph{Audio Engineering Society Convention}, 2015.
+  \item ROADS, Curtis. \emph{The Computer Music Tutorial}. Cambridge, MA: MIT Press, 1996.
+  \item ROADS, Curtis. \emph{Microsound}. Cambridge, MA: MIT Press, 2001.
+  \item WANG, Ge. The ChucK Audio Programming Language: A Strongly-timed and On-the-fly Environ/mentality. Tese (Doutorado) - Princeton University, 2008.
+  \item MCCARTNEY, James. Rethinking the computer music language: SuperCollider. \emph{Computer Music Journal}, v. 26, n. 4, p. 61–68, 2002.
+  \item VUOSKOSKI, Jonna K.; MAGNUSSON, Thor et al. (referências complementares sobre cognição musical e linguagem, a levantar).
+  \item [Referências adicionais sobre WebAssembly, Web Audio API e síntese sonora em navegador, a levantar durante a revisão bibliográfica.]
+\end{itemize}
+
+\end{document}

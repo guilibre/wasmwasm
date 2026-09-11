@@ -7,8 +7,8 @@ import type { ParamIndex } from '../../audio/conductor';
 import { score_scale_ambient_source, update_score_ambient } from '../editors/ts_env';
 import ConductorCallbackEditor, {
     instrument_callback_example,
-    global_callback_example,
 } from '../editors/conductor_callback_editor';
+import { useT } from '../../i18n/lang_context';
 import './conductor_panel.scss';
 
 interface Props {
@@ -34,6 +34,7 @@ export function ConductorPanel({
     on_bpm_change,
     load_serial,
 }: Props) {
+    const t = useT();
     const [patch_param_index, set_patch_param_index] = useState<ParamIndex>({});
     const [selected, set_selected] = useState<string | null>(null);
 
@@ -77,7 +78,7 @@ export function ConductorPanel({
     return (
         <div className="app__conductor">
             <div className="app__conductor-bpm">
-                <span className="app__conductor-bpm-label">bpm</span>
+                <span className="app__conductor-bpm-label">{t('bpm_label')}</span>
                 <input
                     type="number"
                     min={1}
@@ -91,10 +92,10 @@ export function ConductorPanel({
                     className={'app__conductor-item' + (selected === global_id ? ' selected' : '')}
                     onClick={() => set_selected(global_id)}
                 >
-                    global
+                    {t('global_tab')}
                 </button>
                 {instrument_ids.length === 0 && (
-                    <span className="app__conductor-empty">nenhum instrumento encontrado</span>
+                    <span className="app__conductor-empty">{t('no_instruments_found')}</span>
                 )}
                 {instrument_ids.map((instrument_id) => (
                     <button
@@ -114,7 +115,7 @@ export function ConductorPanel({
                     path={global_id}
                     initial_value={global_callback_source}
                     on_change={on_global_callback_source_change}
-                    empty_value_example={global_callback_example}
+                    empty_value_example={instrument_callback_example}
                 />
             )}
             {selected && selected !== global_id && (

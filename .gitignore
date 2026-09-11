@@ -1,4 +1,11 @@
 .direnv/
 .emcache/
-.vscode
+.vscode/
+*.aux
+*.fdb_latexmk
+*.fls
+*.gz
+*.log
+*.out
+*.pdf
 *.swp

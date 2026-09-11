@@ -23,25 +23,32 @@ constexpr auto HALF_PI = std::numbers::pi / 2.0;
 constexpr auto TWO_PI = std::numbers::pi * 2.0;
 constexpr auto INV_TWO_PI = 1.0 / TWO_PI;
 
-constexpr auto SIN_C1 = 0.9999999999999999999825;
-constexpr auto SIN_C3 = -0.16666666666666664625997;
-constexpr auto SIN_C5 = 0.0083333333333333331646;
-constexpr auto SIN_C7 = -0.00019841269841269461664;
+constexpr auto SIN_K1 = -0.10132115932809633325;
+constexpr auto SIN_K3 = 0.0066207573105392506452;
+constexpr auto SIN_K5 = -0.00017340570931388484812;
+constexpr auto SIN_K7 = 0.0000024940488157234983694;
+constexpr auto SIN_K9 = -0.000000020042233402464272374;
 
-constexpr auto COS_C0 = 1.0;
-constexpr auto COS_C2 = -0.4999999999999999444888;
-constexpr auto COS_C4 = 0.0416666666666665519596;
-constexpr auto COS_C6 = -0.0013888888888888530298;
-constexpr auto COS_C8 = 0.000024801587301571904;
+[[clang::always_inline]] auto sin_core(double x) -> double {
+    const auto x2 = x * x;
+    auto p = SIN_K9;
+    p = (p * x2) + SIN_K7;
+    p = (p * x2) + SIN_K5;
+    p = (p * x2) + SIN_K3;
+    p = (p * x2) + SIN_K1;
 
-[[clang::always_inline]] void reduce_x2(v2df x, v2df &x_reduced, v2df &x2,
-                                        v2df &x_abs) {
-    const auto q = fast_round_x2(x * INV_TWO_PI);
-    x -= q * TWO_PI;
+    return (x - std::numbers::pi) * (x + std::numbers::pi) * p * x;
+}
 
-    x_abs = __builtin_elementwise_abs(x);
-    x_reduced = HALF_PI - __builtin_elementwise_abs(x_abs - HALF_PI);
-    x2 = x_reduced * x_reduced;
+[[clang::always_inline]] auto sin_core_x2(v2df x) -> v2df {
+    const v2df x2 = x * x;
+    v2df p = v2df{SIN_K9, SIN_K9};
+    p = (p * x2) + v2df{SIN_K7, SIN_K7};
+    p = (p * x2) + v2df{SIN_K5, SIN_K5};
+    p = (p * x2) + v2df{SIN_K3, SIN_K3};
+    p = (p * x2) + v2df{SIN_K1, SIN_K1};
+
+    return (x - std::numbers::pi) * (x + std::numbers::pi) * p * x;
 }
 
 } // namespace
@@ -50,33 +57,14 @@ extern "C" {
 auto wasmwasm_sin(double x) -> double {
     const auto q = fast_round(x * INV_TWO_PI);
     x -= q * TWO_PI;
-
-    const auto x_abs = std::abs(x);
-    const auto x_reduced = HALF_PI - std::abs(x_abs - HALF_PI);
-
-    const auto x2 = x_reduced * x_reduced;
-    const auto poly =
-        x_reduced *
-        (SIN_C1 + (x2 * (SIN_C3 + (x2 * (SIN_C5 + (x2 * SIN_C7))))));
-
-    const auto sign = 1.0 - (2.0 * static_cast<double>(x < 0.0));
-    return sign * poly;
+    return sin_core(x);
 }
 
 auto wasmwasm_cos(double x) -> double {
-    const auto q = fast_round(x * INV_TWO_PI);
-    x -= q * TWO_PI;
-
-    const auto x_abs = std::abs(x);
-    const auto x_reduced = HALF_PI - std::abs(x_abs - HALF_PI);
-
-    const auto x2 = x_reduced * x_reduced;
-    const auto poly =
-        COS_C0 +
-        (x2 * (COS_C2 + (x2 * (COS_C4 + (x2 * (COS_C6 + (x2 * COS_C8)))))));
-
-    const auto sign = 1.0 - (2.0 * static_cast<double>(x_abs >= HALF_PI));
-    return sign * poly;
+    auto y = x + HALF_PI;
+    const auto q = fast_round(y * INV_TWO_PI);
+    y -= q * TWO_PI;
+    return sin_core(y);
 }
 
 auto wasmwasm_tan(double x) -> double {
@@ -84,59 +72,21 @@ auto wasmwasm_tan(double x) -> double {
 }
 
 auto wasmwasm_sin_x2(v2df x) -> v2df {
-    v2df x_reduced;
-    v2df x2;
-    v2df x_abs;
-    reduce_x2(x, x_reduced, x2, x_abs);
-
-    const v2df poly =
-        x_reduced *
-        (SIN_C1 + (x2 * (SIN_C3 + (x2 * (SIN_C5 + (x2 * SIN_C7))))));
-
-    const v2di neg_mask = x < 0.0;
-    const v2df sign =
-        1.0 - (2.0 * __builtin_convertvector(neg_mask & v2di{1, 1}, v2df));
-    return sign * poly;
+    const auto q = fast_round_x2(x * INV_TWO_PI);
+    x -= q * TWO_PI;
+    return sin_core_x2(x);
 }
 
 auto wasmwasm_cos_x2(v2df x) -> v2df {
-    v2df x_reduced;
-    v2df x2;
-    v2df x_abs;
-    reduce_x2(x, x_reduced, x2, x_abs);
-
-    const v2df poly =
-        COS_C0 +
-        (x2 * (COS_C2 + (x2 * (COS_C4 + (x2 * (COS_C6 + (x2 * COS_C8)))))));
-
-    const v2di ge_mask = x_abs >= HALF_PI;
-    const v2df sign =
-        1.0 - (2.0 * __builtin_convertvector(ge_mask & v2di{1, 1}, v2df));
-    return sign * poly;
+    v2df y = x + HALF_PI;
+    const auto q = fast_round_x2(y * INV_TWO_PI);
+    y -= q * TWO_PI;
+    return sin_core_x2(y);
 }
 
 auto wasmwasm_sincos_x2(v2df x) -> v2df {
-    v2df x_reduced;
-    v2df x2;
-    v2df x_abs;
-    reduce_x2(x, x_reduced, x2, x_abs);
-
-    const v2df sin_poly =
-        x_reduced *
-        (SIN_C1 + (x2 * (SIN_C3 + (x2 * (SIN_C5 + (x2 * SIN_C7))))));
-    const v2df cos_poly =
-        COS_C0 +
-        (x2 * (COS_C2 + (x2 * (COS_C4 + (x2 * (COS_C6 + (x2 * COS_C8)))))));
-
-    const v2di sin_neg_mask = x < 0.0;
-    const v2df sin_sign =
-        1.0 - (2.0 * __builtin_convertvector(sin_neg_mask & v2di{1, 1}, v2df));
-    const v2di cos_ge_mask = x_abs >= HALF_PI;
-    const v2df cos_sign =
-        1.0 - (2.0 * __builtin_convertvector(cos_ge_mask & v2di{1, 1}, v2df));
-
-    const v2df sin_result = sin_sign * sin_poly;
-    const v2df cos_result = cos_sign * cos_poly;
+    const v2df sin_result = wasmwasm_sin_x2(x);
+    const v2df cos_result = wasmwasm_cos_x2(x);
     return v2df{sin_result[0], cos_result[1]};
 }
 

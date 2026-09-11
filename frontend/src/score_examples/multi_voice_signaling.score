@@ -1,0 +1,6 @@
+r = {const instrument: null}!1;
+lead = (C E G)@{instrument: "Lead"; silence: 0} emit "silence" {silence: 1};
+follow = (D, r)@{instrument: "Lead"; rel: 0.01; silence: 0}!1/4
+choose silence > 0 r (follow |> listen "silence");
+
+play lead & follow;

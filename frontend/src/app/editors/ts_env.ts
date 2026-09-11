@@ -20,10 +20,6 @@ const callback_types_source = `interface TokenParams {
 interface InstrumentCallbackHandler {
     call(p: Record<string, number>, ap: TokenParams[], beat: number): Record<string, number>;
 }
-
-interface GlobalCallbackHandler {
-    call(ap: TokenParams[], beat: number): Record<string, number>;
-}
 `;
 
 const callback_types_file = '/callback-types.d.ts';

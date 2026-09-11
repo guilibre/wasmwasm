@@ -229,11 +229,13 @@ void emit_main_loop(
         }
     };
 
-    auto build_per_sample = [&]() -> std::vector<BinaryenExpressionRef> {
-        std::vector<BinaryenExpressionRef> stmts;
+    std::unordered_map<std::string, const InstrumentGroup *> group_by_id;
+    for (const auto &group : graph.instruments) group_by_id[group.id] = &group;
 
-        for (const auto &group : graph.instruments) {
-            if (group.module_names.empty()) continue;
+    auto emit_instrument_group =
+        [&](const InstrumentGroup &group,
+            std::vector<BinaryenExpressionRef> &stmts) -> void {
+        if (group.module_names.empty()) return;
             const auto &shared_layout = layouts.at(group.module_names.front());
             const std::unordered_set<std::string> same_group_modules(
                 group.module_names.begin(), group.module_names.end());
@@ -365,19 +367,33 @@ void emit_main_loop(
                     BinaryenConst(mod, BinaryenLiteralInt32(0)),
                     BinaryenTypeInt32(), "0"));
             }
-        }
+    };
 
-        static const std::unordered_set<std::string> no_group_modules;
-        for (const auto &route : graph.modules) {
-            if (grouped_module_names.contains(route.ir.name)) continue;
-            const auto &layout = layouts.at(route.ir.name);
+    static const std::unordered_set<std::string> no_group_modules;
+    auto emit_global_module =
+        [&](const ModuleRoute &route,
+            std::vector<BinaryenExpressionRef> &stmts) -> void {
+        const auto &layout = layouts.at(route.ir.name);
 
-            reset_outputs(route.ir, out_locals, stmts);
+        reset_outputs(route.ir, out_locals, stmts);
 
-            auto slot_zero = [&]() -> BinaryenExpressionRef {
-                return BinaryenConst(mod, BinaryenLiteralInt32(0));
-            };
-            emit_block_body(route, layout, slot_zero, no_group_modules, stmts);
+        auto slot_zero = [&]() -> BinaryenExpressionRef {
+            return BinaryenConst(mod, BinaryenLiteralInt32(0));
+        };
+        emit_block_body(route, layout, slot_zero, no_group_modules, stmts);
+    };
+
+    auto build_per_sample = [&]() -> std::vector<BinaryenExpressionRef> {
+        std::vector<BinaryenExpressionRef> stmts;
+
+        for (const auto &unit : graph.execution_order) {
+            if (unit.is_instrument) {
+                const auto it = group_by_id.find(unit.name);
+                if (it == group_by_id.end()) continue;
+                emit_instrument_group(*it->second, stmts);
+            } else {
+                emit_global_module(*route_by_name.at(unit.name), stmts);
+            }
         }
 
         auto dac_f32 = [&](const std::string &src) -> BinaryenExpressionRef {

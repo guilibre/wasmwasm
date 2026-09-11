@@ -335,6 +335,10 @@ auto build_routing_graph(const ParsedPatch &patch,
     for (size_t i = 0; i < patch.instruments.size(); ++i)
         instr_index[patch.instruments[i].id] = i;
 
+    std::unordered_set<std::string> global_module_names_set;
+    for (const auto &[name, _] : patch.global_module_sources)
+        global_module_names_set.insert(name);
+
     std::unordered_map<std::string, IRModule> compiled_modules_by_name;
     for (auto &m : compiled_modules)
         compiled_modules_by_name[m.name] = std::move(m);
@@ -352,6 +356,7 @@ auto build_routing_graph(const ParsedPatch &patch,
 
     std::unordered_map<std::string, std::string> instrument_in_source;
     std::unordered_map<std::string, std::string> instrument_in_producer;
+    std::unordered_map<std::string, std::string> instrument_in_global_producer;
     for (const auto &[sink, src] : patch.global_connections) {
         constexpr std::string_view marker = "_in_";
         const auto pos = sink.find(marker);
@@ -378,6 +383,12 @@ auto build_routing_graph(const ParsedPatch &patch,
             instrument_in_producer[sink] = src_instr_id;
         } else {
             instrument_in_source[sink] = src;
+            const auto src_under = src.rfind("_out_");
+            if (src_under != std::string::npos) {
+                const auto src_mod = src.substr(0, src_under);
+                if (global_module_names_set.contains(src_mod))
+                    instrument_in_global_producer[sink] = src_mod;
+            }
         }
     }
 
@@ -425,45 +436,11 @@ auto build_routing_graph(const ParsedPatch &patch,
         per_instrument[instr_idx] = std::move(routed);
     }
 
-    std::unordered_map<std::string, std::unordered_set<std::string>> depends_on;
-    for (const auto &[sink, producer_id] : instrument_in_producer) {
-        const auto consumer_id = sink.substr(0, sink.find("_in_"));
-        if (producer_id != consumer_id)
-            depends_on[consumer_id].insert(producer_id);
-    }
-
-    {
-        std::vector<std::string> order;
-        std::unordered_set<std::string> visited;
-        std::unordered_set<std::string> in_stack;
-        std::function<void(const std::string &)> topo =
-            [&](const std::string &id) -> void {
-            if (visited.contains(id)) return;
-            visited.insert(id);
-            in_stack.insert(id);
-            for (const auto &dep : depends_on[id]) {
-                if (in_stack.contains(dep))
-                    throw std::runtime_error(
-                        "cyclic instrument input dependency involving '" + id +
-                        "' and '" + dep + "'");
-                topo(dep);
-            }
-            in_stack.erase(id);
-            order.push_back(id);
-        };
-        for (const auto &instr : patch.instruments) topo(instr.id);
-
-        std::vector<InstrumentGroup> reordered_instruments;
-        reordered_instruments.reserve(graph.instruments.size());
-        for (const auto &id : order)
-            reordered_instruments.push_back(
-                std::move(graph.instruments[instr_index.at(id)]));
-        graph.instruments = std::move(reordered_instruments);
-    }
-
     std::vector<std::pair<std::string, std::string>>
         resolved_global_connections;
     resolved_global_connections.reserve(patch.global_connections.size());
+    std::unordered_map<std::string, std::unordered_set<std::string>>
+        global_depends_on_instrument;
     for (const auto &[sink, src] : patch.global_connections) {
         const auto under = src.rfind('_');
         bool is_instr_out = false;
@@ -482,6 +459,14 @@ auto build_routing_graph(const ParsedPatch &patch,
                 throw std::runtime_error("instrument '" + instr_id +
                                          "' has no out_" + std::to_string(idx));
             resolved_global_connections.emplace_back(sink, out_sources[idx]);
+
+            const auto sink_under = sink.rfind('_');
+            if (sink_under != std::string::npos && sink_under >= 3 &&
+                sink.substr(sink_under - 3, 3) == "_in") {
+                const auto sink_mod = sink.substr(0, sink_under - 3);
+                if (global_module_names_set.contains(sink_mod))
+                    global_depends_on_instrument[sink_mod].insert(instr_id);
+            }
         } else {
             resolved_global_connections.emplace_back(sink, src);
         }
@@ -489,6 +474,71 @@ auto build_routing_graph(const ParsedPatch &patch,
 
     auto global_routed = route_one_graph(patch.global_module_sources,
                                          resolved_global_connections);
+
+    std::unordered_map<std::string, std::unordered_set<std::string>>
+        depends_on;
+    for (const auto &[sink, producer_id] : instrument_in_producer) {
+        const auto consumer_id = sink.substr(0, sink.find("_in_"));
+        if (producer_id != consumer_id)
+            depends_on["I:" + consumer_id].insert("I:" + producer_id);
+    }
+    for (const auto &[sink, producer_mod] : instrument_in_global_producer) {
+        const auto consumer_id = sink.substr(0, sink.find("_in_"));
+        depends_on["I:" + consumer_id].insert("G:" + producer_mod);
+    }
+    for (const auto &[mod, producers] : global_depends_on_instrument)
+        for (const auto &instr_id : producers)
+            depends_on["G:" + mod].insert("I:" + instr_id);
+    for (const auto &[mod_name, _] : patch.global_module_sources) {
+        for (const auto &src : global_routed.mod_inputs[mod_name]) {
+            const auto under = src.rfind("_out_");
+            if (under == std::string::npos) continue;
+            const auto other = src.substr(0, under);
+            if (other != mod_name && global_module_names_set.contains(other))
+                depends_on["G:" + mod_name].insert("G:" + other);
+        }
+    }
+
+    {
+        std::vector<ExecutionUnit> order;
+        std::unordered_set<std::string> visited;
+        std::unordered_set<std::string> in_stack;
+        std::function<void(const std::string &)> topo =
+            [&](const std::string &key) -> void {
+            if (visited.contains(key)) return;
+            visited.insert(key);
+            in_stack.insert(key);
+            for (const auto &dep : depends_on[key]) {
+                if (in_stack.contains(dep)) {
+                    const auto describe = [](const std::string &k) {
+                        return (k.starts_with("I:") ? "instrument '" : "global module '") +
+                               k.substr(2) + "'";
+                    };
+                    throw std::runtime_error(
+                        "cyclic dependency involving " + describe(key) +
+                        " and " + describe(dep));
+                }
+                topo(dep);
+            }
+            in_stack.erase(key);
+            order.push_back({.is_instrument = key.starts_with("I:"),
+                             .name = key.substr(2)});
+        };
+        for (const auto &instr : patch.instruments) topo("I:" + instr.id);
+        for (const auto &[name, _] : patch.global_module_sources)
+            topo("G:" + name);
+
+        graph.execution_order = order;
+
+        std::vector<InstrumentGroup> reordered_instruments;
+        reordered_instruments.reserve(graph.instruments.size());
+        for (const auto &unit : order) {
+            if (!unit.is_instrument) continue;
+            reordered_instruments.push_back(
+                std::move(graph.instruments[instr_index.at(unit.name)]));
+        }
+        graph.instruments = std::move(reordered_instruments);
+    }
 
     std::vector<std::string> global_param_names;
     std::unordered_set<std::string> seen_global_params;

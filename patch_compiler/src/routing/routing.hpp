@@ -17,11 +17,17 @@ struct InstrumentGroup {
     std::vector<std::string> param_names;
 };
 
+struct ExecutionUnit {
+    bool is_instrument;
+    std::string name;
+};
+
 struct RoutingGraph {
     std::vector<ModuleRoute> modules;
     std::vector<InstrumentGroup> instruments;
     std::vector<std::string> global_module_names;
     std::vector<std::string> global_param_names;
+    std::vector<ExecutionUnit> execution_order;
     std::string dac_l_source;
     std::string dac_r_source;
     std::vector<std::string> out_sources;

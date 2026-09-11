@@ -1,4 +1,5 @@
 import type { Node, Edge, NodeChange, EdgeChange, Connection } from '@xyflow/react';
+import type { StringKey } from '../../i18n/strings';
 
 export interface BlockData {
     name: string;
@@ -61,6 +62,7 @@ export type PatchAction =
     | { type: 'add_node'; node: Node }
     | { type: 'update_global_code'; id: string; code: string }
     | { type: 'update_score_source'; source: string }
+    | { type: 'load_score_example'; source: string }
     | { type: 'update_score_param_bindings'; bindings: ScoreParamBindings }
     | { type: 'update_global_callback_source'; source: string }
     | { type: 'update_global_name'; id: string; name: string }
@@ -86,5 +88,5 @@ export interface HistoryState {
     past: PatchState[];
     present: PatchState;
     future: PatchState[];
-    storage_error: string | null;
+    storage_error: StringKey | null;
 }

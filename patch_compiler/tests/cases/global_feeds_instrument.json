@@ -1,0 +1,26 @@
+{
+  "instruments": {
+    "gran": {
+      "modules": {
+        "block_gran_pass": "OUT[0] <- IN[0]"
+      },
+      "patch": {
+        "block_gran_pass_in_0": "gran_in_0",
+        "out_0": "block_gran_pass_out_0",
+        "out_1": "block_gran_pass_out_0"
+      }
+    }
+  },
+  "global": {
+    "modules": {
+      "block_mix_adc": "OUT[0] <- IN[0] + IN[1]"
+    },
+    "patch": {
+      "block_mix_adc_in_0": "adc_l",
+      "block_mix_adc_in_1": "adc_r",
+      "gran_in_0": "block_mix_adc_out_0",
+      "dac_l": "gran_out_0",
+      "dac_r": "gran_out_1"
+    }
+  }
+}

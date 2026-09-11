@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import type { OrchestraState, PatchView } from '../../patch/store/patch_types';
 import { GLOBAL_CACHE_KEY } from '../constants';
+import { useT } from '../../i18n/lang_context';
 import './instrument.scss';
 
 interface Props {
@@ -24,6 +25,7 @@ export function InstrumentTabs({
     on_set_active,
     on_view_change,
 }: Props) {
+    const t = useT();
     const [editing_id, set_editing_id] = useState<string | null>(null);
     const [name_draft, set_name_draft] = useState('');
 
@@ -69,7 +71,7 @@ export function InstrumentTabs({
                 className={`instrument__tab${is_global_tab ? ' instrument__tab--active' : ''}`}
                 onClick={() => handle_tab_click(GLOBAL_CACHE_KEY)}
             >
-                <span className="instrument__tab-name">global</span>
+                <span className="instrument__tab-name">{t('global_tab')}</span>
             </div>
             {instruments.map((instr) => (
                 <div

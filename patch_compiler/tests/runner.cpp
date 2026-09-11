@@ -55,9 +55,12 @@ auto load_binary_file(const std::string &path) -> std::vector<char> {
     return buf;
 }
 
+enum class AssertionKind { Contains, NotContains, Order };
+
 struct Assertion {
-    bool expect_present;
+    AssertionKind kind;
     std::string needle;
+    std::string needle_b; // only used for Order
     size_t line_no;
 };
 
@@ -88,17 +91,42 @@ auto parse_expectations(const std::string &text) -> std::vector<Assertion> {
 
         if (directive == "CONTAINS")
             assertions.push_back({
-                .expect_present = true,
+                .kind = AssertionKind::Contains,
                 .needle = needle,
+                .needle_b = "",
                 .line_no = line_no,
             });
         else if (directive == "NOT_CONTAINS")
             assertions.push_back({
-                .expect_present = false,
+                .kind = AssertionKind::NotContains,
                 .needle = needle,
+                .needle_b = "",
                 .line_no = line_no,
             });
-        else
+        else if (directive == "ORDER") {
+            const auto sep = needle.find("::");
+            if (sep == std::string::npos)
+                throw std::runtime_error(
+                    "malformed ORDER directive at line " +
+                    std::to_string(line_no) + " (expected 'a :: b'): " + line);
+            auto needle_a = needle.substr(0, sep);
+            auto needle_b = needle.substr(sep + 2);
+            const auto trim = [](std::string &s) -> void {
+                const auto start = s.find_first_not_of(" \t");
+                const auto end = s.find_last_not_of(" \t");
+                s = start == std::string::npos
+                        ? ""
+                        : s.substr(start, end - start + 1);
+            };
+            trim(needle_a);
+            trim(needle_b);
+            assertions.push_back({
+                .kind = AssertionKind::Order,
+                .needle = needle_a,
+                .needle_b = needle_b,
+                .line_no = line_no,
+            });
+        } else
             throw std::runtime_error("unknown directive at line " +
                                      std::to_string(line_no) + ": " +
                                      directive);
@@ -227,8 +255,24 @@ auto main(int argc, char **argv) -> int {
                      : compile_module_to_wat(fixture.ww_source, math_wasm_path);
 
         bool ok = true;
-        for (const auto &a : assertions)
-            if (wat.contains(a.needle) != a.expect_present) ok = false;
+        for (const auto &a : assertions) {
+            switch (a.kind) {
+            case AssertionKind::Contains:
+                if (!wat.contains(a.needle)) ok = false;
+                break;
+            case AssertionKind::NotContains:
+                if (wat.contains(a.needle)) ok = false;
+                break;
+            case AssertionKind::Order: {
+                const auto pos_a = wat.find(a.needle);
+                const auto pos_b = wat.find(a.needle_b);
+                if (pos_a == std::string::npos ||
+                    pos_b == std::string::npos || pos_a >= pos_b)
+                    ok = false;
+                break;
+            }
+            }
+        }
 
         if (!ok) return 1;
 

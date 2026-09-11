@@ -21,18 +21,12 @@ export const instrument_callback_example = `class InstrumentHandler implements I
     if (
       typeof result['freq'] !== 'number' &&
       typeof p['scale'] === 'number' &&
-      typeof p['degree'] === 'number' &&
+      typeof p['de  ree'] === 'number' &&
       typeof p['octave'] === 'number'
     )
       result['freq'] = 440*scales[p['scale']](p['degree'], p['octave']);
 
     return result;
-  }
-}`;
-
-export const global_callback_example = `class GlobalHandler implements GlobalCallbackHandler {
-  call(ap: TokenParams[]): Record<string, number> {
-    return {};
   }
 }`;
 

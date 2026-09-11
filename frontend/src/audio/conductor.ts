@@ -290,6 +290,8 @@ export class Conductor {
         this.param_index = param_index;
         this.exports = exports;
         this.sample_rate = sample_rate;
+        const global_exports = this.exports['global'];
+        if (global_exports) global_exports.instantiate(global_instance_id);
         this.bpm = bpm;
         this.instrument_callback_handlers = Object.fromEntries(
             Object.entries(instrument_callbacks).map(([instrument_id, ctor]) => [
@@ -622,22 +624,6 @@ export class Conductor {
         }
     }
 
-    private apply_global_callback(): void {
-        const exports = this.exports['global'];
-        if (!exports) return;
-        const index_table = this.param_index['global'] ?? {};
-        const handler = this.instrument_callback_handlers['global'];
-        const result = handler ? handler.call({}, this.tokens) : {};
-        for (const [name, value] of Object.entries(result)) {
-            const index = index_table[name];
-            if (index === undefined) continue;
-            if (typeof value !== 'number' || Number.isNaN(value))
-                throw new Error(`conductor: global callback did not return a number for '${name}'`);
-
-            exports.set_param(global_instance_id, index, value);
-        }
-    }
-
     private seconds_view(
         params: Record<string, WireNumber | string>,
     ): Record<string, number | string> {
@@ -678,45 +664,54 @@ export class Conductor {
             typeof token.params.instrument === 'string' ? token.params.instrument : null;
         if (instrument) {
             const exports = this.exports[instrument];
-            if (!exports) throw new Error(`conductor: unknown instrument '${instrument}'`);
-
-            const existing_voice =
-                legato_id !== undefined ? this.legato_voices.get(legato_id) : undefined;
-            const reuse_voice =
-                existing_voice !== undefined && existing_voice.instrument_id === instrument;
+            if (!exports) {
+                if (instrument === 'global') return;
+                throw new Error(`conductor: unknown instrument '${instrument}'`);
+            }
 
             let id: number;
-            if (reuse_voice) {
-                id = existing_voice.instance_id;
+            if (instrument === 'global') {
+                id = global_instance_id;
             } else {
-                id = this.next_instance_id;
-                const result = exports.instantiate(id);
-                if (result < 0)
-                    throw new Error(
-                        `conductor: failed to instantiate instrument '${instrument}' (no free slot)`,
-                    );
-                ++this.next_instance_id;
-                if (this.next_instance_id >= 128) this.next_instance_id = 0;
+                const existing_voice =
+                    legato_id !== undefined ? this.legato_voices.get(legato_id) : undefined;
+                const reuse_voice =
+                    existing_voice !== undefined && existing_voice.instrument_id === instrument;
+
+                if (reuse_voice) {
+                    id = existing_voice.instance_id;
+                } else {
+                    id = this.next_instance_id;
+                    const result = exports.instantiate(id);
+                    if (result < 0)
+                        throw new Error(
+                            `conductor: failed to instantiate instrument '${instrument}' (no free slot)`,
+                        );
+                    ++this.next_instance_id;
+                    if (this.next_instance_id >= 128) this.next_instance_id = 0;
+                }
             }
 
             token.instance_id = id;
             token.instrument_id = instrument;
 
-            const succs = this.succs_of(node, token.direction);
-            const next_legato_id =
-                succs.length === 1
-                    ? this.peek_next_legato_id(succs[0], token.direction)
-                    : undefined;
+            if (instrument !== 'global') {
+                const succs = this.succs_of(node, token.direction);
+                const next_legato_id =
+                    succs.length === 1
+                        ? this.peek_next_legato_id(succs[0], token.direction)
+                        : undefined;
 
-            if (next_legato_id !== undefined) {
-                this.legato_voices.set(next_legato_id, {
-                    instance_id: id,
-                    instrument_id: instrument,
-                });
-                token.params['legato'] = 1;
-            } else {
-                if (legato_id !== undefined) this.legato_voices.delete(legato_id);
-                token.params['legato'] = 0;
+                if (next_legato_id !== undefined) {
+                    this.legato_voices.set(next_legato_id, {
+                        instance_id: id,
+                        instrument_id: instrument,
+                    });
+                    token.params['legato'] = 1;
+                } else {
+                    if (legato_id !== undefined) this.legato_voices.delete(legato_id);
+                    token.params['legato'] = 0;
+                }
             }
 
             const index_table = this.param_index[instrument] ?? {};
@@ -733,7 +728,5 @@ export class Conductor {
                 exports.set_param(id, index, value);
             }
         }
-
-        this.apply_global_callback();
     }
 }

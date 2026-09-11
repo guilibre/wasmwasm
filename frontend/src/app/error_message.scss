@@ -1,0 +1,36 @@
+.error-message {
+    &__position {
+        color: #6272a4;
+    }
+
+    &__term {
+        position: relative;
+        border-bottom: 1px dotted #f07178;
+        cursor: help;
+
+        &:hover .error-message__tooltip,
+        &:focus .error-message__tooltip {
+            display: block;
+        }
+    }
+
+    &__tooltip {
+        display: none;
+        position: absolute;
+        bottom: 100%;
+        left: 0;
+        margin-bottom: 4px;
+        width: max-content;
+        max-width: 260px;
+        background: #1e2732;
+        border: 1px solid #37474f;
+        border-radius: 4px;
+        padding: 4px 8px;
+        font-family: monospace;
+        font-size: 0.8rem;
+        font-weight: normal;
+        color: #89ddff;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+        z-index: 10;
+    }
+}

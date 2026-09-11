@@ -1,4 +1,5 @@
 import { useRef, useEffect, useState, useCallback } from 'react';
+import { useT } from '../../i18n/lang_context';
 import './sidebar.scss';
 
 interface Props {
@@ -11,6 +12,7 @@ const MAX_WIDTH = 600;
 const DEFAULT_WIDTH = 100;
 
 export function Sidebar({ analyser_l, analyser_r }: Props) {
+    const t = useT();
     const waveform_ref = useRef<HTMLCanvasElement>(null);
     const spectro_ref = useRef<HTMLCanvasElement>(null);
     const raf_ref = useRef<number>(0);
@@ -173,7 +175,7 @@ export function Sidebar({ analyser_l, analyser_r }: Props) {
             <button
                 className="app__sidebar-open"
                 onClick={() => set_collapsed(false)}
-                title="Abrir sidebar"
+                title={t('open_sidebar')}
             >
                 ‹
             </button>
@@ -187,19 +189,19 @@ export function Sidebar({ analyser_l, analyser_r }: Props) {
                 <button
                     className="app__sidebar-close"
                     onClick={() => set_collapsed(true)}
-                    title="Fechar sidebar"
+                    title={t('close_sidebar')}
                 >
                     ×
                 </button>
             </div>
-            <span className="app__sidebar-label">waveform</span>
+            <span className="app__sidebar-label">{t('waveform')}</span>
             <canvas
                 ref={waveform_ref}
                 className="app__sidebar-canvas"
                 style={{ flex: 3 }}
                 onWheel={on_waveform_wheel}
             />
-            <span className="app__sidebar-label">spectrum</span>
+            <span className="app__sidebar-label">{t('spectrum')}</span>
             <canvas ref={spectro_ref} className="app__sidebar-canvas" style={{ flex: 7 }} />
         </div>
     );

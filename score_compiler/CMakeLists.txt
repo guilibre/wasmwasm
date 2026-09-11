@@ -23,3 +23,9 @@ include_directories(includes)
 
 add_subdirectory(src)
 add_subdirectory(app)
+
+option(BUILD_TESTS_SCORE "Build the score compiler test suite" OFF)
+if(BUILD_TESTS_SCORE)
+    enable_testing()
+    add_subdirectory(tests)
+endif()
