@@ -1,5 +1,5 @@
 import { applyNodeChanges, applyEdgeChanges } from '@xyflow/react';
-import type { Edge, NodeChange } from '@xyflow/react';
+import type { Edge, Node, NodeChange } from '@xyflow/react';
 import { scan_arity, scan_params, parse_out_name, parse_in_name } from './code_scanning';
 import {
     default_nodes,
@@ -15,7 +15,39 @@ import type {
     HistoryState,
     InstrumentState,
     ScoreParamBindings,
+    BlockData,
 } from './patch_types';
+import type { StringKey } from '../../i18n/strings';
+import { get_default_code } from './templates';
+
+const DEFAULT_EXAMPLE_INSTRUMENT_ID = 'Lead';
+
+function make_default_instrument(): InstrumentState {
+    const code = get_default_code('Example');
+    const arity = scan_arity(code);
+    const params = scan_params(code);
+    const block_id = `block_example_default`;
+    const block_node: Node = {
+        id: block_id,
+        type: 'block',
+        position: { x: 0, y: -150 },
+        data: { name: 'Example', code, ...arity, params } satisfies BlockData,
+    };
+    return {
+        id: DEFAULT_EXAMPLE_INSTRUMENT_ID,
+        nodes: [...default_nodes(), block_node],
+        edges: [
+            {
+                id: `e_${block_id}_out_0_out_out_0`,
+                source: block_id,
+                sourceHandle: `out_0`,
+                target: 'out',
+                targetHandle: `out_0`,
+                type: undefined,
+            },
+        ],
+    };
+}
 
 const NO_HISTORY = new Set<PatchAction['type']>([
     'select',
@@ -404,6 +436,43 @@ function patch_reducer(state: PatchState, action: PatchAction): PatchState {
             };
         case 'update_score_source':
             return { ...state, score_source: action.source };
+        case 'load_score_example': {
+            const has_default_instrument = state.orchestra.instruments.some(
+                (i) => i.id === DEFAULT_EXAMPLE_INSTRUMENT_ID,
+            );
+            if (has_default_instrument) {
+                return {
+                    ...state,
+                    score_source: action.source,
+                    load_serial: state.load_serial + 1,
+                };
+            }
+            const default_instrument = make_default_instrument();
+            const instruments = [...state.orchestra.instruments, default_instrument];
+            const dac_id =
+                state.orchestra.global_nodes.find((n) => n.type === 'dac')?.id ?? 'master_dac';
+            const in_id = in_node_id(default_instrument.id);
+            const patch_edge = (channel: 0 | 1): Edge => ({
+                id: `e_${in_id}_out_${channel}_${dac_id}_dac_${channel === 0 ? 'l' : 'r'}`,
+                source: in_id,
+                sourceHandle: `out_${channel}`,
+                target: dac_id,
+                targetHandle: channel === 0 ? 'dac_l' : 'dac_r',
+                type: undefined,
+            });
+            return {
+                ...state,
+                score_source: action.source,
+                load_serial: state.load_serial + 1,
+                orchestra: {
+                    ...state.orchestra,
+                    active_id: state.orchestra.active_id ?? default_instrument.id,
+                    instruments,
+                    global_nodes: sync_global_in_nodes(instruments, state.orchestra.global_nodes),
+                    global_edges: [...state.orchestra.global_edges, patch_edge(0)],
+                },
+            };
+        }
         case 'update_score_param_bindings':
             return { ...state, score_param_bindings: action.bindings };
         case 'update_global_callback_source':
@@ -564,7 +633,7 @@ function serialize_orchestra(orchestra: OrchestraState) {
     };
 }
 
-function save(state: PatchState): string | null {
+function save(state: PatchState): StringKey | null {
     try {
         localStorage.setItem(
             STORAGE_KEY,
@@ -578,7 +647,7 @@ function save(state: PatchState): string | null {
         return null;
     } catch (e) {
         console.error(e);
-        return 'Não foi possível salvar o patch localmente (armazenamento indisponível ou cheio).';
+        return 'cannot_save_patch_locally';
     }
 }
 

@@ -8,6 +8,7 @@ import {
     type DecorationSet,
     type ViewUpdate,
 } from '@codemirror/view';
+import { linter, forceLinting, type Diagnostic, type LintSource } from '@codemirror/lint';
 import { EditorState, Prec, RangeSetBuilder, StateEffect } from '@codemirror/state';
 import { defaultKeymap, indentWithTab, historyKeymap } from '@codemirror/commands';
 import { history } from '@codemirror/commands';
@@ -16,9 +17,13 @@ import {
     get_tokens,
     get_completions,
     get_hover,
+    type LspDiagnostic,
     type LspCompletion,
     type LspModule,
 } from '../../lsp/lsp';
+import { find_glossary_matches } from '../glossary';
+import { STRINGS } from '../../i18n/strings';
+import { useLang, type Lang } from '../../i18n/lang_context';
 import { editor_theme } from './editor_theme';
 import './ww_editor.scss';
 
@@ -42,11 +47,9 @@ function line_starts(src: string): number[] {
 function build_decorations(mod: LspModule, view: EditorView): DecorationSet {
     const src = view.state.doc.toString();
     const tokens = get_tokens(mod, src);
-    const diags = get_diagnostics(mod, src);
     const starts = line_starts(src);
 
     const cls = new Array<string>(src.length).fill('');
-    const err = new Array<boolean>(src.length).fill(false);
 
     for (const t of tokens) {
         if (t.line < 0 || t.line >= starts.length) continue;
@@ -56,28 +59,71 @@ function build_decorations(mod: LspModule, view: EditorView): DecorationSet {
         for (let i = from; i < to; i++) cls[i] = c;
     }
 
-    for (const d of diags) {
-        if (d.line < 0 || d.line >= starts.length) continue;
-        const from = starts[d.line] + d.col;
-        let to = from;
-        while (to < src.length && /\S/.test(src[to]) && src[to] !== '\n') to++;
-        for (let i = from; i < to && i < src.length; i++) err[i] = true;
-    }
-
     const builder = new RangeSetBuilder<Decoration>();
     let i = 0;
     while (i < src.length) {
         let j = i + 1;
-        while (j < src.length && cls[j] === cls[i] && err[j] === err[i]) j++;
-        const c = cls[i],
-            e = err[i];
-        if (c || e) {
-            const classes = [c, e ? 'ww-error' : ''].filter(Boolean).join(' ');
-            builder.add(i, j, Decoration.mark({ class: classes }));
-        }
+        while (j < src.length && cls[j] === cls[i]) j++;
+        if (cls[i]) builder.add(i, j, Decoration.mark({ class: cls[i] }));
         i = j;
     }
     return builder.finish();
+}
+
+function diagnostic_range(
+    src: string,
+    starts: number[],
+    d: LspDiagnostic,
+): { from: number; to: number } | null {
+    if (d.line < 0 || d.line >= starts.length) return null;
+    const from = starts[d.line] + d.col;
+    let to = from;
+    while (to < src.length && /\S/.test(src[to]) && src[to] !== '\n') to++;
+    if (to <= from) to = Math.min(from + 1, src.length);
+    return { from, to };
+}
+
+function render_diagnostic_message(msg: string, lang: Lang): Node {
+    const container = document.createElement('div');
+    container.className = 'ww-editor__diagnostic';
+
+    const text = document.createElement('div');
+    text.textContent = msg;
+    container.appendChild(text);
+
+    for (const match of find_glossary_matches(msg)) {
+        const row = document.createElement('div');
+        row.className = 'ww-editor__glossary-entry';
+        const term = document.createElement('span');
+        term.className = 'ww-editor__glossary-term';
+        term.textContent = match.matched_text;
+        row.appendChild(term);
+        row.appendChild(document.createTextNode(': ' + STRINGS[match.definition_key][lang]));
+        container.appendChild(row);
+    }
+
+    return container;
+}
+
+function make_lint_source(get_module: () => LspModule, lang_ref: { current: Lang }): LintSource {
+    return (view: EditorView): Diagnostic[] => {
+        const src = view.state.doc.toString();
+        const starts = line_starts(src);
+        const diags = get_diagnostics(get_module(), src);
+        const result: Diagnostic[] = [];
+        for (const d of diags) {
+            const range = diagnostic_range(src, starts, d);
+            if (!range) continue;
+            result.push({
+                from: range.from,
+                to: range.to,
+                severity: 'error',
+                message: d.msg,
+                renderMessage: () => render_diagnostic_message(d.msg, lang_ref.current),
+            });
+        }
+        return result;
+    };
 }
 
 function make_highlight_plugin(get_module: () => LspModule) {
@@ -141,6 +187,7 @@ const WWEditor = forwardRef<WWEditorHandle, Props>(function WWEditor(
     { initial_value, on_change, get_module },
     ref,
 ) {
+    const { lang } = useLang();
     const container_ref = useRef<HTMLDivElement>(null);
     const view_ref = useRef<EditorView | null>(null);
     const initial_value_ref = useRef(initial_value);
@@ -148,6 +195,8 @@ const WWEditor = forwardRef<WWEditorHandle, Props>(function WWEditor(
     on_change_ref.current = on_change;
     const get_module_ref = useRef(get_module);
     get_module_ref.current = get_module;
+    const lang_ref = useRef(lang);
+    lang_ref.current = lang;
 
     const wrapper_ref = useRef<HTMLDivElement>(null);
     const [completions, set_completions] = useState<LspCompletion[]>([]);
@@ -220,7 +269,10 @@ const WWEditor = forwardRef<WWEditorHandle, Props>(function WWEditor(
             sync_completions([]);
         },
         refresh() {
-            view_ref.current?.dispatch({ effects: force_highlight.of() });
+            const view = view_ref.current;
+            if (!view) return;
+            view.dispatch({ effects: force_highlight.of() });
+            forceLinting(view);
         },
     }));
 
@@ -291,6 +343,7 @@ const WWEditor = forwardRef<WWEditorHandle, Props>(function WWEditor(
                     keymap.of([indentWithTab, ...historyKeymap, ...defaultKeymap]),
                     make_highlight_plugin(() => get_module_ref.current()),
                     make_hover_plugin(() => get_module_ref.current()),
+                    linter(make_lint_source(() => get_module_ref.current(), lang_ref)),
                     update_listener,
                     editor_theme,
                 ],

@@ -5,6 +5,7 @@ import WasmWasm from '../../audio/compiler';
 import ScoreWasm from '../../scorewasm/compiler';
 import { orchestra_to_json } from '../../patch/orchestra_to_json';
 import type { OrchestraState, ScoreParamBindings } from '../../patch/store/patch_types';
+import { to_app_error, type AppError } from '../../scorewasm/score_compile_error';
 
 function transpile_callback_source(source: string): string | null {
     if (!source.trim()) return null;
@@ -35,7 +36,7 @@ export function useAudioEngine(
     score_source: string,
     score_param_bindings: ScoreParamBindings,
     global_callback_source: string,
-    set_error: (error: string | null) => void,
+    set_error: (error: AppError | null) => void,
 ) {
     const audio_context_ref = useRef<AudioContext | null>(null);
     const merger_ref = useRef<GainNode | null>(null);
@@ -61,7 +62,7 @@ export function useAudioEngine(
                 return;
             }
             if (event.data.type === 'conductor-error') {
-                set_error(String(event.data.message));
+                set_error({ message: String(event.data.message) });
                 set_is_playing(false);
                 return;
             }
@@ -180,7 +181,7 @@ export function useAudioEngine(
             attach_cpu_metrics(global_node, 'global');
             global_node_ref.current = global_node;
         } catch (e) {
-            set_error(String(e));
+            set_error(to_app_error(e));
         }
 
         set_is_playing(true);

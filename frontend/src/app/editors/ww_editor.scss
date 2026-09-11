@@ -24,6 +24,18 @@
     font-style: italic;
 }
 
-.ww-error {
-    text-decoration: underline wavy red;
+.ww-editor__diagnostic {
+    max-width: 320px;
+}
+
+.ww-editor__glossary-entry {
+    margin-top: 4px;
+    padding-top: 4px;
+    border-top: 1px solid #2a2d3e;
+    color: #89ddff;
+}
+
+.ww-editor__glossary-term {
+    font-weight: bold;
+    color: #c792ea;
 }

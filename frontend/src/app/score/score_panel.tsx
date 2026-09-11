@@ -5,10 +5,13 @@ import ScoreWasm from '../../scorewasm/compiler';
 import type { OrchestraState, ScoreParamBindings } from '../../patch/store/patch_types';
 import WWEditor from '../editors/ww_editor';
 import { ScoreGraphView } from './score_graph_view';
+import { ScoreExampleGallery } from './score_example_gallery';
+import { useT } from '../../i18n/lang_context';
 
 interface Props {
     source: string;
     on_change: (source: string) => void;
+    on_load_score_example: (source: string) => void;
     orchestra: OrchestraState;
     score_param_bindings: ScoreParamBindings;
     on_score_param_bindings_change: (bindings: ScoreParamBindings) => void;
@@ -31,6 +34,7 @@ const DEFAULT_GRAPH_HEIGHT = 200;
 export function ScorePanel({
     source,
     on_change,
+    on_load_score_example,
     orchestra,
     score_param_bindings,
     on_score_param_bindings_change,
@@ -39,11 +43,13 @@ export function ScorePanel({
     on_bpm_change,
     load_serial,
 }: Props) {
+    const t = useT();
     const [width, set_width] = useState(DEFAULT_WIDTH);
     const [collapsed, set_collapsed] = useState(false);
     const [ready, set_ready] = useState(false);
     const [tab, set_tab] = useState<Tab>('score');
     const [graph_height, set_graph_height] = useState(DEFAULT_GRAPH_HEIGHT);
+    const [show_examples, set_show_examples] = useState(false);
     const width_ref = useRef(width);
     const graph_height_ref = useRef(graph_height);
     useEffect(() => {
@@ -96,7 +102,7 @@ export function ScorePanel({
             <button
                 className="app__score-panel-open"
                 onClick={() => set_collapsed(false)}
-                title="Abrir score"
+                title={t('open_score')}
             >
                 ›
             </button>
@@ -125,15 +131,27 @@ export function ScorePanel({
                     >
                         conductor
                     </button>
+                    <button
+                        className="app__score-panel-tab"
+                        onClick={() => set_show_examples((v) => !v)}
+                    >
+                        {t('score_examples_button')}
+                    </button>
                 </div>
                 <button
                     className="app__score-panel-close"
                     onClick={() => set_collapsed(true)}
-                    title="Fechar score"
+                    title={t('close_score')}
                 >
                     ×
                 </button>
             </div>
+            {show_examples && (
+                <ScoreExampleGallery
+                    on_select={on_load_score_example}
+                    on_close={() => set_show_examples(false)}
+                />
+            )}
             {tab === 'score' && ready && (
                 <div className="app__score-panel-editor-and-graph">
                     <WWEditor

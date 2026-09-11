@@ -1,0 +1,25 @@
+.lang-toggle {
+    display: flex;
+    border: 1px solid #37474f;
+    border-radius: 4px;
+    overflow: hidden;
+
+    &__option {
+        padding: 0.25rem 0.5rem;
+        background: #263238;
+        color: #6272a4;
+        border: none;
+        cursor: pointer;
+        font-family: monospace;
+        font-size: 0.75rem;
+
+        &:hover {
+            color: #cdd6f4;
+        }
+
+        &--active {
+            background: #37474f;
+            color: #89b4fa;
+        }
+    }
+}

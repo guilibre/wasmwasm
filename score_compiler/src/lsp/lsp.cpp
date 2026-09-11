@@ -2,6 +2,7 @@
 
 #include "ast/binop_eval.hpp"
 #include "backend/json_writer.hpp"
+#include "diagnostics.hpp"
 #include "parser/parser.hpp"
 #include "parser/tokenizer.hpp"
 #include "resolve/resolver.hpp"
@@ -99,18 +100,17 @@ auto lsp_diagnostics(const std::string &src) -> std::string {
         const auto program = parser.parse();
         (void)expand_program(program);
     } catch (const ParseException &e) {
+        const auto [line, col] = normalize_position(e.line, e.col);
         return R"([{"msg":)" + json_string(e.what()) + R"(,"line":)" +
-               std::to_string(e.line - 1) + R"(,"col":)" +
-               std::to_string(e.col - 1) + R"(,"severity":"error"}])";
+               std::to_string(line) + R"(,"col":)" + std::to_string(col) +
+               R"(,"severity":"error"}])";
     } catch (const ResolveException &e) {
-        const auto line = e.line > 0 ? e.line - 1 : 0;
-        const auto col = e.col > 0 ? e.col - 1 : 0;
+        const auto [line, col] = normalize_position(e.line, e.col);
         return R"([{"msg":)" + json_string(e.what()) + R"(,"line":)" +
                std::to_string(line) + R"(,"col":)" + std::to_string(col) +
                R"(,"severity":"error"}])";
     } catch (const FoldException &e) {
-        const auto line = e.line > 0 ? e.line - 1 : 0;
-        const auto col = e.col > 0 ? e.col - 1 : 0;
+        const auto [line, col] = normalize_position(e.line, e.col);
         return R"([{"msg":)" + json_string(e.what()) + R"(,"line":)" +
                std::to_string(line) + R"(,"col":)" + std::to_string(col) +
                R"(,"severity":"error"}])";

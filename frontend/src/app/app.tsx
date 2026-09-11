@@ -11,10 +11,15 @@ import { useAudioEngine } from './hooks/use_audio_engine';
 import { StatusBar } from './status_bar';
 import { useBlockModal } from './hooks/use_block_modal';
 import { useUndoRedoShortcuts } from './hooks/use_undo_redo_shortcuts';
+import { useT } from '../i18n/lang_context';
+import { LanguageToggle } from '../i18n/language_toggle';
+import { ErrorMessage } from './error_message';
+import type { AppError } from '../scorewasm/score_compile_error';
 import './app.scss';
 
 export default function App() {
-    const [error, set_error] = useState<string | null>(null);
+    const t = useT();
+    const [error, set_error] = useState<AppError | null>(null);
     const import_ref = useRef<HTMLInputElement>(null);
     const editor_ref = useRef<WWEditorHandle>(null);
 
@@ -40,6 +45,7 @@ export default function App() {
         redo,
         score_source,
         update_score_source,
+        load_score_example,
         score_param_bindings,
         update_score_param_bindings,
         global_callback_source,
@@ -77,11 +83,12 @@ export default function App() {
         <div className="app">
             <div className="app__toolbar">
                 <span className="app__brand">wasmwasm</span>
+                <LanguageToggle />
                 <button onClick={is_playing ? () => stop(0) : play}>
-                    {is_playing ? 'Stop' : 'Play'}
+                    {is_playing ? t('stop') : t('play')}
                 </button>
-                <button onClick={export_patch}>Export</button>
-                <button onClick={() => import_ref.current?.click()}>Import</button>
+                <button onClick={export_patch}>{t('export_patch')}</button>
+                <button onClick={() => import_ref.current?.click()}>{t('import_patch')}</button>
                 <input
                     ref={import_ref}
                     type="file"
@@ -94,7 +101,17 @@ export default function App() {
                     }}
                 />
                 {(error || import_error || storage_error) && (
-                    <span className="app__error">{error || import_error || storage_error}</span>
+                    <span className="app__error">
+                        {error ? (
+                            <ErrorMessage
+                                message={error.message}
+                                line={error.line}
+                                col={error.col}
+                            />
+                        ) : (
+                            import_error || (storage_error && t(storage_error))
+                        )}
+                    </span>
                 )}
             </div>
 
@@ -102,6 +119,7 @@ export default function App() {
                 <ScorePanel
                     source={score_source}
                     on_change={update_score_source}
+                    on_load_score_example={load_score_example}
                     orchestra={orchestra}
                     score_param_bindings={score_param_bindings}
                     on_score_param_bindings_change={update_score_param_bindings}
@@ -147,7 +165,7 @@ export default function App() {
                             <span
                                 className="app__panel-name"
                                 onClick={start_name_edit}
-                                title="Click to rename"
+                                title={t('click_to_rename')}
                             >
                                 {(selected_block.data as { name: string }).name}
                             </span>

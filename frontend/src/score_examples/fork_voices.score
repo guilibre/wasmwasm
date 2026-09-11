@@ -1,0 +1,4 @@
+bass = {instrument: "Lead"; freq: 220}!2;
+melody = (C E G C)@{instrument: "Lead"}!1/2;
+
+play melody & bass;

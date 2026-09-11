@@ -1,0 +1,2 @@
+lead = {instrument: "Lead"; dur: 1/0};
+play lead;

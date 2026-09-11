@@ -1,0 +1,2 @@
+melody = (C E G C)@{instrument: "Lead"};
+play melody;

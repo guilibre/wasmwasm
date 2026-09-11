@@ -13,6 +13,7 @@ import {
     draw_keyboard,
     draw_grid_and_notes,
 } from './score_piano_roll_draw';
+import { useT } from '../../i18n/lang_context';
 import './score_piano_roll.scss';
 
 interface Props {
@@ -24,6 +25,7 @@ interface Props {
 }
 
 export function ScorePianoRoll({ graph, start_node_id, stop_after_node_id, bpm, on_close }: Props) {
+    const t = useT();
     const tracer = useMemo(
         () => new ScoreTracer(graph, bpm, start_node_id, stop_after_node_id),
         [graph, bpm, start_node_id, stop_after_node_id],
@@ -198,18 +200,18 @@ export function ScorePianoRoll({ graph, start_node_id, stop_after_node_id, bpm, 
                 <button
                     className="score-piano-roll__vzoom"
                     onClick={on_v_zoom_out}
-                    title="Zoom vertical -"
+                    title={t('zoom_vertical_out')}
                 >
                     −
                 </button>
                 <button
                     className="score-piano-roll__vzoom"
                     onClick={on_v_zoom_in}
-                    title="Zoom vertical +"
+                    title={t('zoom_vertical_in')}
                 >
                     +
                 </button>
-                <button className="score-piano-roll__close" onClick={on_close} title="Fechar">
+                <button className="score-piano-roll__close" onClick={on_close} title={t('close')}>
                     ×
                 </button>
             </div>
